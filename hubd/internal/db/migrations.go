@@ -12,6 +12,12 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+// NOTE: migrate applies each file's SQL outside an explicit transaction and
+// records schema_migrations only after the whole file succeeds. This is safe
+// ONLY because every migration uses IF NOT EXISTS, so re-running a partially
+// applied file is idempotent. A future migration with non-idempotent
+// statements (e.g. ALTER) MUST wrap its file in a transaction.
+//
 // migrate applies every embedded *.sql file in lexical order, tracking applied
 // files in a schema_migrations table so re-runs are idempotent.
 func migrate(ctx context.Context, sqldb *sql.DB) error {

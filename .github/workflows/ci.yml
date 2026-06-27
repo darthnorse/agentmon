@@ -15,6 +15,11 @@ jobs:
         run: |
           CGO_ENABLED=0 go build ./agent/... ./hubd/...
           CGO_ENABLED=0 go vet ./shared/... ./agent/... ./hubd/...
+      - name: Embed placeholder must not be a built SPA
+        run: |
+          if grep -q '/assets/' hubd/internal/webui/dist/index.html; then
+            echo "ERROR: committed embed index.html references built /assets/ — only the placeholder may be tracked"; exit 1
+          fi
   web:
     runs-on: ubuntu-latest
     steps:

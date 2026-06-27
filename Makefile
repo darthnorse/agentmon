@@ -14,6 +14,8 @@ embed: build-web
 build-hub: embed
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
 		-o bin/agentmon-hubd ./hubd/cmd/agentmon-hubd
+	rm -rf hubd/internal/webui/dist
+	git checkout -- hubd/internal/webui/dist/index.html
 
 build-agent:
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
