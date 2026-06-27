@@ -1,6 +1,8 @@
-# Compiled binaries
-agentmon-hubd
-agentmon-agent
+# Compiled binaries — Makefile builds to ./bin.
+# NOTE: bare names like "agentmon-agent" would ALSO ignore the source dirs
+# agent/cmd/agentmon-agent/ and hubd/cmd/agentmon-hubd/, so ignore the output
+# dir, not the binary names.
+/bin/
 /spike-0.5/spike
 /spike-0.5/smoke
 *.test
