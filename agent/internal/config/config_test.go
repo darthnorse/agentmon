@@ -53,3 +53,26 @@ directive_key = "k"
 		t.Fatal("expected error for unset env ref")
 	}
 }
+
+func TestResolveTarget(t *testing.T) {
+	cfg := Config{Targets: []Target{
+		{Label: "default", SocketName: ""},
+		{Label: "build", SocketName: "buildsock"},
+	}}
+
+	if tg, ok := cfg.ResolveTarget(""); !ok || tg.Label != "default" {
+		t.Fatalf("empty → %+v ok=%v, want default", tg, ok)
+	}
+	if tg, ok := cfg.ResolveTarget("build"); !ok || tg.SocketName != "buildsock" {
+		t.Fatalf("build → %+v ok=%v", tg, ok)
+	}
+	if _, ok := cfg.ResolveTarget("nope"); ok {
+		t.Fatal("unknown label should not resolve")
+	}
+}
+
+func TestResolveTargetNoTargets(t *testing.T) {
+	if _, ok := (Config{}).ResolveTarget(""); ok {
+		t.Fatal("no targets configured should not resolve")
+	}
+}

@@ -23,3 +23,9 @@ type Pane struct {
 	Command string `json:"command"`
 	Cwd     string `json:"cwd"`
 }
+
+// SessionList is the agent's GET /sessions response envelope. The hub re-shapes
+// these into its public /servers/{id}/sessions array; this is the agent↔hub form.
+type SessionList struct {
+	Sessions []Session `json:"sessions"`
+}
