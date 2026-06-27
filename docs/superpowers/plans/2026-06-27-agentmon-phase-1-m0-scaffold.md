@@ -166,7 +166,9 @@ See `agentmon-design.md` for the full design and `docs/superpowers/specs/` for p
     cd web && npm run dev   # SPA dev server, proxies /api + /ws to a local hubd
 ```
 
-- [ ] **Step 4: Add temporary placeholder `doc.go` files so empty modules build**
+- [ ] **Step 4: Add temporary placeholder `doc.go` files so each module builds cleanly**
+
+Each module needs ≥1 buildable package so `go build` is warning-free (a module with only `go.mod` triggers a "matched no packages" warning). These are temporary — later tasks delete each when real code arrives (Task 2 for shared, Task 3 for agent, Task 4 for hubd).
 
 `shared/doc.go`:
 ```go
@@ -174,18 +176,32 @@ See `agentmon-design.md` for the full design and `docs/superpowers/specs/` for p
 package shared
 ```
 
+`agent/doc.go`:
+```go
+// Package agent is the agentmon-agent per-server component.
+package agent
+```
+
+`hubd/doc.go`:
+```go
+// Package hubd is the agentmon-hubd central control plane.
+package hubd
+```
+
 Create `agent/internal/.gitkeep` and `hubd/internal/.gitkeep` (empty) so the dirs exist.
 
 - [ ] **Step 5: Verify the workspace builds**
 
-Run: `go work sync && go build ./... ` (from repo root)
-Expected: no output, exit 0. (Empty modules build cleanly.)
+Run: `go work sync && go build ./shared/... ./agent/... ./hubd/...` (from repo root)
+Expected: no output, exit 0. NOTE: `go build ./...` does **not** work from the workspace root — the root is not itself a module (`pattern ./...: directory prefix . does not contain modules listed in go.work`), so always address the three modules by path.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add go.work shared/go.mod shared/doc.go agent/go.mod hubd/go.mod README.md \
-        agent/internal/.gitkeep hubd/internal/.gitkeep
+git add go.work README.md \
+        shared/go.mod shared/doc.go \
+        agent/go.mod agent/doc.go agent/internal/.gitkeep \
+        hubd/go.mod hubd/doc.go hubd/internal/.gitkeep
 git commit -m "chore(m0): multi-module Go workspace skeleton"
 ```
 
@@ -713,7 +729,7 @@ func main() {
 - [ ] **Step 10: Build the agent binary**
 
 ```bash
-rm -f agent/internal/.gitkeep
+rm -f agent/internal/.gitkeep agent/doc.go   # real packages now exist (cmd/ + internal/)
 CGO_ENABLED=0 go build -o /tmp/agentmon-agent ./agent/cmd/agentmon-agent
 echo $?
 ```
@@ -1103,7 +1119,7 @@ func main() {
 - [ ] **Step 12: Build the hub statically (embed compiles)**
 
 ```bash
-rm -f hubd/internal/.gitkeep
+rm -f hubd/internal/.gitkeep hubd/doc.go   # real packages now exist (cmd/ + internal/)
 CGO_ENABLED=0 go build -o /tmp/agentmon-hubd ./hubd/cmd/agentmon-hubd
 echo $?
 ```
@@ -1739,7 +1755,7 @@ git commit -m "feat(m0): vite/react SPA scaffold + dev proxy + TS contracts mirr
 .PHONY: test build build-web build-hub build-agent embed docker clean
 
 test:
-	go test ./...
+	go test ./shared/... ./agent/... ./hubd/...
 
 build-web:
 	cd web && npm ci && npm run build
@@ -1908,7 +1924,7 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: "1.23" }
       - name: Unit tests (all modules)
-        run: go test ./...
+        run: go test ./shared/... ./agent/... ./hubd/...
       - name: Static build check (CGO_ENABLED=0)
         run: |
           CGO_ENABLED=0 go build ./agent/...
@@ -1929,7 +1945,7 @@ jobs:
         run: docker build -f deploy/Dockerfile -t agentmon-hubd:ci .
 ```
 
-> Note: CI does **not** run tmux/Claude-dependent tests (no tmux on the runner). Those are M1+ integration tests run on the dev box. The `go test ./...` here is the pure unit suite.
+> Note: CI does **not** run tmux/Claude-dependent tests (no tmux on the runner). Those are M1+ integration tests run on the dev box. The `go test ./shared/... ./agent/... ./hubd/...` here is the pure unit suite.
 
 - [ ] **Step 8: Make the installer executable and run the full local build**
 
@@ -1970,7 +1986,7 @@ git commit -m "feat(m0): build glue — Makefile, multi-stage Dockerfile, deploy
 - [ ] `make test` is green (shared + agent + hub unit suites).
 - [ ] `make build` produces static `bin/agentmon-hubd` (real SPA embedded) and `bin/agentmon-agent`.
 - [ ] `make docker` builds the multi-stage hub image.
-- [ ] CI workflow runs `go test ./...`, the SPA build, the `CGO_ENABLED=0` checks, and the Docker build.
+- [ ] CI workflow runs `go test ./shared/... ./agent/... ./hubd/...`, the SPA build, the `CGO_ENABLED=0` checks, and the Docker build.
 - [ ] `agentmon-hubd` serves the SPA with working **deep-link refresh** (nested route → `index.html`) and `GET /healthz`; unknown `/api/*` → 404.
 - [ ] `agentmon-agent` answers `GET /healthz` with `tmuxAvailable`.
 - [ ] SQLite migrations create the full schema on a fresh DB and re-open idempotently.
