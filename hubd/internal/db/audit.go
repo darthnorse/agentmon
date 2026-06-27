@@ -12,7 +12,8 @@ func (d *DB) Append(ctx context.Context, e AuditEntry) error {
 
 func (d *DB) Recent(ctx context.Context, limit int) ([]AuditEntry, error) {
 	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, principal_id, action, resource, result, request_id, ip, user_agent, meta
+		`SELECT id, COALESCE(principal_id,''), action, resource, result,
+		        COALESCE(request_id,''), COALESCE(ip,''), COALESCE(user_agent,''), COALESCE(meta,'')
 		 FROM audit_log ORDER BY ts DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
