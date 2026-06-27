@@ -226,3 +226,55 @@ func TestPaneWSRejectsMissingBearer(t *testing.T) {
 		t.Fatalf("status = %v, want 401", resp)
 	}
 }
+
+// TestPaneWSRejectsModeMismatch proves the URL mode must agree with the signed
+// directive's authoritative mode: a directive minted for ro cannot drive a rw URL.
+func TestPaneWSRejectsModeMismatch(t *testing.T) {
+	fake := newFakePane()
+	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	defer srv.Close()
+	// URL asks for rw, but the directive is SIGNED with Mode:"ro".
+	u := "ws" + strings.TrimPrefix(srv.URL, "http") + panePath("%3") + "?target=default&mode=rw"
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+wsToken)
+	h.Set("X-AgentMon-Directive", signedHeader(t, "ro"))
+	_, resp, err := websocket.DefaultDialer.Dial(u, h)
+	if err == nil {
+		t.Fatal("want upgrade failure when URL mode != directive mode")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %v, want 403", resp)
+	}
+}
+
+// TestPaneWSDoneChanTearsDownAndClosesPane exercises the writer-initiated teardown
+// path: when the control client's DoneChan closes ("tmux gone"), the handler must
+// (1) end the client's read with a close/error and (2) run its deferred cc.Close()
+// even though readPump is blocked in ReadMessage. The defer'd read-deadline in
+// writePump is what unblocks readPump here.
+func TestPaneWSDoneChanTearsDownAndClosesPane(t *testing.T) {
+	fake := newFakePane()
+	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	defer srv.Close()
+	conn, _, err := dial(t, srv, "rw")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_, _, _ = conn.ReadMessage() // drain scrollback
+
+	close(fake.done) // simulate the tmux control client exiting
+
+	// The client's next read must return (close frame or error) promptly.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("want read close/error after DoneChan teardown")
+	}
+	// The handler's deferred cc.Close() must have run.
+	select {
+	case <-fake.closed:
+		// expected: pane closed
+	case <-time.After(2 * time.Second):
+		t.Fatal("pane was never Close()d after teardown")
+	}
+}

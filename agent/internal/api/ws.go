@@ -109,8 +109,10 @@ func (h *PaneIO) Handler() http.HandlerFunc {
 		}
 		defer cc.Close()
 
-		// 1) scrollback bootstrap before any live output.
+		// 1) scrollback bootstrap before any live output. Deadline so a stalled
+		// client cannot block the handler on this pre-pump write.
 		if snap, err := h.Capture(ctx, target.SocketName, paneID, h.Cfg.ScrollbackLines); err == nil && len(snap) > 0 {
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			_ = conn.WriteMessage(websocket.BinaryMessage, snap)
 		}
 
@@ -123,6 +125,14 @@ func (h *PaneIO) Handler() http.HandlerFunc {
 }
 
 func writePump(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, cc PaneConn) {
+	// A writer-side exit (tmux gone, or an output/ping write error) must force
+	// readPump's blocked ReadMessage to return so the handler's deferred
+	// cc.Close()/conn.Close() actually run — a hung client would otherwise leak
+	// the handler goroutine AND the live tmux control-mode subprocess. Setting a
+	// past read deadline unblocks ReadMessage with an error; on the normal path
+	// (writePump returns via <-ctx.Done() after readPump already exited) it is a
+	// harmless no-op.
+	defer conn.SetReadDeadline(time.Now())
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
 	for {
