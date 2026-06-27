@@ -1,0 +1,17 @@
+listen: "127.0.0.1:8080"
+external_origin: "https://agentmon.example.lan"
+trust_forwarded_proto: true
+data_dir: "/data"
+session_cookie: { name: "agentmon_session", ttl: "168h" }
+login_rate_limit: { max_attempts: 5, window: "15m" }
+servers:
+  - id: "server-a"
+    name: "server-a"
+    url: "http://10.0.0.5:8377"
+    token_ref: "env:AGENTMON_SRVA_TOKEN"
+    signing_key_ref: "env:AGENTMON_SRVA_SIGNKEY"
+  - id: "server-b"
+    name: "server-b"
+    url: "http://10.0.0.6:8377"
+    token_ref: "env:AGENTMON_SRVB_TOKEN"
+    signing_key_ref: "env:AGENTMON_SRVB_SIGNKEY"

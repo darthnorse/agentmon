@@ -1,0 +1,9 @@
+listen      = "10.0.0.5:8377"
+server_id   = "server-a"
+hub_token   = "env:AGENTMON_AGENT_TOKEN"
+directive_key = "env:AGENTMON_AGENT_SIGNKEY"
+scrollback_lines = 5000
+[[targets]]
+  os_user = "dev"
+  socket_name = ""
+  label = "default"

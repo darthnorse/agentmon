@@ -1,0 +1,13 @@
+[Unit]
+Description=AgentMon agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/agentmon-agent --config /etc/agentmon/agent.toml
+User=dev
+Restart=on-failure
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

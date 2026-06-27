@@ -1,0 +1,31 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.23" }
+      - name: Unit tests (all modules)
+        run: go test ./shared/... ./agent/... ./hubd/...
+      - name: Static build check (CGO_ENABLED=0)
+        run: |
+          CGO_ENABLED=0 go build ./agent/...
+          CGO_ENABLED=0 go vet ./shared/... ./agent/...
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: cd web && npm ci && npm run build
+  docker:
+    runs-on: ubuntu-latest
+    needs: [go, web]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build hub image (embeds SPA, static hubd)
+        run: docker build -f deploy/Dockerfile -t agentmon-hubd:ci .

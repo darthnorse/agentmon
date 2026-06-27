@@ -1,0 +1,13 @@
+services:
+  agentmon-hub:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: agentmon-hubd:dev
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # behind Caddy on the host; bind LAN in real deploys
+    volumes:
+      - agentmon-data:/data
+volumes:
+  agentmon-data:
