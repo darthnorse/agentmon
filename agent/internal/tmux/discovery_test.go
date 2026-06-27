@@ -1,0 +1,163 @@
+package tmux
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
+
+// fakeRunner returns canned output keyed by tmux subcommand. For list-panes it
+// keys on the "-t <sessionId>" argument so multi-session cases are exercised.
+func fakeRunner(t *testing.T, sessions string, panes map[string]string, sessErr error) Runner {
+	t.Helper()
+	return func(ctx context.Context, args ...string) ([]byte, error) {
+		switch {
+		case contains(args, "list-sessions"):
+			if sessErr != nil {
+				return nil, sessErr
+			}
+			return []byte(sessions), nil
+		case contains(args, "list-panes"):
+			sid := argAfter(args, "-t")
+			out, ok := panes[sid]
+			if !ok {
+				t.Fatalf("no canned list-panes for %q (args=%v)", sid, args)
+			}
+			return []byte(out), nil
+		default:
+			t.Fatalf("unexpected tmux args: %v", args)
+			return nil, nil
+		}
+	}
+}
+
+func contains(args []string, s string) bool {
+	for _, a := range args {
+		if a == s {
+			return true
+		}
+	}
+	return false
+}
+
+func argAfter(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// p builds a US-delimited record from fields (tests must not hardcode \x1f).
+func p(fields ...string) string { return strings.Join(fields, fieldSep) }
+
+func TestDiscoverNoServerIsEmpty(t *testing.T) {
+	run := fakeRunner(t, "", nil, errors.New("tmux list-sessions: exit status 1: no server running on /tmp/tmux-0/default"))
+	got, err := Discover(context.Background(), run, DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("want empty non-nil slice, got %#v", got)
+	}
+}
+
+func TestDiscoverGroupsPanesIntoWindowsInOrder(t *testing.T) {
+	sessions := p("$1", "proj") + "\n"
+	panes := map[string]string{
+		"$1": strings.Join([]string{
+			// window_id windex wname wactive  pane_id pcmd pcwd pactive
+			p("@1", "0", "main", "1", "%0", "zsh", "/home/dev/proj", "1"),
+			p("@1", "0", "main", "1", "%1", "vim", "/home/dev/proj", "0"),
+			p("@2", "1", "logs", "0", "%2", "tail", "/var/log", "1"),
+		}, "\n") + "\n",
+	}
+	got, err := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+		DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 session, got %d", len(got))
+	}
+	s := got[0]
+	if len(s.Windows) != 2 {
+		t.Fatalf("want 2 windows, got %d (%+v)", len(s.Windows), s.Windows)
+	}
+	if s.Windows[0].ID != "@1" || s.Windows[0].Index != "0" || s.Windows[0].Name != "main" {
+		t.Fatalf("window[0] = %+v", s.Windows[0])
+	}
+	if len(s.Windows[0].Panes) != 2 || s.Windows[0].Panes[0].ID != "%0" || s.Windows[0].Panes[1].ID != "%1" {
+		t.Fatalf("window[0] panes = %+v", s.Windows[0].Panes)
+	}
+	if len(s.Windows[1].Panes) != 1 || s.Windows[1].Panes[0].Command != "tail" {
+		t.Fatalf("window[1] panes = %+v", s.Windows[1].Panes)
+	}
+}
+
+func TestDiscoverSessionCwdCommandFromActivePane(t *testing.T) {
+	sessions := p("$1", "proj") + "\n"
+	panes := map[string]string{
+		"$1": strings.Join([]string{
+			p("@1", "0", "main", "0", "%0", "zsh", "/home/dev/inactive", "1"),
+			p("@2", "1", "logs", "1", "%2", "claude", "/home/dev/active", "1"),
+		}, "\n") + "\n",
+	}
+	got, _ := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+		DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+	if got[0].Cwd != "/home/dev/active" || got[0].Command != "claude" {
+		t.Fatalf("session cwd/command = %q/%q, want active pane", got[0].Cwd, got[0].Command)
+	}
+}
+
+func TestDiscoverSessionFallsBackToFirstPaneWhenNoActiveFlag(t *testing.T) {
+	sessions := p("$1", "proj") + "\n"
+	panes := map[string]string{
+		"$1": p("@1", "0", "main", "0", "%0", "bash", "/srv/app", "0") + "\n",
+	}
+	got, _ := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+		DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+	if got[0].Cwd != "/srv/app" || got[0].Command != "bash" {
+		t.Fatalf("fallback cwd/command = %q/%q", got[0].Cwd, got[0].Command)
+	}
+}
+
+func TestDiscoverStampsServerTargetAndHandlesMultipleSessions(t *testing.T) {
+	sessions := p("$1", "alpha") + "\n" + p("$2", "beta") + "\n"
+	panes := map[string]string{
+		"$1": p("@1", "0", "w", "1", "%0", "zsh", "/a", "1") + "\n",
+		"$2": p("@2", "0", "w", "1", "%1", "zsh", "/b", "1") + "\n",
+	}
+	got, _ := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+		DiscoverOpts{ServerID: "server-a", TargetLabel: "default"})
+	if len(got) != 2 {
+		t.Fatalf("want 2 sessions, got %d", len(got))
+	}
+	for _, s := range got {
+		if s.Server != "server-a" || s.Target != "default" {
+			t.Fatalf("server/target not stamped: %+v", s)
+		}
+	}
+	if got[0].Name != "alpha" || got[1].Name != "beta" {
+		t.Fatalf("names/order: %q %q", got[0].Name, got[1].Name)
+	}
+}
+
+func TestDiscoverPassesSocketFlag(t *testing.T) {
+	var sawSocket bool
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		if contains(args, "-L") && argAfter(args, "-L") == "mysock" {
+			sawSocket = true
+		}
+		if contains(args, "list-sessions") {
+			return []byte(""), errors.New("no server running")
+		}
+		return nil, nil
+	}
+	_, _ = Discover(context.Background(), run, DiscoverOpts{ServerID: "srv", SocketName: "mysock"})
+	if !sawSocket {
+		t.Fatal("expected -L mysock in tmux args")
+	}
+}
