@@ -898,7 +898,7 @@ func resolveRef(v string) (string, error) {
 Run: `go test ./hubd/internal/config/ -v`
 Expected: PASS.
 
-- [ ] **Step 5: Create the committed placeholder SPA so the embed compiles**
+- [ ] **Step 5: Create the committed placeholder SPA so the embed compiles, and scope-ignore built assets**
 
 `hubd/internal/webui/dist/index.html`:
 ```html
@@ -908,6 +908,14 @@ Expected: PASS.
 </html>
 ```
 
+Append to the repo-root `.gitignore` (the embed dir needs the placeholder `index.html` tracked so `go build` works, but the real `make build`/Docker output copied here must never be committed):
+```gitignore
+
+# Built SPA copied into the embed dir; keep only the placeholder index.html tracked
+/hubd/internal/webui/dist/*
+!/hubd/internal/webui/dist/index.html
+```
+
 - [ ] **Step 6: Write the failing SPA-fallback test**
 
 `hubd/internal/webui/embed_test.go`:
@@ -915,6 +923,7 @@ Expected: PASS.
 package webui
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -934,12 +943,12 @@ func TestSPAFallbackServesIndexForDeepLink(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	buf := new(strings.Builder)
-	io := make([]byte, 4096)
-	n, _ := resp.Body.Read(io)
-	buf.Write(io[:n])
-	if !strings.Contains(buf.String(), "AgentMon") {
-		t.Fatalf("deep link did not return index.html: %q", buf.String())
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "AgentMon") {
+		t.Fatalf("deep link did not return index.html: %q", body)
 	}
 }
 
@@ -1100,11 +1109,11 @@ echo $?
 ```
 Expected: `0`.
 
-- [ ] **Step 13: Commit (force-add the placeholder dist past .gitignore)**
+- [ ] **Step 13: Commit (the `!index.html` negation keeps the placeholder tracked)**
 
 ```bash
-git add hubd/
-git add -f hubd/internal/webui/dist/index.html
+git add hubd/ .gitignore
+git status --short    # expect: .gitignore modified, hubd/** added incl. dist/index.html, NO dist/assets
 git commit -m "feat(m0): hub skeleton (config + /healthz + embedded SPA fallback)"
 ```
 
@@ -1546,9 +1555,9 @@ git commit -m "feat(m0): sqlite migrations + user/audit repos (modernc, CGO_ENAB
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
