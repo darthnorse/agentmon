@@ -63,7 +63,7 @@ func TestReadLoopQuitUnblocksFullOutput(t *testing.T) {
 func TestNewControlClientRejectsInvalidPane(t *testing.T) {
 	bad := []string{"", "0", "%", "%0 ", "% 0", "%0\nkill-server", "%0; ls", "%a", "pane0"}
 	for _, p := range bad {
-		if _, err := NewControlClient(context.Background(), "sess", p); err == nil {
+		if _, err := NewControlClient(context.Background(), "", "sess", p); err == nil {
 			t.Errorf("pane %q: expected error, got nil", p)
 		}
 	}
