@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -26,11 +27,22 @@ type ControlClient struct {
 	mu     sync.Mutex // serialises writes to the control client's stdin
 	closed bool
 
+	// quit is closed by Close to unblock readLoop's send to Output if the
+	// consumer has stopped draining — otherwise a full Output channel deadlocks
+	// the parser goroutine (and leaks it + the tmux process).
+	quit chan struct{}
 	// Output delivers raw, un-escaped pty bytes for the target pane.
 	Output chan []byte
-	// Done closes when the control client exits (%exit or process death).
+	// Done closes when the control client exits (%exit or process death), after
+	// the tmux process has been reaped.
 	Done chan struct{}
 }
+
+// paneIDRe matches a tmux pane id ("%0", "%37"). The pane string is interpolated
+// into the control-mode command stream (send-keys), so it MUST be validated to
+// keep a caller-supplied value (e.g. a request-derived pane id in M2) from
+// injecting a second tmux command via an embedded newline.
+var paneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 
 // NewControlClient starts the control-mode client. The caller MUST keep the
 // process alive by reading Output; a dead reader will block the parser.
@@ -39,6 +51,9 @@ type ControlClient struct {
 // immediately with %exit. We therefore hold the stdin pipe open for the whole
 // session and use it for send-keys / refresh-client.
 func NewControlClient(ctx context.Context, session, pane string) (*ControlClient, error) {
+	if !paneIDRe.MatchString(pane) {
+		return nil, fmt.Errorf("invalid pane id %q", pane)
+	}
 	cmd := exec.CommandContext(ctx, "tmux", "-C", "attach-session", "-t", session)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -58,6 +73,7 @@ func NewControlClient(ctx context.Context, session, pane string) (*ControlClient
 		pane:    pane,
 		cmd:     cmd,
 		stdin:   stdin,
+		quit:    make(chan struct{}),
 		Output:  make(chan []byte, 256),
 		Done:    make(chan struct{}),
 	}
@@ -66,7 +82,10 @@ func NewControlClient(ctx context.Context, session, pane string) (*ControlClient
 }
 
 func (c *ControlClient) readLoop(stdout io.Reader) {
+	// Reap the tmux process when the loop ends (defers run LIFO, so Wait runs
+	// before Done closes — Done signals "exited AND reaped").
 	defer close(c.Done)
+	defer func() { _ = c.cmd.Wait() }()
 	r := bufio.NewReader(stdout)
 	inBlock := false // inside a %begin/%end command-response block
 	for {
@@ -84,7 +103,7 @@ func (c *ControlClient) readLoop(stdout io.Reader) {
 				if pane == c.pane {
 					select {
 					case c.Output <- unescapeOutput(data):
-					case <-c.Done:
+					case <-c.quit:
 						return
 					}
 				}
@@ -142,6 +161,7 @@ func (c *ControlClient) Close() {
 	c.mu.Lock()
 	if !c.closed {
 		c.closed = true
+		close(c.quit)
 		_ = c.stdin.Close()
 	}
 	c.mu.Unlock()

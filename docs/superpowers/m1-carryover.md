@@ -10,6 +10,20 @@ review (opus) returned "Ready to merge: With fixes" — the cheap fixes were app
 in `0ddbc9d`; the one substantive item (tmux `-F` de-escaping, below) is deferred
 here consciously.
 
+## Post-merge multi-review pass (with Codex `gpt-5.5`)
+
+After merge, a 4-lens `/multi-review --codex` (feature-dev:code-reviewer +
+code-simplifier + deep-scan + codex) ran on the M1 code. It **fixed** (on a
+follow-up branch): a goroutine + tmux-process leak in `ControlClient.readLoop`
+(dead `case <-c.Done` escape hatch → now a real `quit` channel; process now
+reaped via `cmd.Wait`), pane-id command-injection hardening (`NewControlClient`
+now rejects ids not matching `^%[0-9]+$` before any exec), a bearer length-leak
+(now compares fixed-size SHA-256 digests so token length can't be timed), and a
+small `writeJSONError` reuse in `bearer.go`. Two regression tests added
+(quit-unblocks-full-Output; pane-id rejection). **Codex independently re-flagged
+the tmux `-F` de-escaping below** — cross-model confirmation that it is real;
+still deferred to M2.
+
 ## Must fix at the M2 agent review gate
 
 - **Robust tmux `-F` delimiter / de-escaping — the M1 normalization is a heuristic.**
@@ -55,6 +69,10 @@ here consciously.
 - **`runner.go`** error wraps `*exec.ExitError` via `%w` but appends stderr as `%s`;
   typed unwrapping wouldn't see stderr. Fine for the current string-match
   `isNoServer`; revisit only if a caller needs typed unwrapping.
+- **Stdlib-reuse nitpicks in the ported `control.go`** (multi-review, low): `indexByte`
+  reimplements `bytes.IndexByte`; `trimNL` reimplements `bytes.TrimRight(b, "\r\n")`;
+  `discovery.go`'s `cut2` is a one-call passthrough of `strings.Cut`. Skipped in the
+  M1 fix pass (nitpicks, two in verbatim-ported code) — fold in if/when M2 touches them.
 
 ## Project-wide hardening (not M1/M2-specific; backlog)
 
