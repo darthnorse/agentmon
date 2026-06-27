@@ -50,8 +50,15 @@ func argAfter(args []string, flag string) string {
 	return ""
 }
 
-// p builds a US-delimited record from fields (tests must not hardcode \x1f).
-func p(fields ...string) string { return strings.Join(fields, fieldSep) }
+// p builds a record from fields delimited the way tmux renders our 0x1f field
+// separator: the literal token `\037`. A Runner returns tmux's -F output verbatim,
+// so fixtures must use the token (not a raw 0x1f byte), and name fields must carry
+// tmux's C-escaping (see pe).
+func p(fields ...string) string { return strings.Join(fields, delimToken) }
+
+// pe escapes a name field the way tmux's -F does (backslash -> \\), for fixtures
+// whose session/window names contain a backslash.
+func pe(name string) string { return strings.ReplaceAll(name, `\`, `\\`) }
 
 func TestDiscoverNoServerIsEmpty(t *testing.T) {
 	run := fakeRunner(t, "", nil, errors.New("tmux list-sessions: exit status 1: no server running on /tmp/tmux-0/default"))
@@ -142,6 +149,47 @@ func TestDiscoverStampsServerTargetAndHandlesMultipleSessions(t *testing.T) {
 	}
 	if got[0].Name != "alpha" || got[1].Name != "beta" {
 		t.Fatalf("names/order: %q %q", got[0].Name, got[1].Name)
+	}
+}
+
+func TestDiscoverDecodesEscapedNames(t *testing.T) {
+	// Real names contain a backslash AND a space; tmux C-escapes the name fields
+	// (session_name, window_name) but emits pane_current_path raw.
+	sessions := p("$1", pe(`proj a\b`)) + "\n"
+	panes := map[string]string{
+		"$1": p("@1", "0", pe(`win x\y`), "1", "%0", "bash", `/home/dev/a\b`, "1") + "\n",
+	}
+	got, err := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+		DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 session, got %d", len(got))
+	}
+	if got[0].Name != `proj a\b` {
+		t.Fatalf("session name = %q, want %q (un-doubled backslash)", got[0].Name, `proj a\b`)
+	}
+	if len(got[0].Windows) != 1 || got[0].Windows[0].Name != `win x\y` {
+		t.Fatalf("window name = %+v, want %q", got[0].Windows, `win x\y`)
+	}
+	if got[0].Windows[0].Panes[0].Cwd != `/home/dev/a\b` {
+		t.Fatalf("pane cwd = %q, want raw %q", got[0].Windows[0].Panes[0].Cwd, `/home/dev/a\b`)
+	}
+}
+
+func TestDiscoverErrorsOnMalformedRecord(t *testing.T) {
+	// A pane record whose field count is wrong (here: a raw path containing the
+	// literal token text \037 splits into an extra field) must ERROR, not be
+	// silently dropped.
+	sessions := p("$1", "proj") + "\n"
+	panes := map[string]string{
+		"$1": p("@1", "0", "main", "1", "%0", "bash", `/weird`+delimToken+`path`, "1") + "\n",
+	}
+	_, err := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+		DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+	if err == nil {
+		t.Fatal("want error for a malformed (wrong field count) record, got nil")
 	}
 }
 

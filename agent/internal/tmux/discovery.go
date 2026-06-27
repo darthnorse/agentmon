@@ -7,9 +7,11 @@ import (
 	"agentmon/shared"
 )
 
-// fieldSep is ASCII Unit Separator (0x1f). We use it as the tmux -F delimiter
-// because it cannot appear in a session/window name or a filesystem path, so it
-// safely separates fields that may contain spaces.
+// fieldSep is the ASCII Unit Separator (0x1f) we inject into -F format templates
+// as the field delimiter. It cannot occur in a session/window name or a path, so
+// it safely separates fields that may contain spaces. tmux escapes this control
+// byte in its output, rendering it as the literal token `\037` (delimToken), which
+// is what Discover actually splits on — see escape.go.
 const fieldSep = "\x1f"
 
 // Runner executes `tmux <args...>` and returns stdout. Production uses
@@ -17,10 +19,10 @@ const fieldSep = "\x1f"
 // SHOULD carry tmux's stderr text (ExecRunner does) so Discover can recognise the
 // benign "no server running" case.
 //
-// CONTRACT: a Runner must return list-* output in which fieldSep (0x1f) appears
-// as a real 0x1f byte — any tmux -F escaping already normalised. ExecRunner does
-// this; the unit-test fake emits clean 0x1f directly. (See ExecRunner for the
-// known limitation of the current normalisation.)
+// CONTRACT: a Runner returns tmux's list-* -F output VERBATIM — Discover does all
+// de-escaping (splitFields on delimToken, unescapeName on the C-escaped name
+// fields; command/path are emitted raw). ExecRunner returns stdout unchanged; the
+// unit-test fake emits the same faithful form (token delimiters, \\-escaped names).
 type Runner func(ctx context.Context, args ...string) ([]byte, error)
 
 // DiscoverOpts carries the primitive inputs of one discovery pass (no config
@@ -55,10 +57,11 @@ func Discover(ctx context.Context, run Runner, opts DiscoverOpts) ([]shared.Sess
 
 	sessions := []shared.Session{}
 	for _, line := range nonEmptyLines(sessOut) {
-		sid, name, ok := cut2(line)
-		if !ok {
-			continue
+		f, err := splitFields(line, 2)
+		if err != nil {
+			return nil, err
 		}
+		sid, name := f[0], unescapeName(f[1])
 		windows, cwd, command, err := discoverPanes(ctx, run, base, sid)
 		if err != nil {
 			return nil, err
@@ -85,11 +88,11 @@ func discoverPanes(ctx context.Context, run Runner, base []string, sessionID str
 	}
 	pos := map[string]int{} // window_id → index in windows
 	for _, line := range nonEmptyLines(out) {
-		f := strings.Split(line, fieldSep)
-		if len(f) != 8 {
-			continue
+		f, err := splitFields(line, 8)
+		if err != nil {
+			return nil, "", "", err
 		}
-		wid, windex, wname, wactive := f[0], f[1], f[2], f[3]
+		wid, windex, wname, wactive := f[0], f[1], unescapeName(f[2]), f[3]
 		pid, pcmd, pcwd, pactive := f[4], f[5], f[6], f[7]
 		i, seen := pos[wid]
 		if !seen {
@@ -135,9 +138,4 @@ func nonEmptyLines(b []byte) []string {
 		}
 	}
 	return out
-}
-
-func cut2(line string) (a, b string, ok bool) {
-	before, after, found := strings.Cut(line, fieldSep)
-	return before, after, found
 }
