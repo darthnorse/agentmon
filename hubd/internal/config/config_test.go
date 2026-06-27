@@ -39,3 +39,45 @@ servers:
 		t.Fatalf("bad cfg: %+v", cfg)
 	}
 }
+
+func TestLoadEmptyTokenRefErrors(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte(`
+listen: "127.0.0.1:8080"
+external_origin: "https://agentmon.lan"
+data_dir: "/data"
+servers:
+  - id: server-a
+    name: server-a
+    url: "http://10.0.0.5:8377"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for server with no token_ref/signing_key_ref, got nil")
+	}
+}
+
+func TestLoadUnsetEnvRefErrors(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte(`
+listen: "127.0.0.1:8080"
+external_origin: "https://agentmon.lan"
+data_dir: "/data"
+servers:
+  - id: server-a
+    name: server-a
+    url: "http://10.0.0.5:8377"
+    token_ref: "env:DEFINITELY_UNSET_AGENTMON_HUB"
+    signing_key_ref: "literal-key"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for unset env ref, got nil")
+	}
+}

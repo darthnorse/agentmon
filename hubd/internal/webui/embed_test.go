@@ -42,3 +42,16 @@ func TestSPAFallbackDoesNotSwallowAPIPaths(t *testing.T) {
 		t.Fatalf("expected 404 for unknown /api path, got %d", resp.StatusCode)
 	}
 }
+
+func TestSPAFallbackDoesNotSwallowBareAPIPath(t *testing.T) {
+	srv := httptest.NewServer(Handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for bare /api, got %d", resp.StatusCode)
+	}
+}
