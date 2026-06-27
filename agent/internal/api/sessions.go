@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"agentmon/agent/internal/config"
@@ -29,8 +30,12 @@ func SessionsHandler(cfg config.Config, discover Discoverer) http.HandlerFunc {
 			SocketName:  t.SocketName,
 		})
 		if err != nil {
+			log.Printf("sessions: discovery failed (target=%q): %v", t.Label, err)
 			writeJSONError(w, http.StatusInternalServerError, "discovery failed")
 			return
+		}
+		if sessions == nil {
+			sessions = []shared.Session{}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(shared.SessionList{Sessions: sessions})

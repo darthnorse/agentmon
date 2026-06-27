@@ -16,6 +16,11 @@ const fieldSep = "\x1f"
 // ExecRunner; tests inject a fake. On a tmux command failure the returned error
 // SHOULD carry tmux's stderr text (ExecRunner does) so Discover can recognise the
 // benign "no server running" case.
+//
+// CONTRACT: a Runner must return list-* output in which fieldSep (0x1f) appears
+// as a real 0x1f byte — any tmux -F escaping already normalised. ExecRunner does
+// this; the unit-test fake emits clean 0x1f directly. (See ExecRunner for the
+// known limitation of the current normalisation.)
 type Runner func(ctx context.Context, args ...string) ([]byte, error)
 
 // DiscoverOpts carries the primitive inputs of one discovery pass (no config

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"agentmon/agent/internal/config"
@@ -88,5 +89,21 @@ func TestSessionsHandlerDiscoveryError500(t *testing.T) {
 	h(rr, httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil))
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("code %d, want 500", rr.Code)
+	}
+}
+
+func TestSessionsHandlerNilDiscoveryEncodesEmptyArray(t *testing.T) {
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
+		return nil, nil // a Discoverer is not contractually required to return non-nil
+	}
+	h := SessionsHandler(testCfg(), disc)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"sessions":[]`) || strings.Contains(body, `"sessions":null`) {
+		t.Fatalf("want sessions:[] not null, got %s", body)
 	}
 }
