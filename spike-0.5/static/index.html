@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<meta name="apple-mobile-web-app-title" content="AgentMon" />
+<meta name="theme-color" content="#111418" />
+<link rel="manifest" href="manifest.json" />
+<link rel="stylesheet" href="vendor/xterm.css" />
+<title>AgentMon spike 0.5</title>
+<style>
+  html, body { height: 100%; margin: 0; background: #111418;
+    overflow: hidden; overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%; touch-action: none; }
+  #app { display: flex; flex-direction: column; height: 100%;
+    font: 13px -apple-system, system-ui, sans-serif; color: #cdd6e0; }
+  #status { flex: 0 0 auto; padding: 4px 8px; background: #1a1f26;
+    display: flex; gap: 8px; align-items: center; font-size: 12px; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #3ddc84; }
+  #dot.off { background: #e5534b; }
+  #status .grow { flex: 1; }
+  #status .ro { color: #e5a23b; font-weight: 600; }
+  #term { flex: 1 1 auto; min-height: 0; padding: 2px; }
+  /* single-row, horizontally-scrollable strip (swipe left/right), Termius-style */
+  #bar { flex: 0 0 auto; display: flex; flex-wrap: nowrap; gap: 4px;
+    padding: 4px 6px; background: #1a1f26; border-top: 1px solid #2a313b;
+    overflow-x: auto; overflow-y: hidden; touch-action: pan-x;
+    -webkit-overflow-scrolling: touch; }
+  #bar::-webkit-scrollbar { display: none; }   /* hide the scrollbar */
+  #bar button { flex: 0 0 auto; height: 32px; min-width: 0; padding: 0 10px;
+    border: 1px solid #2f3742; border-radius: 6px; background: #232a33;
+    color: #e6edf5; font-size: 12px; line-height: 1; white-space: nowrap;
+    touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  #bar button:active { background: #2f3a47; }
+  #bar button.armed { background: #2f6feb; border-color: #2f6feb; color: #fff; }
+  #bar button.locked { background: #e5534b; border-color: #e5534b; color: #fff; }
+  #banner { position: fixed; top: 0; left: 0; right: 0; padding: 8px;
+    background: #e5534b; color: #fff; text-align: center; font-weight: 600;
+    display: none; z-index: 10; }
+  #flash { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,.8); color: #fff; padding: 6px 12px; border-radius: 8px;
+    font-size: 13px; display: none; z-index: 11; }
+</style>
+</head>
+<body>
+<div id="banner">disconnected — reconnecting…</div>
+<div id="flash"></div>
+<div id="app">
+  <div id="status">
+    <span id="dot"></span>
+    <span id="title">agentmon-spike</span>
+    <span class="grow"></span>
+    <span id="mode"></span>
+  </div>
+  <div id="term"></div>
+  <div id="bar">
+    <button data-k="esc">Esc</button>
+    <button data-k="ctrl" id="b-ctrl">Ctrl</button>
+    <button data-k="tab">Tab</button>
+    <button data-k="stab">⇧Tab</button>
+    <button data-k="up">↑</button>
+    <button data-k="down">↓</button>
+    <button data-k="left">←</button>
+    <button data-k="right">→</button>
+    <button data-k="nl">⏎ nl</button>
+    <button data-k="paste">Paste</button>
+    <button data-k="copy">Copy</button>
+    <button data-k="enter">Enter</button>
+    <button data-k="lock" id="b-lock">🔓</button>
+  </div>
+</div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script>
+(function () {
+  "use strict";
+  // === soft-newline sequence: resolved empirically against the installed
+  // Claude Code build (v2.1.195) during the spike smoke-test.
+  // Verified: LF (0x0a) inserts a newline WITHOUT submitting; CR (0x0d) submits.
+  // (Meta-Enter "\x1b\r" and "\\\r" also insert a newline, but LF is the
+  // cleanest single-byte choice and leaves no visible backslash.)
+  var SOFT_NEWLINE = "\n"; // 0x0a
+
+  var token = new URLSearchParams(location.search).get("token") || "";
+  var enc = new TextEncoder();
+
+  var term = new Terminal({
+    cursorBlink: true, fontSize: 12, scrollback: 5000,
+    fontFamily: "Menlo, Consolas, monospace",
+    theme: { background: "#111418", foreground: "#cdd6e0" }
+  });
+  var fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById("term"));
+  fit.fit();
+
+  var ws = null, locked = false, ctrlArmed = false, reconnectTimer = null;
+
+  // ---- helpers ----
+  function flash(msg) {
+    var f = document.getElementById("flash");
+    f.textContent = msg; f.style.display = "block";
+    clearTimeout(f._t); f._t = setTimeout(function () { f.style.display = "none"; }, 1400);
+  }
+  function connected(on) {
+    document.getElementById("dot").className = on ? "" : "off";
+    document.getElementById("banner").style.display = on ? "none" : "block";
+  }
+  function sendBytes(u8) {
+    if (locked) { flash("locked — tap 🔒 to unlock"); return; }
+    if (ws && ws.readyState === 1) ws.send(u8);
+  }
+  function sendStr(s) { sendBytes(enc.encode(s)); }
+
+  // mode-aware arrows: app-cursor-keys (DECCKM) changes ESC[ -> ESCO
+  function arrow(d) {
+    var app = term.modes && term.modes.applicationCursorKeysMode;
+    sendStr("\x1b" + (app ? "O" : "[") + d);
+  }
+
+  function setLock(v) {
+    locked = v;
+    var b = document.getElementById("b-lock");
+    b.textContent = v ? "🔒" : "🔓";
+    b.className = v ? "locked" : "";
+    document.getElementById("mode").className = v ? "ro" : "";
+    document.getElementById("mode").textContent = v ? "READ-ONLY" : "";
+  }
+  function setCtrl(v) {
+    ctrlArmed = v;
+    document.getElementById("b-ctrl").className = v ? "armed" : "";
+  }
+
+  // ---- terminal -> server (typed keys, pastes, etc.) ----
+  term.onData(function (d) {
+    if (locked) return;
+    if (ctrlArmed) {
+      var c = d.charCodeAt(0), ctrl;
+      if (c >= 97 && c <= 122) ctrl = c - 96;        // a-z -> ^A.. (0x01..0x1a)
+      else if (c >= 65 && c <= 90) ctrl = c - 64;    // A-Z
+      else ctrl = c & 0x1f;
+      sendBytes(new Uint8Array([ctrl]));
+      setCtrl(false);
+      if (d.length > 1) sendStr(d.slice(1));
+      return;
+    }
+    sendStr(d);
+  });
+
+  term.onResize(function (sz) {
+    if (ws && ws.readyState === 1)
+      ws.send(JSON.stringify({ type: "resize", cols: sz.cols, rows: sz.rows }));
+  });
+
+  // ---- paste / copy (need a secure context: HTTPS) ----
+  async function doPaste() {
+    try {
+      var text = await navigator.clipboard.readText();
+      if (!text) return;
+      if (text.indexOf("\n") >= 0 || text.length > 200) {
+        var lines = text.split("\n").length;
+        if (!confirm("Paste " + text.length + " chars / " + lines + " lines?")) return;
+      }
+      term.paste(text); // xterm owns bracketed-paste framing (single owner)
+    } catch (e) { alert("Paste needs HTTPS + clipboard permission:\n" + e); }
+  }
+  async function doCopy() {
+    var sel = term.getSelection();
+    if (!sel) { flash("no selection — long-press to select"); return; }
+    try { await navigator.clipboard.writeText(sel); flash("copied " + sel.length + " chars"); }
+    catch (e) { alert("Copy needs HTTPS:\n" + e); }
+  }
+
+  // ---- key bar ----
+  var actions = {
+    esc:   function () { sendBytes(new Uint8Array([0x1b])); }, // lone, flushed now
+    ctrl:  function () { setCtrl(!ctrlArmed); },
+    tab:   function () { sendBytes(new Uint8Array([0x09])); },
+    stab:  function () { sendStr("\x1b[Z"); },
+    up:    function () { arrow("A"); },
+    down:  function () { arrow("B"); },
+    left:  function () { arrow("D"); },
+    right: function () { arrow("C"); },
+    nl:    function () { sendStr(SOFT_NEWLINE); },  // newline WITHOUT submitting
+    enter: function () { sendBytes(new Uint8Array([0x0d])); },
+    paste: doPaste,
+    copy:  doCopy,
+    lock:  function () { setLock(!locked); }
+  };
+  var bar = document.getElementById("bar");
+  // pointerdown preventDefault keeps the hidden textarea focused (keyboard up)
+  bar.addEventListener("pointerdown", function (e) {
+    if (e.target.tagName === "BUTTON") e.preventDefault();
+  });
+  bar.addEventListener("click", function (e) {
+    var k = e.target && e.target.getAttribute("data-k");
+    if (k && actions[k]) { actions[k](); term.focus(); }
+  });
+
+  // ---- touch: swipe = scroll, long-press leaves xterm's own selection ----
+  var termEl = document.getElementById("term");
+  var tY = null, moved = false;
+  termEl.addEventListener("touchstart", function (e) {
+    if (e.touches.length === 1) { tY = e.touches[0].clientY; moved = false; }
+  }, { passive: true });
+  termEl.addEventListener("touchmove", function (e) {
+    if (tY === null || e.touches.length !== 1) return;
+    var y = e.touches[0].clientY, dy = tY - y;
+    var cell = term.options.fontSize * 1.2;
+    if (Math.abs(dy) > 6) {
+      moved = true;
+      var lines = Math.trunc(dy / cell);
+      if (lines !== 0) { term.scrollLines(lines); tY = y; }
+      e.preventDefault(); // stop the page from scrolling/rubber-banding
+    }
+  }, { passive: false });
+  termEl.addEventListener("touchend", function () { tY = null; }, { passive: true });
+
+  // ---- viewport: keep prompt above the soft keyboard; handle rotation ----
+  function applyViewport() {
+    var vv = window.visualViewport;
+    document.getElementById("app").style.height =
+      (vv ? vv.height : window.innerHeight) + "px";
+    try { fit.fit(); } catch (e) {}
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", applyViewport);
+    window.visualViewport.addEventListener("scroll", applyViewport);
+  }
+  window.addEventListener("resize", applyViewport);
+  window.addEventListener("orientationchange", function () { setTimeout(applyViewport, 300); });
+  applyViewport();
+
+  // ---- websocket ----
+  function connect() {
+    var proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(proto + "//" + location.host + "/ws?token=" + encodeURIComponent(token));
+    ws.binaryType = "arraybuffer";
+    ws.onopen = function () {
+      connected(true);
+      term.reset();              // fresh paint; snapshot arrives next
+      term.onResize && fit.fit();
+      // nudge the server with our current size right away
+      ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      term.focus();
+    };
+    ws.onmessage = function (ev) {
+      if (typeof ev.data === "string") return; // (server only sends control->client rarely)
+      term.write(new Uint8Array(ev.data));
+    };
+    ws.onclose = function () {
+      connected(false);
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connect, 1200); // survive phone sleep / network change
+    };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  }
+
+  setLock(false); // spike default: unlocked so the tester can type immediately
+  connect();
+  // tapping the terminal focuses xterm's hidden textarea -> soft keyboard
+  termEl.addEventListener("click", function () { if (!moved) term.focus(); });
+})();
+</script>
+</body>
+</html>

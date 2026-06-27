@@ -1,0 +1,25 @@
+# Compiled binaries
+agentmon-hubd
+agentmon-agent
+/spike-0.5/spike
+/spike-0.5/smoke
+*.test
+*.out
+
+# Secrets / runtime artifacts (never commit)
+cert.pem
+key.pem
+token.txt
+*.sqlite
+*.db
+/data/
+
+# Spike scratch (throwaway Claude working dir)
+/spike-0.5/scratch/
+
+# Node / web build output
+node_modules/
+web/dist/
+
+# Logs
+*.log

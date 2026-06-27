@@ -1,0 +1,10 @@
+{
+  "name": "AgentMon spike 0.5",
+  "short_name": "AgentMon",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#111418",
+  "theme_color": "#111418",
+  "start_url": "./",
+  "icons": []
+}
