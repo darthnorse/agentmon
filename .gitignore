@@ -25,3 +25,7 @@ web/dist/
 
 # Logs
 *.log
+
+# Built SPA copied into the embed dir; keep only the placeholder index.html tracked
+/hubd/internal/webui/dist/*
+!/hubd/internal/webui/dist/index.html
