@@ -10,7 +10,7 @@ func TestLoadResolvesEnvRefs(t *testing.T) {
 	t.Setenv("AGENTMON_AGENT_TOKEN", "secret-token")
 	dir := t.TempDir()
 	p := filepath.Join(dir, "agent.toml")
-	os.WriteFile(p, []byte(`
+	if err := os.WriteFile(p, []byte(`
 listen = "10.0.0.5:8377"
 server_id = "server-a"
 hub_token = "env:AGENTMON_AGENT_TOKEN"
@@ -20,7 +20,9 @@ scrollback_lines = 4000
   os_user = "dev"
   socket_name = ""
   label = "default"
-`), 0o600)
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg, err := Load(p)
 	if err != nil {
@@ -43,12 +45,14 @@ scrollback_lines = 4000
 func TestLoadMissingEnvRefErrors(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "agent.toml")
-	os.WriteFile(p, []byte(`
+	if err := os.WriteFile(p, []byte(`
 listen = "x"
 server_id = "s"
 hub_token = "env:DEFINITELY_NOT_SET_AGENTMON"
 directive_key = "k"
-`), 0o600)
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Load(p); err == nil {
 		t.Fatal("expected error for unset env ref")
 	}

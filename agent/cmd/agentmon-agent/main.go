@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os/exec"
 
 	"agentmon/agent/internal/api"
 	"agentmon/agent/internal/config"
@@ -30,8 +31,9 @@ func main() {
 		return tmux.Discover(ctx, tmux.ExecRunner, opts)
 	}
 
+	_, tmuxErr := exec.LookPath("tmux")
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", api.HealthHandler(cfg.ServerID, version))
+	mux.HandleFunc("GET /healthz", api.HealthHandler(cfg.ServerID, version, tmuxErr == nil))
 	mux.Handle("GET /sessions", api.RequireBearer(cfg.HubToken, api.SessionsHandler(cfg, discover)))
 
 	log.Printf("agentmon-agent %s listening on %s (server %s)", version, cfg.Listen, cfg.ServerID)
