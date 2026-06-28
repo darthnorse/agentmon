@@ -79,10 +79,10 @@ func main() {
 			HealthTimeout:       3 * time.Second,
 			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
-		Enroll: api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
+		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,
 		Install: api.InstallDeps{HubURL: cfg.ExternalOrigin},
-		WebUI: webui.Handler(),
+		WebUI:   webui.Handler(),
 	})
 
 	srv := &http.Server{

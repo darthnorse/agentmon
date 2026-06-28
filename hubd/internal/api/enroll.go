@@ -45,7 +45,7 @@ type enrollReq struct {
 type enrollResp struct {
 	ServerID   string `json:"serverId"`
 	Bearer     string `json:"bearer"`
-	SigningKey  string `json:"signingKey"`
+	SigningKey string `json:"signingKey"`
 }
 
 // Handler is open (no RequireAuth); it is mounted behind the onboarding

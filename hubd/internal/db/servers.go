@@ -13,7 +13,7 @@ type Server struct {
 	URL          string
 	Status       string
 	Bearer       string
-	SigningKey    string
+	SigningKey   string
 	Labels       []string
 	OS           string
 	Arch         string
