@@ -1,0 +1,76 @@
+package registry
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"agentmon/hubd/internal/config"
+	"agentmon/shared"
+)
+
+func fakeAgent(t *testing.T, wantToken string) *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+wantToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"sessions":[{"name":"proj","server":"WRONG","target":"default","cwd":"/home/dev/proj","command":"claude","windows":[]}]}`))
+	})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	return httptest.NewServer(mux)
+}
+
+func TestClientSessionsStampsServerID(t *testing.T) {
+	ts := fakeAgent(t, "tok-a")
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	srv := config.Server{ID: "server-a", URL: ts.URL, Token: "tok-a"}
+	var got []shared.Session
+	var err error
+	got, err = c.Sessions(context.Background(), srv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "proj" || got[0].Server != "server-a" {
+		t.Fatalf("sessions: %+v", got)
+	}
+}
+
+func TestClientSessionsBadTokenErrors(t *testing.T) {
+	ts := fakeAgent(t, "tok-a")
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	srv := config.Server{ID: "server-a", URL: ts.URL, Token: "WRONG"}
+	if _, err := c.Sessions(context.Background(), srv, ""); err == nil {
+		t.Fatal("bad token must error")
+	}
+}
+
+func TestClientSessionsMalformedJSONErrors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{not json`))
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	if _, err := c.Sessions(context.Background(), config.Server{ID: "s", URL: ts.URL, Token: "t"}, ""); err == nil {
+		t.Fatal("malformed json must error")
+	}
+}
+
+func TestClientHealth(t *testing.T) {
+	ts := fakeAgent(t, "tok-a")
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	if !c.Health(context.Background(), config.Server{URL: ts.URL}) {
+		t.Fatal("healthy agent must report true")
+	}
+	ts.Close()
+	if c.Health(context.Background(), config.Server{URL: ts.URL}) {
+		t.Fatal("dead agent must report false")
+	}
+}

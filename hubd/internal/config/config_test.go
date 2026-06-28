@@ -61,6 +61,8 @@ servers:
 }
 
 func TestLoadUnsetEnvRefErrors(t *testing.T) {
+	// Even when the env var is set, a bare-literal signing_key_ref must be rejected.
+	t.Setenv("SRVA_TOKEN", "tok-a")
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(p, []byte(`
@@ -71,13 +73,13 @@ servers:
   - id: server-a
     name: server-a
     url: "http://10.0.0.5:8377"
-    token_ref: "env:DEFINITELY_UNSET_AGENTMON_HUB"
+    token_ref: "env:SRVA_TOKEN"
     signing_key_ref: "literal-key"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(p)
 	if err == nil {
-		t.Fatal("expected error for unset env ref, got nil")
+		t.Fatal("bare literal signing_key_ref must be rejected even when env is set")
 	}
 }

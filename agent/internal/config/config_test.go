@@ -8,13 +8,14 @@ import (
 
 func TestLoadResolvesEnvRefs(t *testing.T) {
 	t.Setenv("AGENTMON_AGENT_TOKEN", "secret-token")
+	t.Setenv("AGENTMON_AGENT_DKEY", "dkey-value")
 	dir := t.TempDir()
 	p := filepath.Join(dir, "agent.toml")
 	if err := os.WriteFile(p, []byte(`
 listen = "10.0.0.5:8377"
 server_id = "server-a"
 hub_token = "env:AGENTMON_AGENT_TOKEN"
-directive_key = "literal-key"
+directive_key = "env:AGENTMON_AGENT_DKEY"
 scrollback_lines = 4000
 [[targets]]
   os_user = "dev"
@@ -31,8 +32,8 @@ scrollback_lines = 4000
 	if cfg.HubToken != "secret-token" {
 		t.Fatalf("env ref not resolved: %q", cfg.HubToken)
 	}
-	if cfg.DirectiveKey != "literal-key" {
-		t.Fatalf("literal mangled: %q", cfg.DirectiveKey)
+	if cfg.DirectiveKey != "dkey-value" {
+		t.Fatalf("env ref not resolved: %q", cfg.DirectiveKey)
 	}
 	if cfg.ServerID != "server-a" || cfg.ScrollbackLines != 4000 {
 		t.Fatalf("bad cfg: %+v", cfg)
@@ -49,12 +50,30 @@ func TestLoadMissingEnvRefErrors(t *testing.T) {
 listen = "x"
 server_id = "s"
 hub_token = "env:DEFINITELY_NOT_SET_AGENTMON"
-directive_key = "k"
+directive_key = "env:DEFINITELY_NOT_SET_AGENTMON_DKEY"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(p); err == nil {
 		t.Fatal("expected error for unset env ref")
+	}
+}
+
+func TestLoadRejectsBareLiteralSecret(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "agent.toml")
+	if err := os.WriteFile(p, []byte(`
+listen = "10.0.0.5:8377"
+server_id = "server-a"
+hub_token = "plain-literal-token"
+directive_key = "env:SOMEKEY"
+[[targets]]
+  os_user = "dev"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Fatal("bare-literal hub_token must be rejected")
 	}
 }
 
