@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func fixedMinter(now time.Time) Minter {
 	n := 0
 	return Minter{
 		Now:          func() time.Time { return now },
-		NewNonce:     func() string { n++; return "nonce-" + string(rune('0'+n)) },
+		NewNonce:     func() string { n++; return fmt.Sprintf("nonce-%d", n) },
 		NewRequestID: func() string { return "req-1" },
 	}
 }

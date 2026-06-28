@@ -6,6 +6,7 @@ package directive
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,13 +35,17 @@ func (m Minter) now() time.Time {
 	return time.Now()
 }
 
-func (m Minter) nonce() string {
+func (m Minter) nonce() (string, error) {
 	if m.NewNonce != nil {
-		return m.NewNonce()
+		return m.NewNonce(), nil
 	}
 	b := make([]byte, 24)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		// The nonce is the replay-prevention primitive; never mint with a
+		// degraded (all-zero) nonce on a CSPRNG failure — fail the mint instead.
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func (m Minter) requestID() string {
@@ -54,6 +59,10 @@ func (m Minter) requestID() string {
 // rw terminal grant on srv's pane. The directive is signed with srv.SigningKey.
 func (m Minter) Mint(srv db.Server, principalID, paneID, target string) (header, requestID string, err error) {
 	requestID = m.requestID()
+	nonce, err := m.nonce()
+	if err != nil {
+		return "", "", fmt.Errorf("mint nonce: %w", err)
+	}
 	d := shared.Directive{
 		ServerID:    srv.ID,
 		Target:      target,
@@ -62,7 +71,7 @@ func (m Minter) Mint(srv db.Server, principalID, paneID, target string) (header,
 		PrincipalID: principalID,
 		Action:      "terminal.write",
 		Exp:         m.now().Add(Expiry).UTC().Format(time.RFC3339),
-		Nonce:       m.nonce(),
+		Nonce:       nonce,
 		RequestID:   requestID,
 	}
 	header, err = shared.SignDirective([]byte(srv.SigningKey), d)
