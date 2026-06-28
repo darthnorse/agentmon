@@ -30,6 +30,7 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("GET /api/v1/servers/{id}", rd.Auth.RequireAuth(rd.API.ServerHandler()))
 	mux.Handle("GET /api/v1/servers/{id}/sessions", rd.Auth.RequireAuth(rd.API.ServerSessionsHandler()))
 	mux.Handle("GET /api/v1/servers/{id}/sessions/{name}", rd.Auth.RequireAuth(rd.API.SessionDetailHandler()))
+	mux.Handle("GET /api/v1/servers/{id}/panes/{paneId}/io", rd.Auth.RequireAuth(rd.API.PaneRelayHandler()))
 	mux.Handle("GET /api/v1/audit", rd.Auth.RequireAuth(rd.API.AuditHandler()))
 
 	mux.Handle("POST /api/v1/enroll", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Enroll.Handler()))
@@ -37,6 +38,17 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("GET /install.sh", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Install.ScriptHandler()))
 	mux.Handle("GET /dl/{file}", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Install.BinaryHandler()))
 
+	// Unknown /api/ paths (and wrong methods on known ones) must not fall through to
+	// the SPA. Registered /api/v1/... patterns are more specific and still win; this
+	// only catches genuinely unknown API paths.
+	mux.Handle("/api/", apiNotFound())
+
 	mux.Handle("/", rd.WebUI)
 	return mux
+}
+
+func apiNotFound() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONError(w, http.StatusNotFound, "not found")
+	})
 }

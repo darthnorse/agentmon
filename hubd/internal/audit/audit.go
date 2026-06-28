@@ -44,6 +44,11 @@ func (r *Recorder) Deny(ctx context.Context, principalID string, action authz.Ac
 		Resource: resource, Result: "deny", IP: ip, UserAgent: ua, Meta: meta})
 }
 
+func (r *Recorder) TerminalOpen(ctx context.Context, principalID, resource, mode, ip, ua string) {
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "terminal.open",
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: mode})
+}
+
 func (r *Recorder) ServerEnroll(ctx context.Context, id, hostname, ip string) {
 	r.write(ctx, db.AuditEntry{Action: "server.enroll",
 		Resource: "server:" + id, Result: "allow", IP: ip, Meta: hostname})
