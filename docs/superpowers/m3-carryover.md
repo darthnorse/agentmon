@@ -11,6 +11,34 @@ Phase-1 cadence — it was NOT run at M3.
 M3 branch: `phase-3-m3`, 18 commits off `main@d20a9dd`. All Critical/Important
 findings were fixed before merge; the rest are below.
 
+## Post-merge `/multi-review --codex` — DONE (on `main`, commits `0c0e9db` + `7ca9840`)
+After the merge, Patrik asked to run the 4-lens gate early (feature-dev:code-reviewer
+[correctness fallback for the unregistered code-review-specialist] + code-simplifier +
+deep-scan + Codex gpt-5.5) on the M3 diff. **No Critical/High; no auth bypass, secret
+leak, or data race** (all three security lenses confirmed the spine). Findings fixed:
+- **Login rate-limiter map grew unbounded** (3 reviewers, auto-fixed `0c0e9db`): `prune`
+  now evicts empty keys so a distinct-username flood can't grow it. +regression test.
+- **Re-keyed login throttling from username → client IP** (`7ca9840`): fixes BOTH the
+  sole-operator account-lockout (an attacker's IP bucket no longer locks the operator's)
+  AND the distinct-username flood. Test proves two IPs get independent buckets.
+- **One trustworthy, deduped `authn.ClientIP`** (`7ca9840`): exported, removed the
+  duplicate copies in authn+api; takes the LAST X-Forwarded-For hop (the one Caddy
+  appends) when `trust_forwarded_proto`, else the direct peer — so a spoofed XFF prefix
+  can't forge the audit/rate-limit IP. `api.Deps` gained `TrustForwardedProto`.
+- **Argon2 param validation** (`7ca9840`): `VerifyPassword` now rejects `version != 19`
+  and out-of-range m/t/p (≤2 GiB, t≤16, p≤16) before `argon2.IDKey` — a tampered DB row
+  can't force a huge alloc. (This was also the Task-2 deferred minor.)
+- **Agent-call failures now logged server-side** (`7ca9840`): both session handlers
+  `log.Printf` the wrapped agent error (id + cause) before the generic 502 — so a failing
+  agent is diagnosable during the live two-server run. Client message stays generic.
+- Cleanups (`7ca9840`): `labelsOrEmpty` deduped (exported `registry.LabelsOrEmpty`);
+  `filepath.Join` for the DB path; `/me` reads principal+CSRF from request context
+  (CSRF stashed by `RequireAuth`) instead of a second `Store.Get`.
+
+These RESOLVE several items previously listed below as deferred (XFF gating, IP-based
+throttle, unbounded limiter map, argon2 param validation, agent-error logging). The
+remaining deferred items in the lists below still stand.
+
 ## Project-wide change made during M3 (heads-up)
 - **Go bumped 1.23 → 1.26.4 (latest)** and **`golang.org/x/crypto` → v0.53.0
   (latest)**, applied consistently across `go.work`, all three `go.mod`,
