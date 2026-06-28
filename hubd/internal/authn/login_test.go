@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,5 +119,97 @@ func TestLoginRateLimited(t *testing.T) {
 	d.LoginHandler()(w, r2)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429, got %d", w.Code)
+	}
+}
+
+// sliceSink is an audit sink that records every entry so tests can inspect them.
+type sliceSink struct {
+	mu      sync.Mutex
+	entries []db.AuditEntry
+}
+
+func (s *sliceSink) Append(_ context.Context, e db.AuditEntry) error {
+	s.mu.Lock()
+	s.entries = append(s.entries, e)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *sliceSink) countAction(action string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, e := range s.entries {
+		if e.Action == action {
+			n++
+		}
+	}
+	return n
+}
+
+// TestLogin429IsAudited asserts that a throttled (429) login attempt still
+// produces a login.failure audit entry — so a sustained brute-force leaves a
+// full trail even after the per-username limiter has fired.
+func TestLogin429IsAudited(t *testing.T) {
+	sink := &sliceSink{}
+	hash, _ := HashPassword("pw")
+	d := LoginDeps{
+		Users:          stubUsers{u: db.User{ID: "u1", Username: "patrik", PasswordHash: hash}},
+		Store:          NewStore(time.Hour),
+		Limiter:        NewLimiter(1, time.Minute), // 1 attempt before lockout
+		Audit:          audit.NewRecorder(sink),
+		CookieName:     "agentmon_session",
+		CookieTTL:      time.Hour,
+		ExternalOrigin: "https://agentmon.lan",
+	}
+	// First bad login: real failure, limiter not yet full.
+	r1 := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"username":"patrik","password":"NOPE"}`))
+	w1 := httptest.NewRecorder()
+	d.LoginHandler()(w1, r1)
+	if w1.Code != http.StatusUnauthorized {
+		t.Fatalf("first attempt: got %d, want 401", w1.Code)
+	}
+	if got := sink.countAction("login.failure"); got != 1 {
+		t.Fatalf("after first failure: want 1 login.failure audit entry, got %d", got)
+	}
+	// Second attempt: limiter fires → 429; must still record login.failure.
+	r2 := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"username":"patrik","password":"NOPE"}`))
+	w2 := httptest.NewRecorder()
+	d.LoginHandler()(w2, r2)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second attempt: got %d, want 429", w2.Code)
+	}
+	if got := sink.countAction("login.failure"); got != 2 {
+		t.Fatalf("after 429: want 2 login.failure audit entries (real + throttled), got %d", got)
+	}
+}
+
+// TestLoginVerifyConcurrencyIsBounded fires 12 concurrent logins for distinct
+// unknown usernames against the handler and asserts that they all complete
+// without deadlock and each returns 401. This exercises verifySem under -race:
+// the semaphore (capacity 4) must queue the surplus goroutines rather than
+// dropping or deadlocking them.
+func TestLoginVerifyConcurrencyIsBounded(t *testing.T) {
+	const n = 12
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		i := i
+		go func() {
+			defer wg.Done()
+			d := deps(t, db.User{}, sql.ErrNoRows)
+			body := strings.NewReader(fmt.Sprintf(`{"username":"ghost%d","password":"x"}`, i))
+			r := httptest.NewRequest("POST", "/api/v1/auth/login", body)
+			w := httptest.NewRecorder()
+			d.LoginHandler()(w, r)
+			codes[i] = w.Code
+		}()
+	}
+	wg.Wait()
+	for i, c := range codes {
+		if c != http.StatusUnauthorized {
+			t.Errorf("goroutine %d: got %d, want 401", i, c)
+		}
 	}
 }

@@ -29,6 +29,11 @@ type LoginDeps struct {
 // username does not exist (avoids a user-enumeration timing oracle).
 var dummyHash, _ = HashPassword("agentmon-dummy-password")
 
+// verifySem bounds concurrent argon2id verifications (each ~64MiB) so a burst of
+// pre-auth login attempts (incl. distinct unknown usernames, which the per-username
+// limiter does not throttle) cannot amplify into unbounded memory/CPU use.
+var verifySem = make(chan struct{}, 4)
+
 func (d LoginDeps) LoginHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !CheckOrigin(r, d.ExternalOrigin) {
@@ -43,6 +48,7 @@ func (d LoginDeps) LoginHandler() http.HandlerFunc {
 		}
 		ip := clientIP(r)
 		if !d.Limiter.Allowed(body.Username) {
+			d.Audit.LoginFailure(r.Context(), body.Username, ip, r.UserAgent())
 			writeErr(w, http.StatusTooManyRequests, "too many attempts")
 			return
 		}
@@ -51,7 +57,9 @@ func (d LoginDeps) LoginHandler() http.HandlerFunc {
 		if err != nil {
 			hash = dummyHash // constant-time-ish failure for unknown user
 		}
+		verifySem <- struct{}{}
 		ok, _ := VerifyPassword(hash, body.Password)
+		<-verifySem
 		if err != nil || !ok || u.Status != "active" {
 			d.Limiter.Fail(body.Username)
 			d.Audit.LoginFailure(r.Context(), body.Username, ip, r.UserAgent())

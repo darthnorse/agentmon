@@ -82,6 +82,9 @@ func main() {
 		// No WriteTimeout: M4's long-lived terminal WS relay must not be killed by
 		// a global write deadline (it uses per-message deadlines instead).
 	}
+	if strings.HasPrefix(cfg.ExternalOrigin, "https://") && !cfg.TrustForwardedProto {
+		log.Printf("WARNING: external_origin is HTTPS but trust_forwarded_proto is false — session cookies will be issued WITHOUT the Secure flag. Behind Caddy/TLS set trust_forwarded_proto: true.")
+	}
 	log.Printf("agentmon-hubd %s listening on %s (%d servers)", version, cfg.Listen, len(cfg.Servers))
 	log.Fatal(srv.ListenAndServe())
 }
