@@ -5,15 +5,21 @@ services:
       dockerfile: deploy/Dockerfile
     image: agentmon-hubd:dev
     restart: unless-stopped
-    ports:
-      # NOTE: with trust_forwarded_proto: true the hub trusts X-Forwarded-For, so its
-      # listen port MUST be reachable only by the trusted proxy (this loopback bind, or a firewall).
-      - "127.0.0.1:8080:8080"   # behind Caddy on the host; bind LAN in real deploys
+    # Host networking: simplest on a LAN, and required on nested hosts (Proxmox
+    # LXC / Docker-in-LXC) where bridge networking can't set net sysctls. The hub
+    # binds the address from config.yaml's `listen` (e.g. 0.0.0.0:8378). To put
+    # Caddy in front for TLS, bind `listen` to loopback and proxy to it.
+    network_mode: host
+    environment:
+      # linuxserver.io / Unraid convention: the hub drops to this user, so the
+      # bind-mounted ./data ends up owned by your host user — no chown needed.
+      # Unraid: PUID=99 PGID=100.
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
     volumes:
-      - agentmon-data:/data
-    # After `docker compose up`, enroll each box with:
-    #   curl <external_origin>/install.sh | sudo bash
-    # then admit it from the hub host:
-    #   docker compose exec agentmon-hub /agentmon-hubd server approve <hostname>
-volumes:
-  agentmon-data:
+      # config.yaml + the SQLite DB live here. First run (from this deploy/ dir):
+      #   mkdir -p data && cp hub.config.example.yaml data/config.yaml   (then edit it)
+      # Unraid: point this at /mnt/user/appdata/agentmon.
+      - ./data:/data
+    # Enroll each box:  curl <external_origin>/install.sh | sudo bash
+    # Then admit it:    docker compose exec agentmon-hub /agentmon-hubd server approve <hostname>

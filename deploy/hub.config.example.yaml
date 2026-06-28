@@ -1,9 +1,17 @@
-listen: "127.0.0.1:8080"
-external_origin: "https://agentmon.example.lan"
-trust_forwarded_proto: true
+# Bind address (the compose uses host networking, so this is the real host bind).
+# Direct LAN (no proxy): bind your chosen port on all/the LAN interface.
+# Behind Caddy: bind loopback (127.0.0.1:8080) and let Caddy terminate TLS.
+listen: "0.0.0.0:8378"
+# The URL agents + browsers use to reach the hub (baked into the served install.sh).
+# Direct LAN: http://<this-host-lan-ip>:8378   Behind Caddy: https://agentmon.example.lan
+external_origin: "http://192.168.1.50:8378"
+# true ONLY behind a trusted TLS proxy (Caddy) that sets X-Forwarded-Proto/For;
+# then `listen` above MUST be loopback/firewalled. false for direct LAN.
+trust_forwarded_proto: false
 data_dir: "/data"
 session_cookie: { name: "agentmon_session", ttl: "168h" }
 login_rate_limit: { max_attempts: 5, window: "15m" }
 enroll_rate_limit: { max_attempts: 30, window: "1m" }
-# Servers are no longer listed here — they self-register via `curl <hub>/install.sh | sudo bash`
-# and are admitted with `agentmon-hubd server approve <hostname>`.
+# Servers are no longer listed here — they self-register via
+# `curl <external_origin>/install.sh | sudo bash` and are admitted with
+# `agentmon-hubd server approve <hostname>`.
