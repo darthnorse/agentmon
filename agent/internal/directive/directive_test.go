@@ -152,3 +152,37 @@ func TestVerifyRejectsFarFutureExp(t *testing.T) {
 		t.Fatal("want error for an exp further out than the max lifetime cap")
 	}
 }
+
+func TestSharedSignedDirectiveVerifies(t *testing.T) {
+	key := []byte("k")
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	d := shared.Directive{ServerID: "server-a", Target: "default",
+		Resource: shared.PaneID("server-a", "default", "%3"),
+		Mode:     "rw", PrincipalID: "u1", Action: "terminal.write",
+		Exp:   now.Add(60 * time.Second).Format(time.RFC3339),
+		Nonce: "n1", RequestID: "r1"}
+	header, err := shared.SignDirective(key, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := NewVerifier("server-a", key, func() time.Time { return now })
+	got, err := v.Verify(header, d.Resource, d.Target)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if got.Mode != "rw" || got.Nonce != "n1" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestSharedSignWrongKeyRejected(t *testing.T) {
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	d := shared.Directive{ServerID: "server-a", Target: "default",
+		Resource: shared.PaneID("server-a", "default", "%3"), Mode: "rw",
+		Exp: now.Add(60 * time.Second).Format(time.RFC3339), Nonce: "n2"}
+	header, _ := shared.SignDirective([]byte("KEY-A"), d)
+	v := NewVerifier("server-a", []byte("KEY-B"), func() time.Time { return now })
+	if _, err := v.Verify(header, d.Resource, d.Target); err != ErrBadSignature {
+		t.Fatalf("want ErrBadSignature, got %v", err)
+	}
+}

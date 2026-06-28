@@ -7,7 +7,6 @@ package directive
 
 import (
 	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -34,20 +33,10 @@ var (
 // and catches a bogus far-future directive. A clock-skew allowance is folded in.
 const maxLifetime = 5 * time.Minute
 
-func mac(key, payload []byte) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write(payload)
-	return h.Sum(nil)
-}
-
-// Sign returns the X-AgentMon-Directive header value for d.
+// Sign returns the X-AgentMon-Directive header value for d. It delegates to the
+// shared mint primitive so the agent and hub share one canonical implementation.
 func Sign(key []byte, d shared.Directive) (string, error) {
-	payload, err := d.CanonicalJSON()
-	if err != nil {
-		return "", err
-	}
-	enc := base64.RawURLEncoding
-	return enc.EncodeToString(payload) + "." + enc.EncodeToString(mac(key, payload)), nil
+	return shared.SignDirective(key, d)
 }
 
 // Verifier verifies directives for one agent (server). Safe for concurrent use.
@@ -85,7 +74,7 @@ func (v *Verifier) Verify(header, wantResource, wantTarget string) (shared.Direc
 	if err != nil {
 		return zero, ErrMalformed
 	}
-	if !hmac.Equal(sig, mac(v.key, payload)) {
+	if !hmac.Equal(sig, shared.DirectiveMAC(v.key, payload)) {
 		return zero, ErrBadSignature
 	}
 	var d shared.Directive
