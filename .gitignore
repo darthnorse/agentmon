@@ -19,6 +19,9 @@ token.txt
 # Spike scratch (throwaway Claude working dir)
 /spike-0.5/scratch/
 
+# SDD / superpowers working scratch (task briefs, reports, review packages, ledger)
+/.superpowers/
+
 # Node / web build output
 node_modules/
 web/dist/
