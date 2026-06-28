@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"agentmon/shared"
@@ -59,7 +60,12 @@ func Discover(ctx context.Context, run Runner, opts DiscoverOpts) ([]shared.Sess
 	for _, line := range nonEmptyLines(sessOut) {
 		f, err := splitFields(line, 2)
 		if err != nil {
-			return nil, err
+			// A single un-decodable record (a name carrying a raw 0x1f or literal
+			// \037) is logged and skipped, not fatal: one oddly-named session must
+			// not blind the operator to every other session on this target. Logged,
+			// so it is never a *silent* drop (the M1 failure this replaces).
+			log.Printf("discovery: skipping malformed session record (server=%s target=%s): %v", opts.ServerID, opts.TargetLabel, err)
+			continue
 		}
 		sid, name := f[0], unescapeName(f[1])
 		windows, cwd, command, err := discoverPanes(ctx, run, base, sid)
@@ -90,7 +96,10 @@ func discoverPanes(ctx context.Context, run Runner, base []string, sessionID str
 	for _, line := range nonEmptyLines(out) {
 		f, err := splitFields(line, 8)
 		if err != nil {
-			return nil, "", "", err
+			// Skip (but log) a single malformed pane record rather than dropping the
+			// whole session — see the session-loop rationale above.
+			log.Printf("discovery: skipping malformed pane record (session=%s): %v", sessionID, err)
+			continue
 		}
 		wid, windex, wname, wactive := f[0], f[1], unescapeName(f[2]), f[3]
 		pid, pcmd, pcwd, pactive := f[4], f[5], f[6], f[7]

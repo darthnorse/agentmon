@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 )
 
@@ -20,7 +21,11 @@ func ResolvePaneSession(ctx context.Context, run Runner, socket, paneID string) 
 	for _, line := range nonEmptyLines(out) {
 		f, err := splitFields(line, 2)
 		if err != nil {
-			return "", false, err
+			// pane_id/session_id are structural (never escaped), so this is near-
+			// impossible; if it ever happens, skip (logged) the one bad line rather
+			// than failing the whole lookup. A miss falls through to ok=false → 404.
+			log.Printf("resolve pane: skipping malformed list-panes record: %v", err)
+			continue
 		}
 		if f[0] == paneID {
 			return f[1], true, nil

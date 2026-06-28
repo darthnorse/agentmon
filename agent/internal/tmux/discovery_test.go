@@ -178,18 +178,45 @@ func TestDiscoverDecodesEscapedNames(t *testing.T) {
 	}
 }
 
-func TestDiscoverErrorsOnMalformedRecord(t *testing.T) {
+func TestDiscoverSkipsMalformedPaneRecord(t *testing.T) {
 	// A pane record whose field count is wrong (here: a raw path containing the
-	// literal token text \037 splits into an extra field) must ERROR, not be
-	// silently dropped.
+	// literal token text \037 splits into an extra field) is logged and SKIPPED —
+	// not silently dropped (it's logged) and not fatal to the whole target (the
+	// other panes/sessions survive). One oddly-named record must not 500 /sessions.
 	sessions := p("$1", "proj") + "\n"
 	panes := map[string]string{
-		"$1": p("@1", "0", "main", "1", "%0", "bash", `/weird`+delimToken+`path`, "1") + "\n",
+		"$1": strings.Join([]string{
+			p("@1", "0", "main", "1", "%0", "bash", `/weird`+delimToken+`path`, "1"), // malformed: 9 fields
+			p("@1", "0", "main", "1", "%1", "vim", "/home/dev", "1"),                  // well-formed
+		}, "\n") + "\n",
 	}
-	_, err := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+	got, err := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
 		DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
-	if err == nil {
-		t.Fatal("want error for a malformed (wrong field count) record, got nil")
+	if err != nil {
+		t.Fatalf("a malformed record must be skipped, not fatal: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want the session to survive, got %d sessions", len(got))
+	}
+	if len(got[0].Windows) != 1 || len(got[0].Windows[0].Panes) != 1 || got[0].Windows[0].Panes[0].ID != "%1" {
+		t.Fatalf("want only the well-formed pane %%1 to survive, got %+v", got[0].Windows)
+	}
+}
+
+func TestDiscoverSkipsMalformedSessionRecord(t *testing.T) {
+	// A malformed session-list record is logged and skipped; well-formed sessions
+	// survive (one bad session name does not blind the operator to all others).
+	sessions := p("$1", "good") + "\n" + ("$2" + delimToken + "na" + delimToken + "me") + "\n" // 2nd: 3 fields
+	panes := map[string]string{
+		"$1": p("@1", "0", "w", "1", "%0", "bash", "/a", "1") + "\n",
+	}
+	got, err := Discover(context.Background(), fakeRunner(t, sessions, panes, nil),
+		DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+	if err != nil {
+		t.Fatalf("a malformed session record must be skipped, not fatal: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "good" {
+		t.Fatalf("want only the well-formed session, got %+v", got)
 	}
 }
 

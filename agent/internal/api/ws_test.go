@@ -53,7 +53,7 @@ func testTarget() config.Config {
 
 // buildHandler wires a PaneIO whose tmux seams are fakes, returning the fake pane
 // so the test can drive output.
-func buildHandler(t *testing.T, fake *fakePane, mode string) http.Handler {
+func buildHandler(t *testing.T, fake *fakePane) http.Handler {
 	t.Helper()
 	cfg := testTarget()
 	h := &PaneIO{
@@ -113,7 +113,7 @@ func dial(t *testing.T, srv *httptest.Server, mode string) (*websocket.Conn, *ht
 
 func TestPaneWSSendsScrollbackFirstThenOutput(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	conn, _, err := dial(t, srv, "rw")
 	if err != nil {
@@ -134,7 +134,7 @@ func TestPaneWSSendsScrollbackFirstThenOutput(t *testing.T) {
 
 func TestPaneWSForwardsInputInRW(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	conn, _, err := dial(t, srv, "rw")
 	if err != nil {
@@ -157,7 +157,7 @@ func TestPaneWSForwardsInputInRW(t *testing.T) {
 
 func TestPaneWSDropsInputInRO(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "ro"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	conn, _, err := dial(t, srv, "ro")
 	if err != nil {
@@ -176,7 +176,7 @@ func TestPaneWSDropsInputInRO(t *testing.T) {
 
 func TestPaneWSResizeReachesPane(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	conn, _, err := dial(t, srv, "rw")
 	if err != nil {
@@ -198,7 +198,7 @@ func TestPaneWSResizeReachesPane(t *testing.T) {
 
 func TestPaneWSRejectsForgedDirective(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	u := "ws" + strings.TrimPrefix(srv.URL, "http") + panePath("%3") + "?target=default&mode=rw"
 	h := http.Header{}
@@ -215,7 +215,7 @@ func TestPaneWSRejectsForgedDirective(t *testing.T) {
 
 func TestPaneWSRejectsMissingBearer(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	u := "ws" + strings.TrimPrefix(srv.URL, "http") + panePath("%3") + "?target=default&mode=rw"
 	_, resp, err := websocket.DefaultDialer.Dial(u, nil)
@@ -231,7 +231,7 @@ func TestPaneWSRejectsMissingBearer(t *testing.T) {
 // directive's authoritative mode: a directive minted for ro cannot drive a rw URL.
 func TestPaneWSRejectsModeMismatch(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	// URL asks for rw, but the directive is SIGNED with Mode:"ro".
 	u := "ws" + strings.TrimPrefix(srv.URL, "http") + panePath("%3") + "?target=default&mode=rw"
@@ -254,7 +254,7 @@ func TestPaneWSRejectsModeMismatch(t *testing.T) {
 // writePump is what unblocks readPump here.
 func TestPaneWSDoneChanTearsDownAndClosesPane(t *testing.T) {
 	fake := newFakePane()
-	srv := httptest.NewServer(buildHandler(t, fake, "rw"))
+	srv := httptest.NewServer(buildHandler(t, fake))
 	defer srv.Close()
 	conn, _, err := dial(t, srv, "rw")
 	if err != nil {
