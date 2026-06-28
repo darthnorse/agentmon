@@ -2,10 +2,10 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"agentmon/shared"
 )
 
 type Target struct {
@@ -32,7 +32,7 @@ func Load(path string) (Config, error) {
 		c.ScrollbackLines = 5000
 	}
 	for _, p := range []*string{&c.HubToken, &c.DirectiveKey} {
-		v, err := resolveRef(*p)
+		v, err := shared.ResolveSecretRef(*p)
 		if err != nil {
 			return Config{}, err
 		}
@@ -59,24 +59,3 @@ func (c Config) ResolveTarget(label string) (Target, bool) {
 	return Target{}, false
 }
 
-// resolveRef expands "env:NAME" and "file:/path" secret references; any other
-// value is returned literally.
-func resolveRef(v string) (string, error) {
-	switch {
-	case strings.HasPrefix(v, "env:"):
-		name := strings.TrimPrefix(v, "env:")
-		s, ok := os.LookupEnv(name)
-		if !ok {
-			return "", fmt.Errorf("env ref %q not set", name)
-		}
-		return s, nil
-	case strings.HasPrefix(v, "file:"):
-		b, err := os.ReadFile(strings.TrimPrefix(v, "file:"))
-		if err != nil {
-			return "", fmt.Errorf("file ref: %w", err)
-		}
-		return strings.TrimSpace(string(b)), nil
-	default:
-		return v, nil
-	}
-}

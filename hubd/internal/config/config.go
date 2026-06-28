@@ -3,10 +3,11 @@ package config
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"agentmon/shared"
 )
 
 type CookieCfg struct {
@@ -54,11 +55,11 @@ func Load(path string) (Config, error) {
 		c.SessionCookie.Name = "agentmon_session"
 	}
 	for i := range c.Servers {
-		tok, err := resolveRef(c.Servers[i].TokenRef)
+		tok, err := shared.ResolveSecretRef(c.Servers[i].TokenRef)
 		if err != nil {
 			return Config{}, fmt.Errorf("server %s token: %w", c.Servers[i].ID, err)
 		}
-		key, err := resolveRef(c.Servers[i].SigningKeyRef)
+		key, err := shared.ResolveSecretRef(c.Servers[i].SigningKeyRef)
 		if err != nil {
 			return Config{}, fmt.Errorf("server %s signing_key: %w", c.Servers[i].ID, err)
 		}
@@ -68,24 +69,3 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 
-func resolveRef(v string) (string, error) {
-	switch {
-	case v == "":
-		return "", fmt.Errorf("empty secret ref")
-	case strings.HasPrefix(v, "env:"):
-		name := strings.TrimPrefix(v, "env:")
-		s, ok := os.LookupEnv(name)
-		if !ok {
-			return "", fmt.Errorf("env ref %q not set", name)
-		}
-		return s, nil
-	case strings.HasPrefix(v, "file:"):
-		b, err := os.ReadFile(strings.TrimPrefix(v, "file:"))
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(string(b)), nil
-	default:
-		return v, nil
-	}
-}
