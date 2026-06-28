@@ -53,6 +53,7 @@ type dialRecord struct {
 	auth, directive, reqID string
 	paneID, target, mode   string
 	got                    [][]byte
+	closed                 chan struct{}
 }
 
 func (r *dialRecord) append(b []byte) {
@@ -73,6 +74,9 @@ func fakeAgentWS(t *testing.T, rec *dialRecord) *httptest.Server {
 		rec.paneID = r.PathValue("paneId")
 		rec.target = r.URL.Query().Get("target")
 		rec.mode = r.URL.Query().Get("mode")
+		if rec.closed == nil {
+			rec.closed = make(chan struct{}, 8)
+		}
 		rec.mu.Unlock()
 		c, err := up.Upgrade(w, r, nil)
 		if err != nil {
@@ -83,10 +87,17 @@ func fakeAgentWS(t *testing.T, rec *dialRecord) *httptest.Server {
 		for {
 			mt, data, err := c.ReadMessage()
 			if err != nil {
-				return
+				break
 			}
 			rec.append(data)
 			_ = c.WriteMessage(mt, data) // echo
+		}
+		// Signal that this agent connection's read loop has exited (relay tore us down).
+		// Non-blocking send into a buffered channel: safe even if called multiple times
+		// on the same rec (e.g. the teardown test dials twice).
+		select {
+		case rec.closed <- struct{}{}:
+		default:
 		}
 	})
 	return httptest.NewServer(mux)
@@ -176,10 +187,17 @@ func TestRelayHappyPathBidirectionalAndHeaders(t *testing.T) {
 		t.Fatalf("echo: %q err=%v", echo, err)
 	}
 
-	// 3) resize JSON passes through
+	// 3) resize JSON passes through and round-trips correctly
 	_ = c.WriteJSON(shared.ResizeFrame{Type: shared.FrameResize, Cols: 88, Rows: 26})
 	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, _, _ = c.ReadMessage() // echoed resize
+	_, rz, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("resize echo: %v", err)
+	}
+	var gotRz shared.ResizeFrame
+	if json.Unmarshal(rz, &gotRz) != nil || gotRz.Cols != 88 || gotRz.Rows != 26 {
+		t.Fatalf("resize did not round-trip: %q", rz)
+	}
 
 	// headers the hub sent to the agent
 	rec.mu.Lock()
@@ -305,12 +323,20 @@ func TestRelayClosingBrowserTearsDownAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, _, _ = c.ReadMessage() // drain SNAP
 	c.Close()                 // browser goes away
-	// The fake agent's ReadMessage must return (teardown propagated). Give it a moment.
-	time.Sleep(200 * time.Millisecond)
-	// If teardown did not propagate, the agent goroutine would still be blocked; we
-	// assert indirectly by confirming a fresh dial still works (no fd/goroutine wedge).
+
+	// Assert that the relay actually propagated the close to the agent side.
+	// rec.closed receives a token when the fake agent's read loop exits.
+	select {
+	case <-rec.closed:
+		// teardown confirmed
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent connection was not torn down after the browser closed")
+	}
+
+	// Additional no-wedge assertion: a fresh dial must still succeed.
 	c2, _, err := dialBrowser(t, hub, "/api/v1/servers/aigallery/panes/%253/io?target=default", testOrigin)
 	if err != nil {
 		t.Fatalf("second dial after teardown: %v", err)
