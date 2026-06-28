@@ -19,6 +19,7 @@ import (
 	"agentmon/hubd/internal/authn"
 	"agentmon/hubd/internal/config"
 	"agentmon/hubd/internal/db"
+	"agentmon/hubd/internal/directive"
 	"agentmon/hubd/internal/registry"
 	"agentmon/hubd/internal/webui"
 )
@@ -78,6 +79,8 @@ func main() {
 			AuditRepo:           database,
 			HealthTimeout:       3 * time.Second,
 			TrustForwardedProto: cfg.TrustForwardedProto,
+			Minter:              directive.Minter{}, // defaults: time.Now, CSPRNG nonce, uuid requestId
+			ExternalOrigin:      cfg.ExternalOrigin,
 		},
 		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,
