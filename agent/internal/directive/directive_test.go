@@ -26,6 +26,21 @@ func baseDirective(now time.Time) shared.Directive {
 	}
 }
 
+func TestVerifyRejectsEmptyNonce(t *testing.T) {
+	// The nonce is the replay-prevention primitive; an empty nonce is meaningless
+	// and must be rejected as malformed rather than accepted into the replay cache
+	// (where the first one would then make every later empty-nonce directive look
+	// like a replay).
+	now := time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC)
+	d := baseDirective(now)
+	d.Nonce = ""
+	hdr, _ := Sign(testKey(), d)
+	v := NewVerifier("server-a", testKey(), fixedNow(now))
+	if _, err := v.Verify(hdr, d.Resource, "default"); err == nil {
+		t.Fatal("want error for an empty nonce")
+	}
+}
+
 func TestVerifyRoundTrip(t *testing.T) {
 	now := time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC)
 	d := baseDirective(now)

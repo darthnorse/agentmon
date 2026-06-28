@@ -104,6 +104,12 @@ func (v *Verifier) Verify(header, wantResource, wantTarget string) (shared.Direc
 	if d.Mode != "ro" && d.Mode != "rw" {
 		return zero, ErrBadMode
 	}
+	if d.Nonce == "" {
+		// The nonce is the replay-prevention primitive; an empty one is meaningless
+		// (and would otherwise be recorded, making every later empty-nonce directive
+		// look like a replay). Treat it as malformed.
+		return zero, ErrMalformed
+	}
 	exp, err := time.Parse(time.RFC3339, d.Exp)
 	if err != nil {
 		return zero, ErrMalformed

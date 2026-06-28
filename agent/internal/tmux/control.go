@@ -45,6 +45,11 @@ type ControlClient struct {
 // injecting a second tmux command via an embedded newline.
 var paneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 
+// ValidatePaneID reports whether id is a syntactically valid tmux pane id ("%0",
+// "%37"). Both the WS handler (before resolution) and NewControlClient (before any
+// exec) gate on this — one source of the pattern for the two layers.
+func ValidatePaneID(id string) bool { return paneIDRe.MatchString(id) }
+
 // NewControlClient starts the control-mode client. The caller MUST keep the
 // process alive by reading Output; a dead reader will block the parser.
 //
@@ -52,7 +57,7 @@ var paneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 // immediately with %exit. We therefore hold the stdin pipe open for the whole
 // session and use it for send-keys / refresh-client.
 func NewControlClient(ctx context.Context, socket, session, pane string) (*ControlClient, error) {
-	if !paneIDRe.MatchString(pane) {
+	if !ValidatePaneID(pane) {
 		return nil, fmt.Errorf("invalid pane id %q", pane)
 	}
 	args := with(socketArgs(socket), "-C", "attach-session", "-t", session)

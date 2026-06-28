@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"regexp"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -16,7 +15,11 @@ import (
 	"agentmon/shared"
 )
 
-var wsPaneIDRe = regexp.MustCompile(`^%[0-9]+$`)
+// wsUpgrader has no per-request state. The agent is LAN-only and already requires
+// a bearer token AND a hub-signed directive a browser cannot forge, so an Origin
+// check here would add nothing; the browser-facing Origin check lives at the hub
+// (spec §13.4).
+var wsUpgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 
 // PaneConn is the slice of *tmux.ControlClient the WS handler needs; injected so
 // the handler is unit-testable without a real tmux.
@@ -39,17 +42,10 @@ type PaneIO struct {
 	Tune      func(ctx context.Context, socket, session string)
 }
 
-func (h *PaneIO) upgrader() websocket.Upgrader {
-	// The agent is LAN-only and already requires a bearer token AND a hub-signed
-	// directive that a browser cannot forge, so an Origin check here would add
-	// nothing; the browser-facing Origin check lives at the hub (spec §13.4).
-	return websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-}
-
 func (h *PaneIO) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		paneID := r.PathValue("paneId")
-		if !wsPaneIDRe.MatchString(paneID) {
+		if !tmux.ValidatePaneID(paneID) {
 			writeJSONError(w, http.StatusBadRequest, "invalid pane id")
 			return
 		}
@@ -89,8 +85,7 @@ func (h *PaneIO) Handler() http.HandlerFunc {
 			return
 		}
 
-		upgrader := h.upgrader()
-		conn, err := upgrader.Upgrade(w, r, nil)
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return // Upgrade already wrote the error
 		}
@@ -128,11 +123,12 @@ func writePump(ctx context.Context, cancel context.CancelFunc, conn *websocket.C
 	// A writer-side exit (tmux gone, or an output/ping write error) must force
 	// readPump's blocked ReadMessage to return so the handler's deferred
 	// cc.Close()/conn.Close() actually run — a hung client would otherwise leak
-	// the handler goroutine AND the live tmux control-mode subprocess. Setting a
-	// past read deadline unblocks ReadMessage with an error; on the normal path
-	// (writePump returns via <-ctx.Done() after readPump already exited) it is a
-	// harmless no-op.
-	defer conn.SetReadDeadline(time.Now())
+	// the handler goroutine AND the live tmux control-mode subprocess. Close() is
+	// the right primitive: gorilla documents it as safe to call concurrently with
+	// all other methods (unlike SetReadDeadline, a read method we must not call
+	// from this writer goroutine while readPump is in ReadMessage). It unblocks the
+	// read with an error; the handler's own deferred conn.Close() is then a no-op.
+	defer conn.Close()
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
 	for {
