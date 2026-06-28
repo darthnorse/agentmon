@@ -9,3 +9,7 @@ export interface Session {
 export interface ResizeFrame { type: "resize"; cols: number; rows: number; }
 export interface ErrorFrame { type: "error"; code: string; message: string; }
 export interface ReconnectFrame { type: "reconnect"; status: string; }
+// Mirrors hubd registry.ServerSummary (browser-safe; no secrets).
+export interface ServerSummary { id: string; name: string; labels: string[]; enabled: boolean; }
+// Mirrors the hub's login/me JSON body.
+export interface SessionInfo { principalId: string; username: string; displayName: string; csrfToken: string; }
