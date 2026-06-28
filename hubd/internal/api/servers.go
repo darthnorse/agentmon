@@ -10,6 +10,7 @@ import (
 	"agentmon/hubd/internal/authn"
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
+	"agentmon/hubd/internal/directive"
 	"agentmon/hubd/internal/registry"
 )
 
@@ -26,6 +27,8 @@ type Deps struct {
 	AuditRepo           AuditReader
 	HealthTimeout       time.Duration
 	TrustForwardedProto bool
+	Minter              directive.Minter // M4: mints hub→agent WS access directives
+	ExternalOrigin      string           // M4: WS upgrade Origin check
 }
 
 // authorizeOr403 resolves the principal from the request context, calls
