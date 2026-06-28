@@ -43,3 +43,23 @@ func (r *Recorder) Deny(ctx context.Context, principalID string, action authz.Ac
 	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: string(action),
 		Resource: resource, Result: "deny", IP: ip, UserAgent: ua, Meta: meta})
 }
+
+func (r *Recorder) ServerEnroll(ctx context.Context, id, hostname, ip string) {
+	r.write(ctx, db.AuditEntry{Action: "server.enroll",
+		Resource: "server:" + id, Result: "allow", IP: ip, Meta: hostname})
+}
+
+func (r *Recorder) ServerApprove(ctx context.Context, id, hostname string) {
+	r.write(ctx, db.AuditEntry{Action: "server.approve",
+		Resource: "server:" + id, Result: "allow", Meta: hostname})
+}
+
+func (r *Recorder) ServerRevoke(ctx context.Context, id, hostname string) {
+	r.write(ctx, db.AuditEntry{Action: "server.revoke",
+		Resource: "server:" + id, Result: "allow", Meta: hostname})
+}
+
+func (r *Recorder) ServerRemove(ctx context.Context, id, hostname string) {
+	r.write(ctx, db.AuditEntry{Action: "server.remove",
+		Resource: "server:" + id, Result: "allow", Meta: hostname})
+}

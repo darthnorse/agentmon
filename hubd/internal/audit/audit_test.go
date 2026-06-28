@@ -8,6 +8,13 @@ import (
 	"agentmon/hubd/internal/db"
 )
 
+type captureSink struct{ entries []db.AuditEntry }
+
+func (c *captureSink) Append(_ context.Context, e db.AuditEntry) error {
+	c.entries = append(c.entries, e)
+	return nil
+}
+
 type fakeSink struct{ rows []db.AuditEntry }
 
 func (f *fakeSink) Append(_ context.Context, e db.AuditEntry) error {
@@ -34,5 +41,32 @@ func TestRecorderWritesTypedEvents(t *testing.T) {
 	}
 	if s.rows[2].Action != "session.view" || s.rows[2].Result != "deny" || s.rows[2].Meta != `{"session":"proj"}` {
 		t.Fatalf("deny row: %+v", s.rows[2])
+	}
+}
+
+func TestServerLifecycleAudits(t *testing.T) {
+	cap := &captureSink{}
+	r := NewRecorder(cap)
+	ctx := context.Background()
+	r.ServerEnroll(ctx, "web-01", "web-01.lan", "10.0.0.9")
+	r.ServerApprove(ctx, "web-01", "web-01.lan")
+	r.ServerRevoke(ctx, "web-01", "web-01.lan")
+	r.ServerRemove(ctx, "web-01", "web-01.lan")
+	if len(cap.entries) != 4 {
+		t.Fatalf("want 4 audit rows, got %d", len(cap.entries))
+	}
+	enroll := cap.entries[0]
+	if enroll.Action != "server.enroll" || enroll.Resource != "server:web-01" ||
+		enroll.Result != "allow" || enroll.IP != "10.0.0.9" || enroll.Meta != "web-01.lan" {
+		t.Fatalf("enroll row: %+v", enroll)
+	}
+	if cap.entries[1].Action != "server.approve" || cap.entries[2].Action != "server.revoke" || cap.entries[3].Action != "server.remove" {
+		t.Fatalf("lifecycle actions: %+v", cap.entries)
+	}
+	// No secret material may appear anywhere in the rows.
+	for _, e := range cap.entries {
+		if e.Meta == "" {
+			t.Fatalf("hostname meta missing: %+v", e)
+		}
 	}
 }
