@@ -128,7 +128,7 @@ export class TerminalSocket {
 
   private onVisibility(): void {
     if (this.disposed) return;
-    if (document.visibilityState === "visible" && !this.connected) {
+    if (document.visibilityState === "visible" && this.ws === null) {
       if (this.reconnectTimer) {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;

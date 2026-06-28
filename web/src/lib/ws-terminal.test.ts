@@ -95,4 +95,41 @@ describe("TerminalSocket", () => {
     vi.advanceTimersByTime(20000);
     expect(FakeWS.instances.length).toBe(1);
   });
+
+  it("visibility while CONNECTING does not open a second socket", () => {
+    const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open(); // readyState stays 0 — never fire open
+    expect(FakeWS.instances.length).toBe(1);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeWS.instances.length).toBe(1); // must NOT open a second socket
+    sock.dispose();
+  });
+
+  it("visibility while fully disconnected reconnects immediately", () => {
+    const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open();
+    FakeWS.instances[0].fireOpen();
+    FakeWS.instances[0].close(); // unexpected close → ws=null + timer scheduled
+    expect(FakeWS.instances.length).toBe(1);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeWS.instances.length).toBe(2); // reconnected immediately without advancing timers
+    sock.dispose();
+  });
+
+  it("inbound string frames are ignored", () => {
+    const onData = vi.fn();
+    const sock = new TerminalSocket(target, { onData }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open();
+    FakeWS.instances[0].fireOpen();
+    FakeWS.instances[0].fireMessage("hello");
+    expect(onData).not.toHaveBeenCalled();
+    sock.dispose();
+  });
+
+  it("binaryType is set to arraybuffer after open()", () => {
+    const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open();
+    expect(FakeWS.instances[0].binaryType).toBe("arraybuffer");
+    sock.dispose();
+  });
 });
