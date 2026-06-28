@@ -20,9 +20,16 @@ import (
 var hubPaneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 
 const (
-	relayWriteWait         = 10 * time.Second
-	relayDialTimeout       = 10 * time.Second
-	relayReadLimit         = 1 << 20
+	relayWriteWait   = 10 * time.Second
+	relayDialTimeout = 10 * time.Second
+	// relayBrowserReadLimit caps untrusted browser→hub frames (keystrokes/control);
+	// 1 MiB is generous and matches the agent's own inbound read limit.
+	relayBrowserReadLimit = 1 << 20
+	// relayAgentReadLimit caps trusted agent→hub frames. The agent sends the whole
+	// scrollback snapshot as one binary message (up to ScrollbackLines, color-escaped),
+	// which can exceed 1 MiB — so this is much larger, but still bounded against a
+	// runaway agent rather than unlimited.
+	relayAgentReadLimit    = 32 << 20
 	defaultRelayPongWait   = 60 * time.Second
 	defaultRelayPingPeriod = 20 * time.Second // must stay < defaultRelayPongWait
 )
@@ -146,8 +153,8 @@ func agentWSURL(rawURL, paneID, target string) (string, error) {
 // writes use per-message deadlines. Caller must pass pingPeriod < pongWait so a
 // healthy idle conn is pinged before its read deadline expires.
 func relayPanes(browser, agent *websocket.Conn, pongWait, pingPeriod time.Duration) {
-	browser.SetReadLimit(relayReadLimit)
-	agent.SetReadLimit(relayReadLimit)
+	browser.SetReadLimit(relayBrowserReadLimit)
+	agent.SetReadLimit(relayAgentReadLimit)
 	armLiveness(browser, pongWait)
 	armLiveness(agent, pongWait)
 

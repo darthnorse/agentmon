@@ -388,6 +388,47 @@ func TestRelayStaysOpenWhileActiveBeyondPongWait(t *testing.T) {
 	t.Fatal("late message did not reach the agent — relay was not kept alive")
 }
 
+func TestRelayRelaysLargeAgentSnapshot(t *testing.T) {
+	const size = 2 << 20 // 2 MiB, above the old 1<<20 browser-side limit
+	up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /panes/{paneId}/io", func(w http.ResponseWriter, r *http.Request) {
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		big := make([]byte, size)
+		for i := range big {
+			big[i] = byte('a' + i%26)
+		}
+		_ = c.WriteMessage(websocket.BinaryMessage, big)
+		// keep the conn open briefly so the relay can forward before teardown
+		_, _, _ = c.ReadMessage()
+	})
+	agent := httptest.NewServer(mux)
+	defer agent.Close()
+
+	d := relayDeps(agent.URL, "b", "k", &recSink{})
+	hub := relayServer(d, authz.Principal{ID: "u1"})
+	defer hub.Close()
+
+	c, _, err := dialBrowser(t, hub, "/api/v1/servers/aigallery/panes/%253/io?target=default", testOrigin)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	c.SetReadLimit(size + 4096) // the test browser client must accept the big frame too
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, data, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("read large snapshot: %v", err)
+	}
+	if len(data) != size {
+		t.Fatalf("relayed snapshot truncated: got %d want %d", len(data), size)
+	}
+}
+
 func TestRelayRaceUnderConcurrentTraffic(t *testing.T) {
 	rec := &dialRecord{}
 	agent := fakeAgentWS(t, rec)
