@@ -32,6 +32,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "server" {
+		if err := runServerCmd(os.Args[2:]); err != nil {
+			log.Fatalf("server: %v", err)
+		}
+		return
+	}
 	cfgPath := flag.String("config", "/data/config.yaml", "path to config.yaml")
 	flag.Parse()
 
