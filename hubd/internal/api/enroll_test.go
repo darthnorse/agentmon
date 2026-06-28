@@ -85,6 +85,22 @@ func TestEnrollBadBodyIs400(t *testing.T) {
 	}
 }
 
+func TestEnrollDialURLUsesForwardedClientIP(t *testing.T) {
+	st := &memEnrollStore{servers: map[string]db.Server{}}
+	d := EnrollDeps{Servers: st, Audit: audit.NewRecorder(nopSink{}), TrustForwardedProto: true}
+	r := httptest.NewRequest("POST", "/api/v1/enroll", strings.NewReader(`{"hostname":"web-01","arch":"amd64"}`))
+	r.RemoteAddr = "10.9.9.9:443"                                   // the proxy
+	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.50") // ..., real agent peer (last hop)
+	w := httptest.NewRecorder()
+	d.Handler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("code %d: %s", w.Code, w.Body)
+	}
+	if got := st.servers["web-01"].URL; got != "http://10.0.0.50:8377" {
+		t.Fatalf("dial URL must use the forwarded client IP (last XFF hop), got %q", got)
+	}
+}
+
 func TestOnboardRateLimitReturns429(t *testing.T) {
 	l := authn.NewLimiter(2, time.Minute)
 	called := 0

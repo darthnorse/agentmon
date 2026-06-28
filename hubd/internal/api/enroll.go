@@ -84,13 +84,13 @@ func (e EnrollDeps) Handler() http.HandlerFunc {
 			return
 		}
 
-		// The dialled URL is the agent's direct peer IP (the box that enrolled) +
+		// The dialled URL is the agent's real peer IP (trusted-proxy-aware) +
 		// the fixed agent port. net.JoinHostPort brackets IPv6 literals.
-		peer := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			peer = host
-		}
-		url := "http://" + net.JoinHostPort(peer, agentPort)
+		// When trust_forwarded_proto is false (direct LAN) ClientIP returns the
+		// RemoteAddr host; when true (behind Caddy) it returns the last
+		// X-Forwarded-For hop, which is the real peer the proxy appended.
+		clientIP := authn.ClientIP(r, e.TrustForwardedProto)
+		url := "http://" + net.JoinHostPort(clientIP, agentPort)
 
 		srv := db.Server{
 			ID: id, Name: req.Hostname, Hostname: req.Hostname, URL: url,
@@ -101,7 +101,7 @@ func (e EnrollDeps) Handler() http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		e.Audit.ServerEnroll(r.Context(), id, req.Hostname, authn.ClientIP(r, e.TrustForwardedProto))
+		e.Audit.ServerEnroll(r.Context(), id, req.Hostname, clientIP)
 		writeJSON(w, http.StatusOK, enrollResp{ServerID: id, Bearer: bearer, SigningKey: signingKey})
 	}
 }

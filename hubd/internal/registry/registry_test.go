@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"agentmon/hubd/internal/db"
@@ -59,6 +60,13 @@ func TestListReturnsOnlyActive(t *testing.T) {
 	}
 	if list[0].Labels == nil {
 		t.Fatal("nil labels must normalize to empty slice")
+	}
+}
+
+func TestGetPropagatesDBError(t *testing.T) {
+	r := New(&fakeStore{err: errors.New("db is down")})
+	if _, _, err := r.Get(context.Background(), "a"); err == nil {
+		t.Fatal("a genuine DB error must propagate, not be masked as not-found")
 	}
 }
 

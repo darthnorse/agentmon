@@ -73,7 +73,7 @@ func TestServerListRenders(t *testing.T) {
 	d, _ := db.Open(filepath.Join(t.TempDir(), "t.sqlite"))
 	defer d.Close()
 	ctx := context.Background()
-	d.EnrollServer(ctx, db.Server{ID: "web-01", Name: "web-01", Hostname: "web-01.lan", URL: "u", Status: "pending", Bearer: "b", SigningKey: "k", OS: "linux", Arch: "amd64", AgentVersion: "dev"})
+	d.EnrollServer(ctx, db.Server{ID: "web-01", Name: "web-01", Hostname: "web-01.lan", URL: "u", Status: "pending", Bearer: "BEARER_SEKRET_zzz", SigningKey: "SIGNKEY_SEKRET_yyy", OS: "linux", Arch: "amd64", AgentVersion: "dev"})
 	out, err := serverList(ctx, d)
 	if err != nil {
 		t.Fatal(err)
@@ -82,5 +82,8 @@ func TestServerListRenders(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("list output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "BEARER_SEKRET_zzz") || strings.Contains(out, "SIGNKEY_SEKRET_yyy") {
+		t.Fatalf("server list must never print secrets:\n%s", out)
 	}
 }
