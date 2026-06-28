@@ -15,6 +15,7 @@ token.txt
 *.sqlite
 *.db
 /data/
+/deploy/data/
 
 # Spike scratch (throwaway Claude working dir)
 /spike-0.5/scratch/

@@ -27,11 +27,15 @@ WORKDIR /src/hubd
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
     -o /out/agentmon-hubd ./cmd/agentmon-hubd
 
-# ---- Stage 3: minimal runtime ----
-FROM gcr.io/distroless/static-debian12
+# ---- Stage 3: minimal runtime (alpine + su-exec for PUID:PGID, Unraid-friendly) ----
+# alpine (not distroless) so the entrypoint can chown /data and drop privileges to
+# the host user's PUID:PGID. The hub binary is CGO_ENABLED=0 (static), so it runs
+# on musl unchanged. The container starts as root and drops to PUID:PGID at runtime.
+FROM alpine:3.24
+RUN apk add --no-cache su-exec
 COPY --from=hubd /out/agentmon-hubd /agentmon-hubd
-VOLUME ["/data"]
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && mkdir -p /data
 EXPOSE 8080
-USER 65532:65532
-ENTRYPOINT ["/agentmon-hubd"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["--config", "/data/config.yaml"]
