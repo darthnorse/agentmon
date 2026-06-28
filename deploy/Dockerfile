@@ -7,7 +7,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---- Stage 2: build hubd with the SPA embedded ----
-FROM golang:1.25-alpine AS hubd
+FROM golang:1.26-alpine AS hubd
 WORKDIR /src
 COPY . /src
 COPY --from=web /web/dist /src/hubd/internal/webui/dist
