@@ -10,7 +10,10 @@ fixed before merge; the rest are below.
 
 M2 branch: `phase-2-m2`, commits `c7a367d`..`a17f1cd` (9), off `main@176acf3`.
 
-## DECISION TO RATIFY (Patrik) — softened a pre-task instruction
+## DECISION — RATIFIED by Patrik 2026-06-27: keep the logged-skip ✅
+
+> Patrik: "Keep the logged-skip; it's the right call." SETTLED — do not revert to a
+> hard error. The rest of this section is the rationale, kept for context.
 
 The M2 kickoff pre-task said "make a malformed tmux `-F` record an **ERROR**, not
 a silent skip." I shipped that first (hard error). The opus **whole-branch review**
@@ -28,9 +31,8 @@ near-impossible in practice (human-named sessions/windows/paths are escape-free)
 the WS pane-resolution path only reads structural `pane_id`/`session_id` (so it was
 already immune), and behavior is strictly better than M1.
 
-**If you'd prefer the hard error back, it's a one-line revert** in
-`agent/internal/tmux/discovery.go` (and `pane.go`). Flagging because it softens the
-literal kickoff wording on the review's argument.
+(Originally flagged for ratification because it softens the literal kickoff wording.
+Patrik ratified keeping the logged-skip on 2026-06-27 — closed.)
 
 ## Deferred to M4 (hub relay) — must do there
 
