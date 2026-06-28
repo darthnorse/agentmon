@@ -44,6 +44,28 @@ func TestRecorderWritesTypedEvents(t *testing.T) {
 	}
 }
 
+func TestTerminalOpenRecorded(t *testing.T) {
+	s := &fakeSink{}
+	r := NewRecorder(s)
+	r.TerminalOpen(context.Background(), "u1", "pane:aigallery/default/%3", "rw", "10.0.0.2", "curl/8")
+	if len(s.rows) != 1 {
+		t.Fatalf("rows: %d", len(s.rows))
+	}
+	got := s.rows[0]
+	if got.Action != "terminal.open" || got.Result != "allow" {
+		t.Fatalf("action/result: %+v", got)
+	}
+	if got.PrincipalID != "u1" || got.Resource != "pane:aigallery/default/%3" {
+		t.Fatalf("principal/resource: %+v", got)
+	}
+	if got.Meta != "rw" || got.IP != "10.0.0.2" || got.UserAgent != "curl/8" {
+		t.Fatalf("meta/ip/ua: %+v", got)
+	}
+	if got.ID == "" {
+		t.Fatal("audit id not stamped")
+	}
+}
+
 func TestServerLifecycleAudits(t *testing.T) {
 	cap := &captureSink{}
 	r := NewRecorder(cap)
