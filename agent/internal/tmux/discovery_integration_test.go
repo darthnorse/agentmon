@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"testing"
 )
@@ -46,6 +47,61 @@ func TestExecRunnerDiscoversRealSession(t *testing.T) {
 	}
 	if s.Cwd == "" || s.Command == "" {
 		t.Fatalf("session cwd/command empty: %q/%q", s.Cwd, s.Command)
+	}
+}
+
+// TestExecRunnerDecodesBackslashAndSpaceNames drives REAL tmux 3.5a to confirm the
+// faithful de-escaper (escape.go) reverses tmux's actual -F escaping: session and
+// window names containing a backslash AND a space come back exact, and a
+// pane_current_path with a backslash + space is preserved raw. This is the case
+// the M1 normalisation heuristic mishandled.
+func TestExecRunnerDecodesBackslashAndSpaceNames(t *testing.T) {
+	requireTmux(t)
+	killTestServer()
+	t.Cleanup(killTestServer)
+
+	dir, err := os.MkdirTemp("", "agentmon m2") // space in the path...
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir = dir + `\back` // ...and a backslash
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	tmux := func(args ...string) {
+		t.Helper()
+		full := append([]string{"-L", testSocket}, args...)
+		if out, err := exec.Command("tmux", full...).CombinedOutput(); err != nil {
+			t.Fatalf("tmux %v: %v: %s", args, err, out)
+		}
+	}
+	tmux("new-session", "-d", "-s", "base", "-x", "80", "-y", "24", "-c", dir)
+	sid, err := exec.Command("tmux", "-L", testSocket, "list-sessions", "-F", "#{session_id}").Output()
+	if err != nil {
+		t.Fatalf("list-sessions: %v", err)
+	}
+	target := string(trimNL(sid))
+	tmux("rename-session", "-t", target, `proj a\b`)
+	tmux("rename-window", "-t", target, `win x\y`)
+
+	got, err := Discover(context.Background(), ExecRunner,
+		DiscoverOpts{ServerID: "srv", TargetLabel: "default", SocketName: testSocket})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 session, got %d: %+v", len(got), got)
+	}
+	if got[0].Name != `proj a\b` {
+		t.Fatalf("session name = %q, want %q", got[0].Name, `proj a\b`)
+	}
+	if len(got[0].Windows) != 1 || got[0].Windows[0].Name != `win x\y` {
+		t.Fatalf("window = %+v, want name %q", got[0].Windows, `win x\y`)
+	}
+	if got[0].Cwd != dir {
+		t.Fatalf("session cwd = %q, want raw %q", got[0].Cwd, dir)
 	}
 }
 

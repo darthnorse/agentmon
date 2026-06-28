@@ -18,6 +18,7 @@ import (
 // All four mechanics below were verified empirically against tmux 3.5a (see the
 // probes in the build session); this code just encodes those findings.
 type ControlClient struct {
+	socket  string
 	session string
 	pane    string // e.g. "%0"
 
@@ -44,17 +45,23 @@ type ControlClient struct {
 // injecting a second tmux command via an embedded newline.
 var paneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 
+// ValidatePaneID reports whether id is a syntactically valid tmux pane id ("%0",
+// "%37"). Both the WS handler (before resolution) and NewControlClient (before any
+// exec) gate on this — one source of the pattern for the two layers.
+func ValidatePaneID(id string) bool { return paneIDRe.MatchString(id) }
+
 // NewControlClient starts the control-mode client. The caller MUST keep the
 // process alive by reading Output; a dead reader will block the parser.
 //
 // Critical gotcha (verified): if the control client's stdin hits EOF it exits
 // immediately with %exit. We therefore hold the stdin pipe open for the whole
 // session and use it for send-keys / refresh-client.
-func NewControlClient(ctx context.Context, session, pane string) (*ControlClient, error) {
-	if !paneIDRe.MatchString(pane) {
+func NewControlClient(ctx context.Context, socket, session, pane string) (*ControlClient, error) {
+	if !ValidatePaneID(pane) {
 		return nil, fmt.Errorf("invalid pane id %q", pane)
 	}
-	cmd := exec.CommandContext(ctx, "tmux", "-C", "attach-session", "-t", session)
+	args := with(socketArgs(socket), "-C", "attach-session", "-t", session)
+	cmd := exec.CommandContext(ctx, "tmux", args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -69,6 +76,7 @@ func NewControlClient(ctx context.Context, session, pane string) (*ControlClient
 	}
 
 	c := &ControlClient{
+		socket:  socket,
 		session: session,
 		pane:    pane,
 		cmd:     cmd,
@@ -227,6 +235,11 @@ func encodeSendKeys(pane string, b []byte) []string {
 	}
 	return cmds
 }
+
+// OutputChan / DoneChan expose the client's channels behind read-only types so it
+// satisfies api.PaneConn without the api package importing concrete fields.
+func (c *ControlClient) OutputChan() <-chan []byte  { return c.Output }
+func (c *ControlClient) DoneChan() <-chan struct{}  { return c.Done }
 
 func isOctal(c byte) bool { return c >= '0' && c <= '7' }
 

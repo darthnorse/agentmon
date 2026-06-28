@@ -9,6 +9,7 @@ import (
 
 	"agentmon/agent/internal/api"
 	"agentmon/agent/internal/config"
+	"agentmon/agent/internal/directive"
 	"agentmon/agent/internal/tmux"
 	"agentmon/shared"
 )
@@ -26,6 +27,9 @@ func main() {
 	if cfg.HubToken == "" {
 		log.Fatal("config: hub_token is required")
 	}
+	if cfg.DirectiveKey == "" {
+		log.Fatal("config: directive_key is required")
+	}
 
 	discover := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
 		return tmux.Discover(ctx, tmux.ExecRunner, opts)
@@ -35,6 +39,18 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.HealthHandler(cfg.ServerID, version, tmuxErr == nil))
 	mux.Handle("GET /sessions", api.RequireBearer(cfg.HubToken, api.SessionsHandler(cfg, discover)))
+
+	paneIO := &api.PaneIO{
+		Cfg:      cfg,
+		Verifier: directive.NewVerifier(cfg.ServerID, []byte(cfg.DirectiveKey), nil),
+		Run:      tmux.ExecRunner,
+		Capture:  tmux.CapturePane,
+		NewClient: func(ctx context.Context, socket, session, pane string) (api.PaneConn, error) {
+			return tmux.NewControlClient(ctx, socket, session, pane)
+		},
+		Tune: tmux.TuneSession,
+	}
+	mux.Handle("GET /panes/{paneId}/io", api.RequireBearer(cfg.HubToken, paneIO.Handler()))
 
 	log.Printf("agentmon-agent %s listening on %s (server %s)", version, cfg.Listen, cfg.ServerID)
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
