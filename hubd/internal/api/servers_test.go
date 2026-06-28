@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,6 @@ import (
 	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authn"
 	"agentmon/hubd/internal/authz"
-	"agentmon/hubd/internal/config"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/registry"
 )
@@ -30,8 +30,27 @@ func testDeps(reg *registry.Registry) Deps {
 		Audit: audit.NewRecorder(nopSink{}), HealthTimeout: time.Second}
 }
 
+type fakeStore struct{ servers map[string]db.Server }
+
+func (f fakeStore) ListServers(_ context.Context, status string) ([]db.Server, error) {
+	var out []db.Server
+	for _, s := range f.servers {
+		if status == "" || s.Status == status {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+func (f fakeStore) GetServer(_ context.Context, id string) (db.Server, error) {
+	if s, ok := f.servers[id]; ok {
+		return s, nil
+	}
+	return db.Server{}, sql.ErrNoRows
+}
+func (f fakeStore) TouchServerLastSeen(_ context.Context, _ string) error { return nil }
+
 func TestServersHandlerListsForAuthedPrincipal(t *testing.T) {
-	reg := registry.New([]config.Server{{ID: "server-a", Name: "A", Token: "t", URL: "http://x"}})
+	reg := registry.New(fakeStore{servers: map[string]db.Server{"server-a": {ID: "server-a", Name: "A", Status: "active", URL: "http://x"}}})
 	d := testDeps(reg)
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers", nil), authz.Principal{ID: "u1"})
 	w := httptest.NewRecorder()
@@ -47,7 +66,7 @@ func TestServersHandlerListsForAuthedPrincipal(t *testing.T) {
 }
 
 func TestServersHandlerDeniesEmptyPrincipal(t *testing.T) {
-	d := testDeps(registry.New(nil))
+	d := testDeps(registry.New(fakeStore{}))
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers", nil), authz.Principal{})
 	w := httptest.NewRecorder()
 	d.ServersHandler()(w, r)
@@ -57,7 +76,7 @@ func TestServersHandlerDeniesEmptyPrincipal(t *testing.T) {
 }
 
 func TestServerHandlerUnknownIDIs404(t *testing.T) {
-	d := testDeps(registry.New(nil))
+	d := testDeps(registry.New(fakeStore{}))
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/nope", nil), authz.Principal{ID: "u1"})
 	r.SetPathValue("id", "nope")
 	w := httptest.NewRecorder()

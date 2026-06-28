@@ -45,7 +45,7 @@ func main() {
 	}
 	defer database.Close()
 
-	reg := registry.New(cfg.Servers)
+	reg := registry.New(database)
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)
@@ -87,7 +87,7 @@ func main() {
 	if strings.HasPrefix(cfg.ExternalOrigin, "https://") && !cfg.TrustForwardedProto {
 		log.Printf("WARNING: external_origin is HTTPS but trust_forwarded_proto is false — session cookies will be issued WITHOUT the Secure flag. Behind Caddy/TLS set trust_forwarded_proto: true.")
 	}
-	log.Printf("agentmon-hubd %s listening on %s (%d servers)", version, cfg.Listen, len(cfg.Servers))
+	log.Printf("agentmon-hubd %s listening on %s", version, cfg.Listen)
 	log.Fatal(srv.ListenAndServe())
 }
 

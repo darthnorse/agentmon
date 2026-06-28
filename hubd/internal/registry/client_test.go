@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"agentmon/hubd/internal/config"
+	"agentmon/hubd/internal/db"
 	"agentmon/shared"
 )
 
@@ -29,7 +29,7 @@ func TestClientSessionsStampsServerID(t *testing.T) {
 	ts := fakeAgent(t, "tok-a")
 	defer ts.Close()
 	c := NewClient(2 * time.Second)
-	srv := config.Server{ID: "server-a", URL: ts.URL, Token: "tok-a"}
+	srv := db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a"}
 	var got []shared.Session
 	var err error
 	got, err = c.Sessions(context.Background(), srv, "")
@@ -45,7 +45,7 @@ func TestClientSessionsBadTokenErrors(t *testing.T) {
 	ts := fakeAgent(t, "tok-a")
 	defer ts.Close()
 	c := NewClient(2 * time.Second)
-	srv := config.Server{ID: "server-a", URL: ts.URL, Token: "WRONG"}
+	srv := db.Server{ID: "server-a", URL: ts.URL, Bearer: "WRONG"}
 	if _, err := c.Sessions(context.Background(), srv, ""); err == nil {
 		t.Fatal("bad token must error")
 	}
@@ -57,7 +57,7 @@ func TestClientSessionsMalformedJSONErrors(t *testing.T) {
 	}))
 	defer ts.Close()
 	c := NewClient(2 * time.Second)
-	if _, err := c.Sessions(context.Background(), config.Server{ID: "s", URL: ts.URL, Token: "t"}, ""); err == nil {
+	if _, err := c.Sessions(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, ""); err == nil {
 		t.Fatal("malformed json must error")
 	}
 }
@@ -66,11 +66,11 @@ func TestClientHealth(t *testing.T) {
 	ts := fakeAgent(t, "tok-a")
 	defer ts.Close()
 	c := NewClient(2 * time.Second)
-	if !c.Health(context.Background(), config.Server{URL: ts.URL}) {
+	if !c.Health(context.Background(), db.Server{URL: ts.URL}) {
 		t.Fatal("healthy agent must report true")
 	}
 	ts.Close()
-	if c.Health(context.Background(), config.Server{URL: ts.URL}) {
+	if c.Health(context.Background(), db.Server{URL: ts.URL}) {
 		t.Fatal("dead agent must report false")
 	}
 }

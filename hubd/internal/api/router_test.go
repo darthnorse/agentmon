@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"agentmon/hubd/internal/authn"
-	"agentmon/hubd/internal/config"
+	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/registry"
 )
 
@@ -15,7 +15,7 @@ func TestRouterProtectsAPIAndOpensHealthz(t *testing.T) {
 	auth := &authn.Authenticator{Store: authn.NewStore(time.Hour), CookieName: "agentmon_session"}
 	rd := RouterDeps{
 		Version: "test", Auth: auth,
-		API:   testDeps(registry.New([]config.Server{{ID: "server-a", Name: "A", Token: "t", URL: "http://x"}})),
+		API:   testDeps(registry.New(fakeStore{servers: map[string]db.Server{"server-a": {ID: "server-a", Name: "A", Status: "active", URL: "http://x"}}})),
 		WebUI: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }),
 	}
 	h := NewRouter(rd)

@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	"agentmon/hubd/internal/config"
+	"agentmon/hubd/internal/db"
 	"agentmon/shared"
 )
 
@@ -18,7 +18,7 @@ func NewClient(timeout time.Duration) *Client {
 	return &Client{HTTP: &http.Client{Timeout: timeout}}
 }
 
-func (c *Client) Sessions(ctx context.Context, srv config.Server, target string) ([]shared.Session, error) {
+func (c *Client) Sessions(ctx context.Context, srv db.Server, target string) ([]shared.Session, error) {
 	u := srv.URL + "/sessions"
 	if target != "" {
 		u += "?target=" + url.QueryEscape(target)
@@ -27,7 +27,7 @@ func (c *Client) Sessions(ctx context.Context, srv config.Server, target string)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+srv.Token)
+	req.Header.Set("Authorization", "Bearer "+srv.Bearer)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("dial agent %s: %w", srv.ID, err)
@@ -48,7 +48,7 @@ func (c *Client) Sessions(ctx context.Context, srv config.Server, target string)
 	return out, nil
 }
 
-func (c *Client) Health(ctx context.Context, srv config.Server) bool {
+func (c *Client) Health(ctx context.Context, srv db.Server) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/healthz", nil)
 	if err != nil {
 		return false
