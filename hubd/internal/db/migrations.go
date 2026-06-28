@@ -12,14 +12,10 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// NOTE: migrate applies each file's SQL outside an explicit transaction and
-// records schema_migrations only after the whole file succeeds. This is safe
-// ONLY because every migration uses IF NOT EXISTS, so re-running a partially
-// applied file is idempotent. A future migration with non-idempotent
-// statements (e.g. ALTER) MUST wrap its file in a transaction.
-//
 // migrate applies every embedded *.sql file in lexical order, tracking applied
-// files in a schema_migrations table so re-runs are idempotent.
+// files in schema_migrations. Each file's SQL and its schema_migrations insert
+// run together in one transaction (applyMigration), so a failing migration leaves
+// no partial schema and is not recorded — safe for non-idempotent migrations.
 func migrate(ctx context.Context, sqldb *sql.DB) error {
 	if _, err := sqldb.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
@@ -47,13 +43,29 @@ func migrate(ctx context.Context, sqldb *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		if _, err := sqldb.ExecContext(ctx, string(body)); err != nil {
-			return fmt.Errorf("apply %s: %w", name, err)
-		}
-		if _, err := sqldb.ExecContext(ctx,
-			`INSERT INTO schema_migrations(name, applied_at) VALUES(?, datetime('now'))`, name); err != nil {
+		if err := applyMigration(ctx, sqldb, name, body); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// applyMigration runs one migration file's SQL and records it in schema_migrations
+// atomically. Any error rolls the whole thing back, so a non-idempotent migration
+// never leaves a half-applied schema.
+func applyMigration(ctx context.Context, sqldb *sql.DB, name string, body []byte) error {
+	tx, err := sqldb.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, string(body)); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("apply %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(name, applied_at) VALUES(?, datetime('now'))`, name); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("record %s: %w", name, err)
+	}
+	return tx.Commit()
 }
