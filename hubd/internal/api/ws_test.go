@@ -74,9 +74,6 @@ func fakeAgentWS(t *testing.T, rec *dialRecord) *httptest.Server {
 		rec.paneID = r.PathValue("paneId")
 		rec.target = r.URL.Query().Get("target")
 		rec.mode = r.URL.Query().Get("mode")
-		if rec.closed == nil {
-			rec.closed = make(chan struct{}, 8)
-		}
 		rec.mu.Unlock()
 		c, err := up.Upgrade(w, r, nil)
 		if err != nil {
@@ -312,7 +309,9 @@ func TestRelayAgentDialFailureIs502(t *testing.T) {
 }
 
 func TestRelayClosingBrowserTearsDownAgent(t *testing.T) {
-	rec := &dialRecord{}
+	// closed is initialized eagerly (before any goroutine) so the test goroutine's
+	// read and the fake-agent goroutine's send never race on the field itself.
+	rec := &dialRecord{closed: make(chan struct{}, 8)}
 	agent := fakeAgentWS(t, rec)
 	defer agent.Close()
 	d := relayDeps(agent.URL, "b", "k", &recSink{})
