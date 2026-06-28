@@ -342,3 +342,95 @@ func TestRelayClosingBrowserTearsDownAgent(t *testing.T) {
 	}
 	c2.Close()
 }
+
+// setRelayTiming shrinks the ping/pong windows for fast liveness tests and returns
+// a restore func. Tests using it must NOT call t.Parallel (package-level vars).
+func setRelayTiming(t *testing.T, pong, ping time.Duration) {
+	t.Helper()
+	relayTimingMu.Lock()
+	op, opi := relayPongWait, relayPingPeriod
+	relayPongWait, relayPingPeriod = pong, ping
+	relayTimingMu.Unlock()
+	t.Cleanup(func() {
+		relayTimingMu.Lock()
+		relayPongWait, relayPingPeriod = op, opi
+		relayTimingMu.Unlock()
+	})
+}
+
+func TestRelayStaysOpenWhileActiveBeyondPongWait(t *testing.T) {
+	setRelayTiming(t, 200*time.Millisecond, 40*time.Millisecond)
+	rec := &dialRecord{}
+	agent := fakeAgentWS(t, rec)
+	defer agent.Close()
+	d := relayDeps(agent.URL, "b", "k", &recSink{})
+	hub := relayServer(d, authz.Principal{ID: "u1"})
+	defer hub.Close()
+
+	c, _, err := dialBrowser(t, hub, "/api/v1/servers/aigallery/panes/%253/io?target=default", testOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	// A gorilla client auto-replies to pings with pongs during ReadMessage. Keep
+	// reading in the background so pongs flow and the hub's read deadline is bumped.
+	go func() {
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+	// Wait well past pongWait, then prove the relay is still alive by round-tripping.
+	time.Sleep(500 * time.Millisecond)
+	if err := c.WriteMessage(websocket.BinaryMessage, []byte("ping-alive")); err != nil {
+		t.Fatalf("relay died before deadline refresh kept it open: %v", err)
+	}
+	// Allow the relay goroutines and fake agent to process the message before checking.
+	time.Sleep(100 * time.Millisecond)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var sawAlive bool
+	for _, g := range rec.got {
+		if string(g) == "ping-alive" {
+			sawAlive = true
+		}
+	}
+	if !sawAlive {
+		t.Fatal("late message did not reach the agent — relay was not kept alive")
+	}
+}
+
+func TestRelayRaceUnderConcurrentTraffic(t *testing.T) {
+	setRelayTiming(t, 2*time.Second, 5*time.Millisecond) // pings interleave with writes
+	rec := &dialRecord{}
+	agent := fakeAgentWS(t, rec)
+	defer agent.Close()
+	d := relayDeps(agent.URL, "b", "k", &recSink{})
+	hub := relayServer(d, authz.Principal{ID: "u1"})
+	defer hub.Close()
+
+	c, _, err := dialBrowser(t, hub, "/api/v1/servers/aigallery/panes/%253/io?target=default", testOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { // drain echoes + snapshot
+		defer wg.Done()
+		for i := 0; i < 51; i++ {
+			if _, _, err := c.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		if err := c.WriteMessage(websocket.BinaryMessage, []byte("msg")); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	wg.Wait()
+}

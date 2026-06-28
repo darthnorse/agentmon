@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -22,10 +23,25 @@ var hubPaneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 // Relay tunables. pongWait/pingPeriod are vars so tests can shrink them. There is
 // deliberately NO global server WriteTimeout for the WS route; writes use per-
 // message deadlines (relayWriteWait) instead.
+// relayTimingMu guards relayPongWait and relayPingPeriod so that tests that
+// write these vars (setRelayTiming) and goroutines that read them are race-free.
 var (
+	relayTimingMu   sync.RWMutex
 	relayPongWait   = 60 * time.Second
 	relayPingPeriod = 20 * time.Second
 )
+
+func loadRelayPongWait() time.Duration {
+	relayTimingMu.RLock()
+	defer relayTimingMu.RUnlock()
+	return relayPongWait
+}
+
+func loadRelayPingPeriod() time.Duration {
+	relayTimingMu.RLock()
+	defer relayTimingMu.RUnlock()
+	return relayPingPeriod
+}
 
 const (
 	relayWriteWait   = 10 * time.Second
@@ -140,11 +156,16 @@ func agentWSURL(rawURL, paneID, target string) (string, error) {
 // relayPanes copies WS frames transparently in both directions until either side
 // closes/errors, then tears down both conns so the peer's blocked ReadMessage
 // unblocks (no leaked goroutine, no orphaned agent connection → no orphaned tmux
-// control subprocess). Liveness (ping/pong + read deadlines) is added in the next
-// task; this is the byte-faithful core.
+// control subprocess). Read deadlines are kept alive by the ping/pong exchange;
+// writes use per-message deadlines.
 func relayPanes(browser, agent *websocket.Conn) {
 	browser.SetReadLimit(relayReadLimit)
 	agent.SetReadLimit(relayReadLimit)
+	armLiveness(browser)
+	armLiveness(agent)
+
+	stopPing := make(chan struct{})
+	go pingLoop(stopPing, browser, agent)
 
 	done := make(chan struct{}, 2)
 	copyFrames := func(dst, src *websocket.Conn) {
@@ -163,8 +184,45 @@ func relayPanes(browser, agent *websocket.Conn) {
 	go copyFrames(agent, browser) // browser → agent
 	go copyFrames(browser, agent) // agent → browser
 
-	<-done              // first side finished
-	_ = browser.Close() // unblock the other copy's ReadMessage
+	<-done
+	close(stopPing)
+	_ = browser.Close()
 	_ = agent.Close()
-	<-done // wait for the second
+	<-done
+}
+
+// armLiveness sets the initial read deadline and bumps it on every pong AND on
+// every ping the peer sends (the agent pings the hub; a browser may too). The ping
+// handler still sends the pong, preserving default behavior.
+func armLiveness(c *websocket.Conn) {
+	pongWait := loadRelayPongWait() // snapshot once; closures capture the local copy
+	_ = c.SetReadDeadline(time.Now().Add(pongWait))
+	c.SetPongHandler(func(string) error {
+		return c.SetReadDeadline(time.Now().Add(pongWait))
+	})
+	c.SetPingHandler(func(msg string) error {
+		_ = c.SetReadDeadline(time.Now().Add(pongWait))
+		err := c.WriteControl(websocket.PongMessage, []byte(msg), time.Now().Add(relayWriteWait))
+		if err == websocket.ErrCloseSent {
+			return nil
+		}
+		return err
+	})
+}
+
+// pingLoop sends periodic pings to both conns. WriteControl is documented safe to
+// call concurrently with the single-writer WriteMessage in each copy goroutine.
+func pingLoop(stop <-chan struct{}, conns ...*websocket.Conn) {
+	t := time.NewTicker(loadRelayPingPeriod())
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			for _, c := range conns {
+				_ = c.WriteControl(websocket.PingMessage, nil, time.Now().Add(relayWriteWait))
+			}
+		}
+	}
 }
