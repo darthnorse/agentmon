@@ -29,6 +29,8 @@ type Deps struct {
 	TrustForwardedProto bool
 	Minter              directive.Minter // M4: mints hub→agent WS access directives
 	ExternalOrigin      string           // M4: WS upgrade Origin check
+	RelayPongWait       time.Duration    // M4 relay liveness; 0 → default (60s)
+	RelayPingPeriod     time.Duration    // M4 relay ping cadence; 0 → default (20s). Must be < RelayPongWait.
 }
 
 // authorizeOr403 resolves the principal from the request context, calls

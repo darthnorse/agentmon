@@ -343,27 +343,13 @@ func TestRelayClosingBrowserTearsDownAgent(t *testing.T) {
 	c2.Close()
 }
 
-// setRelayTiming shrinks the ping/pong windows for fast liveness tests and returns
-// a restore func. Tests using it must NOT call t.Parallel (package-level vars).
-func setRelayTiming(t *testing.T, pong, ping time.Duration) {
-	t.Helper()
-	relayTimingMu.Lock()
-	op, opi := relayPongWait, relayPingPeriod
-	relayPongWait, relayPingPeriod = pong, ping
-	relayTimingMu.Unlock()
-	t.Cleanup(func() {
-		relayTimingMu.Lock()
-		relayPongWait, relayPingPeriod = op, opi
-		relayTimingMu.Unlock()
-	})
-}
-
 func TestRelayStaysOpenWhileActiveBeyondPongWait(t *testing.T) {
-	setRelayTiming(t, 200*time.Millisecond, 40*time.Millisecond)
 	rec := &dialRecord{}
 	agent := fakeAgentWS(t, rec)
 	defer agent.Close()
 	d := relayDeps(agent.URL, "b", "k", &recSink{})
+	d.RelayPongWait = 200 * time.Millisecond
+	d.RelayPingPeriod = 40 * time.Millisecond
 	hub := relayServer(d, authz.Principal{ID: "u1"})
 	defer hub.Close()
 
@@ -386,27 +372,29 @@ func TestRelayStaysOpenWhileActiveBeyondPongWait(t *testing.T) {
 	if err := c.WriteMessage(websocket.BinaryMessage, []byte("ping-alive")); err != nil {
 		t.Fatalf("relay died before deadline refresh kept it open: %v", err)
 	}
-	// Allow the relay goroutines and fake agent to process the message before checking.
-	time.Sleep(100 * time.Millisecond)
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	var sawAlive bool
-	for _, g := range rec.got {
-		if string(g) == "ping-alive" {
-			sawAlive = true
+	// Bounded poll: wait up to 2s in 10ms steps for "ping-alive" to reach the agent.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rec.mu.Lock()
+		for _, g := range rec.got {
+			if string(g) == "ping-alive" {
+				rec.mu.Unlock()
+				return // success
+			}
 		}
+		rec.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
 	}
-	if !sawAlive {
-		t.Fatal("late message did not reach the agent — relay was not kept alive")
-	}
+	t.Fatal("late message did not reach the agent — relay was not kept alive")
 }
 
 func TestRelayRaceUnderConcurrentTraffic(t *testing.T) {
-	setRelayTiming(t, 2*time.Second, 5*time.Millisecond) // pings interleave with writes
 	rec := &dialRecord{}
 	agent := fakeAgentWS(t, rec)
 	defer agent.Close()
 	d := relayDeps(agent.URL, "b", "k", &recSink{})
+	d.RelayPongWait = 2 * time.Second
+	d.RelayPingPeriod = 5 * time.Millisecond // pings interleave with writes
 	hub := relayServer(d, authz.Principal{ID: "u1"})
 	defer hub.Close()
 

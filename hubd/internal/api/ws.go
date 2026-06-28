@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,33 +19,12 @@ import (
 // before any send-keys. Same shape as the agent's tmux.ValidatePaneID.
 var hubPaneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 
-// Relay tunables. pongWait/pingPeriod are vars so tests can shrink them. There is
-// deliberately NO global server WriteTimeout for the WS route; writes use per-
-// message deadlines (relayWriteWait) instead.
-// relayTimingMu guards relayPongWait and relayPingPeriod so that tests that
-// write these vars (setRelayTiming) and goroutines that read them are race-free.
-var (
-	relayTimingMu   sync.RWMutex
-	relayPongWait   = 60 * time.Second
-	relayPingPeriod = 20 * time.Second
-)
-
-func loadRelayPongWait() time.Duration {
-	relayTimingMu.RLock()
-	defer relayTimingMu.RUnlock()
-	return relayPongWait
-}
-
-func loadRelayPingPeriod() time.Duration {
-	relayTimingMu.RLock()
-	defer relayTimingMu.RUnlock()
-	return relayPingPeriod
-}
-
 const (
-	relayWriteWait   = 10 * time.Second
-	relayDialTimeout = 10 * time.Second
-	relayReadLimit   = 1 << 20
+	relayWriteWait         = 10 * time.Second
+	relayDialTimeout       = 10 * time.Second
+	relayReadLimit         = 1 << 20
+	defaultRelayPongWait   = 60 * time.Second
+	defaultRelayPingPeriod = 20 * time.Second // must stay < defaultRelayPongWait
 )
 
 // PaneRelayHandler serves GET /api/v1/servers/{id}/panes/{paneId}/io. RequireAuth
@@ -131,7 +109,15 @@ func (d Deps) PaneRelayHandler() http.HandlerFunc {
 			authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		_ = d.Reg.TouchLastSeen(r.Context(), id)
 
-		relayPanes(browser, agentConn)
+		pongWait := d.RelayPongWait
+		if pongWait <= 0 {
+			pongWait = defaultRelayPongWait
+		}
+		pingPeriod := d.RelayPingPeriod
+		if pingPeriod <= 0 {
+			pingPeriod = defaultRelayPingPeriod
+		}
+		relayPanes(browser, agentConn, pongWait, pingPeriod)
 	}
 }
 
@@ -157,15 +143,16 @@ func agentWSURL(rawURL, paneID, target string) (string, error) {
 // closes/errors, then tears down both conns so the peer's blocked ReadMessage
 // unblocks (no leaked goroutine, no orphaned agent connection → no orphaned tmux
 // control subprocess). Read deadlines are kept alive by the ping/pong exchange;
-// writes use per-message deadlines.
-func relayPanes(browser, agent *websocket.Conn) {
+// writes use per-message deadlines. Caller must pass pingPeriod < pongWait so a
+// healthy idle conn is pinged before its read deadline expires.
+func relayPanes(browser, agent *websocket.Conn, pongWait, pingPeriod time.Duration) {
 	browser.SetReadLimit(relayReadLimit)
 	agent.SetReadLimit(relayReadLimit)
-	armLiveness(browser)
-	armLiveness(agent)
+	armLiveness(browser, pongWait)
+	armLiveness(agent, pongWait)
 
 	stopPing := make(chan struct{})
-	go pingLoop(stopPing, browser, agent)
+	go pingLoop(stopPing, pingPeriod, browser, agent)
 
 	done := make(chan struct{}, 2)
 	copyFrames := func(dst, src *websocket.Conn) {
@@ -194,8 +181,7 @@ func relayPanes(browser, agent *websocket.Conn) {
 // armLiveness sets the initial read deadline and bumps it on every pong AND on
 // every ping the peer sends (the agent pings the hub; a browser may too). The ping
 // handler still sends the pong, preserving default behavior.
-func armLiveness(c *websocket.Conn) {
-	pongWait := loadRelayPongWait() // snapshot once; closures capture the local copy
+func armLiveness(c *websocket.Conn, pongWait time.Duration) {
 	_ = c.SetReadDeadline(time.Now().Add(pongWait))
 	c.SetPongHandler(func(string) error {
 		return c.SetReadDeadline(time.Now().Add(pongWait))
@@ -212,8 +198,8 @@ func armLiveness(c *websocket.Conn) {
 
 // pingLoop sends periodic pings to both conns. WriteControl is documented safe to
 // call concurrently with the single-writer WriteMessage in each copy goroutine.
-func pingLoop(stop <-chan struct{}, conns ...*websocket.Conn) {
-	t := time.NewTicker(loadRelayPingPeriod())
+func pingLoop(stop <-chan struct{}, pingPeriod time.Duration, conns ...*websocket.Conn) {
+	t := time.NewTicker(pingPeriod)
 	defer t.Stop()
 	for {
 		select {
