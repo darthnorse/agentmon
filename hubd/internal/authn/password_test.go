@@ -33,3 +33,33 @@ func TestVerifyMalformedEncodedErrors(t *testing.T) {
 		t.Fatal("malformed encoded must error")
 	}
 }
+
+func TestVerifyRejectsWrongArgon2Version(t *testing.T) {
+	// PHC string with v=18 (current is 19) — must error before attempting argon2.
+	encoded := "$argon2id$v=18$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNo"
+	_, err := VerifyPassword(encoded, "pw")
+	if err == nil {
+		t.Fatal("v=18 must return an error")
+	}
+}
+
+func TestVerifyRejectsHugeMemoryParam(t *testing.T) {
+	// PHC string with m=9999999999 — far beyond the 2 GiB cap — must error.
+	encoded := "$argon2id$v=19$m=9999999999,t=3,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNo"
+	_, err := VerifyPassword(encoded, "pw")
+	if err == nil {
+		t.Fatal("m=9999999999 must return an error")
+	}
+}
+
+func TestVerifyNormalHashPasswordOutputPasses(t *testing.T) {
+	// Production params (m=65536, t=3, p=2) must pass the range gate.
+	h, err := HashPassword("agentmon")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	ok, err := VerifyPassword(h, "agentmon")
+	if err != nil || !ok {
+		t.Fatalf("normal hash must verify: ok=%v err=%v", ok, err)
+	}
+}

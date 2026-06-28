@@ -20,11 +20,12 @@ type AuditReader interface {
 
 // Deps holds the shared dependencies for all API handlers.
 type Deps struct {
-	Reg           *registry.Registry
-	Agent         *registry.Client
-	Audit         *audit.Recorder
-	AuditRepo     AuditReader
-	HealthTimeout time.Duration
+	Reg                 *registry.Registry
+	Agent               *registry.Client
+	Audit               *audit.Recorder
+	AuditRepo           AuditReader
+	HealthTimeout       time.Duration
+	TrustForwardedProto bool
 }
 
 // authorizeOr403 resolves the principal from the request context, calls
@@ -34,7 +35,7 @@ func (d Deps) authorizeOr403(w http.ResponseWriter, r *http.Request, action auth
 	p, _ := authn.PrincipalFrom(r.Context())
 	dec, err := authz.Authorize(r.Context(), p, action, resource)
 	if err != nil || !dec.Allow {
-		d.Audit.Deny(r.Context(), p.ID, action, resource, clientIP(r), r.UserAgent(), "")
+		d.Audit.Deny(r.Context(), p.ID, action, resource, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent(), "")
 		writeJSONError(w, http.StatusForbidden, "forbidden")
 		return p, false
 	}
@@ -70,7 +71,7 @@ func (d Deps) ServerHandler() http.HandlerFunc {
 		writeJSON(w, http.StatusOK, registry.ServerDetail{
 			ID:      srv.ID,
 			Name:    srv.Name,
-			Labels:  labelsOrEmpty(srv.Labels),
+			Labels:  registry.LabelsOrEmpty(srv.Labels),
 			Enabled: true,
 			Healthy: d.Agent.Health(ctx, srv),
 		})
@@ -87,16 +88,3 @@ func writeJSONError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
-	}
-	return r.RemoteAddr
-}
-
-func labelsOrEmpty(l []string) []string {
-	if l == nil {
-		return []string{}
-	}
-	return l
-}

@@ -35,7 +35,12 @@ func TestMeReturnsPrincipalAndCSRF(t *testing.T) {
 	r := httptest.NewRequest("GET", "/api/v1/me", nil)
 	r.AddCookie(&http.Cookie{Name: "agentmon_session", Value: sess.Token})
 	w := httptest.NewRecorder()
-	a.MeHandler()(w, r)
+	// Drive through RequireAuth so the principal and CSRF token are stamped into
+	// the request context before MeHandler reads them.
+	a.RequireAuth(a.MeHandler()).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
 	var resp map[string]string
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp["principalId"] != "u1" || resp["username"] != "patrik" || resp["csrfToken"] != sess.CSRFToken {

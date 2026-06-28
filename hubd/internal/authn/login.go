@@ -46,8 +46,8 @@ func (d LoginDeps) LoginHandler() http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "bad request")
 			return
 		}
-		ip := clientIP(r)
-		if !d.Limiter.Allowed(body.Username) {
+		ip := ClientIP(r, d.TrustForwardedProto)
+		if !d.Limiter.Allowed(ip) {
 			d.Audit.LoginFailure(r.Context(), body.Username, ip, r.UserAgent())
 			writeErr(w, http.StatusTooManyRequests, "too many attempts")
 			return
@@ -61,12 +61,12 @@ func (d LoginDeps) LoginHandler() http.HandlerFunc {
 		ok, _ := VerifyPassword(hash, body.Password)
 		<-verifySem
 		if err != nil || !ok || u.Status != "active" {
-			d.Limiter.Fail(body.Username)
+			d.Limiter.Fail(ip)
 			d.Audit.LoginFailure(r.Context(), body.Username, ip, r.UserAgent())
 			writeErr(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
-		d.Limiter.Reset(body.Username)
+		d.Limiter.Reset(ip)
 		sess, err := d.Store.New(u.ID, u.Username, u.DisplayName)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "session")
@@ -82,9 +82,3 @@ func (d LoginDeps) LoginHandler() http.HandlerFunc {
 	}
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
-	}
-	return r.RemoteAddr
-}

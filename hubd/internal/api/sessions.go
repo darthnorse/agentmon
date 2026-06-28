@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 
 	"agentmon/hubd/internal/authz"
@@ -20,6 +21,7 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 		}
 		sessions, err := d.Agent.Sessions(r.Context(), srv, "")
 		if err != nil {
+			log.Printf("sessions: agent %s: %v", id, err)
 			writeJSONError(w, http.StatusBadGateway, "agent unavailable")
 			return
 		}
@@ -41,6 +43,7 @@ func (d Deps) SessionDetailHandler() http.HandlerFunc {
 		}
 		sessions, err := d.Agent.Sessions(r.Context(), srv, "")
 		if err != nil {
+			log.Printf("sessions: agent %s: %v", id, err)
 			writeJSONError(w, http.StatusBadGateway, "agent unavailable")
 			return
 		}

@@ -213,3 +213,42 @@ func TestLoginVerifyConcurrencyIsBounded(t *testing.T) {
 		}
 	}
 }
+
+// TestLoginRateLimitIsPerIPNotUsername asserts that the rate limiter buckets by
+// client IP so an attacker's exhausted bucket does not lock out a different IP.
+func TestLoginRateLimitIsPerIPNotUsername(t *testing.T) {
+	hash, _ := HashPassword("pw")
+	d := deps(t, db.User{ID: "u1", Username: "patrik", PasswordHash: hash}, nil)
+	d.Limiter = NewLimiter(1, time.Minute) // 1 bad attempt fills the bucket
+
+	// First attempt from IP A: wrong password → 401, bucket for IP A is now full.
+	r1 := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"username":"patrik","password":"NOPE"}`))
+	r1.RemoteAddr = "198.51.100.1:5555"
+	w1 := httptest.NewRecorder()
+	d.LoginHandler()(w1, r1)
+	if w1.Code != http.StatusUnauthorized {
+		t.Fatalf("first attempt from IP A: want 401, got %d", w1.Code)
+	}
+
+	// Second attempt from IP A → bucket full → 429.
+	r2 := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"username":"patrik","password":"NOPE"}`))
+	r2.RemoteAddr = "198.51.100.1:5555"
+	w2 := httptest.NewRecorder()
+	d.LoginHandler()(w2, r2)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second attempt from IP A: want 429, got %d", w2.Code)
+	}
+
+	// Attempt from different IP B → different bucket → must NOT be 429.
+	r3 := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"username":"patrik","password":"NOPE"}`))
+	r3.RemoteAddr = "203.0.113.9:5555"
+	w3 := httptest.NewRecorder()
+	d.LoginHandler()(w3, r3)
+	if w3.Code == http.StatusTooManyRequests {
+		t.Fatalf("attempt from IP B after IP A lockout: want non-429, got 429 (attacker bucket leaked to victim)")
+	}
+	// Reaches the credential-check path → 401 (wrong password, different IP bucket).
+	if w3.Code != http.StatusUnauthorized {
+		t.Fatalf("attempt from IP B: want 401, got %d", w3.Code)
+	}
+}

@@ -34,7 +34,9 @@ func New(servers []config.Server) *Registry {
 	return r
 }
 
-func labelsOrEmpty(l []string) []string {
+// LabelsOrEmpty returns l unchanged if non-nil, or an empty slice to avoid
+// marshalling a JSON null for servers with no labels configured.
+func LabelsOrEmpty(l []string) []string {
 	if l == nil {
 		return []string{}
 	}
@@ -45,7 +47,7 @@ func (r *Registry) List() []ServerSummary {
 	out := make([]ServerSummary, 0, len(r.order))
 	for _, id := range r.order {
 		s := r.servers[id]
-		out = append(out, ServerSummary{ID: s.ID, Name: s.Name, Labels: labelsOrEmpty(s.Labels), Enabled: true})
+		out = append(out, ServerSummary{ID: s.ID, Name: s.Name, Labels: LabelsOrEmpty(s.Labels), Enabled: true})
 	}
 	return out
 }

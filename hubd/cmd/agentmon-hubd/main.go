@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,11 +65,12 @@ func main() {
 			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
 		API: api.Deps{
-			Reg:           reg,
-			Agent:         registry.NewClient(10 * time.Second),
-			Audit:         rec,
-			AuditRepo:     database,
-			HealthTimeout: 3 * time.Second,
+			Reg:                 reg,
+			Agent:               registry.NewClient(10 * time.Second),
+			Audit:               rec,
+			AuditRepo:           database,
+			HealthTimeout:       3 * time.Second,
+			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
 		WebUI: webui.Handler(),
 	})
@@ -94,7 +96,7 @@ func openDB(cfg config.Config) (*db.DB, error) {
 	if dir == "" {
 		dir = "."
 	}
-	return db.Open(dir + "/agentmon.sqlite")
+	return db.Open(filepath.Join(dir, "agentmon.sqlite"))
 }
 
 func cookieTTL(cfg config.Config) time.Duration {

@@ -10,7 +10,10 @@ import (
 
 type ctxKey int
 
-const principalKey ctxKey = 0
+const (
+	principalKey ctxKey = iota
+	csrfKey
+)
 
 // PrincipalFrom retrieves the authenticated principal from the request context.
 // Returns the zero Principal and false if none has been stamped.
@@ -24,6 +27,18 @@ func PrincipalFrom(ctx context.Context) (authz.Principal, bool) {
 // without going through the session cookie machinery.
 func ContextWithPrincipal(ctx context.Context, p authz.Principal) context.Context {
 	return context.WithValue(ctx, principalKey, p)
+}
+
+// contextWithCSRF stores the CSRF token into ctx so that MeHandler can read it
+// without a second Store.Get (RequireAuth already holds the session).
+func contextWithCSRF(ctx context.Context, csrf string) context.Context {
+	return context.WithValue(ctx, csrfKey, csrf)
+}
+
+// csrfFrom retrieves the CSRF token stashed by RequireAuth.
+func csrfFrom(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(csrfKey).(string)
+	return v, ok
 }
 
 // Authenticator is the edge middleware that resolves a session cookie to an
@@ -60,7 +75,9 @@ func (a *Authenticator) RequireAuth(next http.Handler) http.Handler {
 			Username:    sess.Username,
 			DisplayName: sess.DisplayName,
 		}
-		next.ServeHTTP(w, r.WithContext(ContextWithPrincipal(r.Context(), p)))
+		ctx := ContextWithPrincipal(r.Context(), p)
+		ctx = contextWithCSRF(ctx, sess.CSRFToken)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

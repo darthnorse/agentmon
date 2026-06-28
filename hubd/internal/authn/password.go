@@ -47,6 +47,12 @@ func VerifyPassword(encoded, plain string) (bool, error) {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &time, &threads); err != nil {
 		return false, fmt.Errorf("bad params: %w", err)
 	}
+	if version != argon2.Version {
+		return false, fmt.Errorf("unsupported argon2 version %d", version)
+	}
+	if mem <= 0 || mem > 1<<21 || time <= 0 || time > 16 || threads <= 0 || threads > 16 {
+		return false, fmt.Errorf("argon2 params out of range")
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
 		return false, fmt.Errorf("bad salt: %w", err)
