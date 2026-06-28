@@ -51,6 +51,21 @@ func (l *Limiter) Fail(key string) {
 	l.fails[key] = append(l.fails[key], t)
 }
 
+// Take records a request against key and reports whether it is within the
+// limit, atomically (prune + check + append under one lock). Use for
+// rate-by-rate limiting where every request counts (vs. Allowed/Fail, which
+// the login path uses to count only failures).
+func (l *Limiter) Take(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := l.now()
+	if len(l.prune(key, t)) >= l.max {
+		return false
+	}
+	l.fails[key] = append(l.fails[key], t)
+	return true
+}
+
 func (l *Limiter) Reset(key string) {
 	l.mu.Lock()
 	delete(l.fails, key)

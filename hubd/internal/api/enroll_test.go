@@ -72,6 +72,18 @@ func TestEnrollDuplicateIs409(t *testing.T) {
 	}
 }
 
+func TestEnrollRejectsUnsafeOSField(t *testing.T) {
+	d, _ := enrollDeps()
+	body := "{\"hostname\":\"web-01\",\"arch\":\"amd64\",\"os\":\"linux\\u001b[31mX\",\"agentVersion\":\"dev\"}"
+	r := httptest.NewRequest("POST", "/api/v1/enroll", strings.NewReader(body))
+	r.RemoteAddr = "10.0.0.9:1"
+	w := httptest.NewRecorder()
+	d.Handler()(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("enroll with control chars in os must be 400, got %d", w.Code)
+	}
+}
+
 func TestEnrollBadBodyIs400(t *testing.T) {
 	d, _ := enrollDeps()
 	for _, body := range []string{`{not json`, `{"hostname":"","arch":"amd64"}`, `{"hostname":"web-01","arch":"sparc"}`} {
@@ -89,7 +101,7 @@ func TestEnrollDialURLUsesForwardedClientIP(t *testing.T) {
 	st := &memEnrollStore{servers: map[string]db.Server{}}
 	d := EnrollDeps{Servers: st, Audit: audit.NewRecorder(nopSink{}), TrustForwardedProto: true}
 	r := httptest.NewRequest("POST", "/api/v1/enroll", strings.NewReader(`{"hostname":"web-01","arch":"amd64"}`))
-	r.RemoteAddr = "10.9.9.9:443"                                   // the proxy
+	r.RemoteAddr = "10.9.9.9:443"                             // the proxy
 	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.50") // ..., real agent peer (last hop)
 	w := httptest.NewRecorder()
 	d.Handler()(w, r)

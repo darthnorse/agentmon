@@ -71,14 +71,14 @@ func serverList(ctx context.Context, d serverCmdStore) (string, error) {
 	}
 	var sb strings.Builder
 	tw := tabwriter.NewWriter(&sb, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tHOSTNAME\tSTATUS\tOS/ARCH\tVERSION\tLAST-SEEN")
+	fmt.Fprintln(tw, "ID\tNAME\tHOSTNAME\tURL\tSTATUS\tOS/ARCH\tVERSION\tLAST-SEEN")
 	for _, s := range servers {
 		last := s.LastSeenAt
 		if last == "" {
 			last = "never"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s/%s\t%s\t%s\n",
-			s.ID, s.Name, s.Hostname, s.Status, s.OS, s.Arch, s.AgentVersion, last)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s/%s\t%s\t%s\n",
+			s.ID, s.Name, s.Hostname, s.URL, s.Status, s.OS, s.Arch, s.AgentVersion, last)
 	}
 	tw.Flush()
 	return sb.String(), nil

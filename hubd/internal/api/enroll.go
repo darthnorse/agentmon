@@ -18,6 +18,11 @@ const agentPort = "8377"
 
 var hostnameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$`)
 
+// os/agentVersion are shown in the operator's `server list`; restrict to a safe
+// printable charset (empty allowed) so an enroller can't inject terminal escapes
+// or forge table rows via embedded control/tab/newline bytes.
+var fieldRe = regexp.MustCompile(`^[A-Za-z0-9._+-]{0,64}$`)
+
 // EnrollStore is the DB surface the enroll handler needs.
 type EnrollStore interface {
 	GetServer(ctx context.Context, id string) (db.Server, error)
@@ -62,6 +67,10 @@ func (e EnrollDeps) Handler() http.HandlerFunc {
 			return
 		}
 		if req.Arch != "amd64" && req.Arch != "arm64" {
+			writeJSONError(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		if !fieldRe.MatchString(req.OS) || !fieldRe.MatchString(req.AgentVersion) {
 			writeJSONError(w, http.StatusBadRequest, "bad request")
 			return
 		}

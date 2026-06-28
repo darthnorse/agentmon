@@ -6,6 +6,8 @@ services:
     image: agentmon-hubd:dev
     restart: unless-stopped
     ports:
+      # NOTE: with trust_forwarded_proto: true the hub trusts X-Forwarded-For, so its
+      # listen port MUST be reachable only by the trusted proxy (this loopback bind, or a firewall).
       - "127.0.0.1:8080:8080"   # behind Caddy on the host; bind LAN in real deploys
     volumes:
       - agentmon-data:/data

@@ -33,6 +33,18 @@ func TestInstallScriptIsTemplated(t *testing.T) {
 	}
 }
 
+func TestInstallScriptChownsAgentTomlToRunUser(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	// agent.toml must be chowned to the service user, else the agent (User=RUN_USER) can't read its config.
+	if !strings.Contains(body, `chown "$RUN_USER" /etc/agentmon/agent.toml`) {
+		t.Fatal("install.sh must chown agent.toml to the run user (agent runs as that user and reads the config)")
+	}
+}
+
 func TestBinaryHandlerServesBytesAndChecksum(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/dl/agent-linux-amd64", nil)

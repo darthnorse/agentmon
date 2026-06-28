@@ -12,11 +12,10 @@ import (
 func onboardRateLimit(l *authn.Limiter, trustForwardedProto bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := authn.ClientIP(r, trustForwardedProto)
-		if !l.Allowed(ip) {
+		if !l.Take(ip) {
 			writeJSONError(w, http.StatusTooManyRequests, "too many attempts")
 			return
 		}
-		l.Fail(ip) // record this request in the window
 		next.ServeHTTP(w, r)
 	})
 }

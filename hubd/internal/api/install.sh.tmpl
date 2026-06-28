@@ -92,8 +92,8 @@ scrollback_lines = 5000
   socket_name = "$SOCKET"
   label = "default"
 EOF
-chown "$RUN_USER" /etc/agentmon/hub_token /etc/agentmon/signing_key
-chmod 600 /etc/agentmon/hub_token /etc/agentmon/signing_key
+chown "$RUN_USER" /etc/agentmon/agent.toml /etc/agentmon/hub_token /etc/agentmon/signing_key
+chmod 600 /etc/agentmon/agent.toml /etc/agentmon/hub_token /etc/agentmon/signing_key
 
 cat > /etc/systemd/system/agentmon-agent.service <<EOF
 [Unit]
