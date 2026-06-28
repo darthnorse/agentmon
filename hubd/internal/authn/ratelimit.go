@@ -26,7 +26,14 @@ func (l *Limiter) prune(key string, t time.Time) []time.Time {
 			kept = append(kept, ts)
 		}
 	}
-	l.fails[key] = kept
+	// Evict empty keys instead of retaining an empty slice, so a flood of distinct
+	// (attacker-supplied) usernames cannot grow the map unbounded. Fail re-creates
+	// the key via append-to-nil; Allowed treats an absent key as zero failures.
+	if len(kept) == 0 {
+		delete(l.fails, key)
+	} else {
+		l.fails[key] = kept
+	}
 	return kept
 }
 

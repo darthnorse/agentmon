@@ -24,6 +24,27 @@ func TestLimiterBlocksAfterMaxThenRecoversAfterWindow(t *testing.T) {
 	}
 }
 
+func TestLimiterEvictsStaleKeysAfterWindow(t *testing.T) {
+	l := NewLimiter(3, time.Minute)
+	base := time.Unix(1_700_000_000, 0)
+	l.now = func() time.Time { return base }
+	// A flood of distinct usernames must not leave permanent map entries.
+	for i := 0; i < 50; i++ {
+		l.Fail(string(rune('a' + i%26)))
+	}
+	if len(l.fails) == 0 {
+		t.Fatal("precondition: keys should exist while inside the window")
+	}
+	// Advance past the window; touching each key (via Allowed/prune) must evict it.
+	l.now = func() time.Time { return base.Add(2 * time.Minute) }
+	for i := 0; i < 50; i++ {
+		l.Allowed(string(rune('a' + i%26)))
+	}
+	if len(l.fails) != 0 {
+		t.Fatalf("stale keys not evicted after window: %d remain", len(l.fails))
+	}
+}
+
 func TestLimiterResetOnSuccess(t *testing.T) {
 	l := NewLimiter(2, time.Minute)
 	l.Fail("p")
