@@ -67,11 +67,15 @@ echo "Enrolling..."
 REQ="$(printf '{"hostname":"%s","os":"linux","arch":"%s","agentVersion":"installed","target":{"osUser":"%s","socket":"%s","label":"default"}}' "$HOST" "$ARCH" "$RUN_USER" "$SOCKET")"
 RESP="$(curl -fsS -X POST -H 'Content-Type: application/json' -d "$REQ" "$HUB_URL/api/v1/enroll")" || die "enroll request failed"
 
+# `|| true` keeps a missing field (or a SIGPIPE from grep|head under pipefail)
+# from aborting via set -e before the explicit guard below can report it.
 extract() { printf '%s' "$RESP" | grep -o "\"$1\":\"[^\"]*\"" | head -n1 | cut -d'"' -f4; }
-SERVER_ID="$(extract serverId)"
-BEARER="$(extract bearer)"
-SIGNING_KEY="$(extract signingKey)"
-[ -n "$SERVER_ID" ] && [ -n "$BEARER" ] && [ -n "$SIGNING_KEY" ] || die "enroll response missing fields: $RESP"
+SERVER_ID="$(extract serverId || true)"
+BEARER="$(extract bearer || true)"
+SIGNING_KEY="$(extract signingKey || true)"
+if [ -z "$SERVER_ID" ] || [ -z "$BEARER" ] || [ -z "$SIGNING_KEY" ]; then
+  die "enroll response missing fields: $RESP"
+fi
 
 install -d -m 0755 /etc/agentmon
 umask 077
