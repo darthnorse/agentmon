@@ -49,6 +49,7 @@ func main() {
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)
+	onboard := authn.NewLimiter(enrollMax(cfg), enrollWindow(cfg))
 
 	router := api.NewRouter(api.RouterDeps{
 		Version:             version,
@@ -72,6 +73,8 @@ func main() {
 			HealthTimeout:       3 * time.Second,
 			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
+		Enroll: api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
+		Onboard: onboard,
 		WebUI: webui.Handler(),
 	})
 
@@ -118,6 +121,20 @@ func rateWindow(cfg config.Config) time.Duration {
 		return cfg.LoginRateLimit.Window
 	}
 	return 15 * time.Minute
+}
+
+func enrollMax(cfg config.Config) int {
+	if cfg.EnrollRateLimit.MaxAttempts > 0 {
+		return cfg.EnrollRateLimit.MaxAttempts
+	}
+	return 30
+}
+
+func enrollWindow(cfg config.Config) time.Duration {
+	if cfg.EnrollRateLimit.Window > 0 {
+		return cfg.EnrollRateLimit.Window
+	}
+	return time.Minute
 }
 
 // runUserCmd implements: agentmon-hubd user set-password --username <u> [--display <d>] [--config <path>]

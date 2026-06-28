@@ -39,6 +39,7 @@ type Config struct {
 	DataDir             string       `yaml:"data_dir"`
 	SessionCookie       CookieCfg    `yaml:"session_cookie"`
 	LoginRateLimit      RateLimitCfg `yaml:"login_rate_limit"`
+	EnrollRateLimit     RateLimitCfg `yaml:"enroll_rate_limit"`
 	Servers             []Server     `yaml:"servers"`
 }
 
