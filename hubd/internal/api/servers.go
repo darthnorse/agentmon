@@ -49,7 +49,12 @@ func (d Deps) ServersHandler() http.HandlerFunc {
 		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*"); !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, d.Reg.List())
+		list, err := d.Reg.List(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
 	}
 }
 
@@ -61,7 +66,11 @@ func (d Deps) ServerHandler() http.HandlerFunc {
 		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:"+id); !ok {
 			return
 		}
-		srv, ok := d.Reg.Get(id)
+		srv, ok, err := d.Reg.Get(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "unknown server")
 			return
@@ -87,4 +96,3 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func writeJSONError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
-

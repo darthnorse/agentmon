@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+# AgentMon agent installer — served by the hub, templated with its own URL + checksums.
+# Usage: curl <hub>/install.sh | sudo bash [-s -- --hostname=H --user=U --socket=S --dry-run]
+set -euo pipefail
+
+HUB_URL="{{.HubURL}}"
+SHA256_AMD64="{{.SHA256AMD64}}"
+SHA256_ARM64="{{.SHA256ARM64}}"
+AGENT_PORT="8377"
+
+HOSTNAME_OVERRIDE=""
+USER_OVERRIDE=""
+SOCKET_OVERRIDE=""
+DRY_RUN="0"
+for arg in "$@"; do
+  case "$arg" in
+    --hostname=*) HOSTNAME_OVERRIDE="${arg#*=}" ;;
+    --user=*)     USER_OVERRIDE="${arg#*=}" ;;
+    --socket=*)   SOCKET_OVERRIDE="${arg#*=}" ;;
+    --dry-run)    DRY_RUN="1" ;;
+    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+die() { echo "error: $*" >&2; exit 1; }
+
+command -v systemctl >/dev/null 2>&1 || die "systemd (systemctl) is required; this installer does not support non-systemd hosts"
+command -v curl >/dev/null 2>&1 || die "curl is required"
+
+ARCH_RAW="$(uname -m)"
+case "$ARCH_RAW" in
+  x86_64|amd64) ARCH="amd64"; SHA256_EXPECT="$SHA256_AMD64" ;;
+  aarch64|arm64) ARCH="arm64"; SHA256_EXPECT="$SHA256_ARM64" ;;
+  *) die "unsupported architecture: $ARCH_RAW (only amd64/arm64)" ;;
+esac
+
+HOST="${HOSTNAME_OVERRIDE:-$(hostname -s)}"
+RUN_USER="${USER_OVERRIDE:-${SUDO_USER:-$(id -un)}}"
+SOCKET="${SOCKET_OVERRIDE:-}"
+
+echo "AgentMon installer:"
+echo "  hub:      $HUB_URL"
+echo "  hostname: $HOST"
+echo "  run-as:   $RUN_USER"
+echo "  arch:     $ARCH"
+
+if [ "$DRY_RUN" = "1" ]; then
+  echo "[dry-run] would download $HUB_URL/dl/agent-linux-$ARCH (sha256 $SHA256_EXPECT)"
+  echo "[dry-run] would enroll at $HUB_URL/api/v1/enroll as '$HOST'"
+  echo "[dry-run] would write /etc/agentmon/agent.toml + secrets, install + start the systemd unit"
+  echo "[dry-run] no changes made."
+  exit 0
+fi
+
+[ "$(id -u)" = "0" ] || die "must run as root (use sudo)"
+
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+echo "Downloading agent ($ARCH)..."
+curl -fsSL "$HUB_URL/dl/agent-linux-$ARCH" -o "$TMP"
+GOT_SHA="$(sha256sum "$TMP" | cut -d' ' -f1)"
+[ "$GOT_SHA" = "$SHA256_EXPECT" ] || die "checksum mismatch (got $GOT_SHA, want $SHA256_EXPECT)"
+install -m 0755 "$TMP" /usr/local/bin/agentmon-agent
+
+echo "Enrolling..."
+REQ="$(printf '{"hostname":"%s","os":"linux","arch":"%s","agentVersion":"installed","target":{"osUser":"%s","socket":"%s","label":"default"}}' "$HOST" "$ARCH" "$RUN_USER" "$SOCKET")"
+RESP="$(curl -fsS -X POST -H 'Content-Type: application/json' -d "$REQ" "$HUB_URL/api/v1/enroll")" || die "enroll request failed"
+
+# `|| true` keeps a missing field (or a SIGPIPE from grep|head under pipefail)
+# from aborting via set -e before the explicit guard below can report it.
+extract() { printf '%s' "$RESP" | grep -o "\"$1\":\"[^\"]*\"" | head -n1 | cut -d'"' -f4; }
+SERVER_ID="$(extract serverId || true)"
+BEARER="$(extract bearer || true)"
+SIGNING_KEY="$(extract signingKey || true)"
+if [ -z "$SERVER_ID" ] || [ -z "$BEARER" ] || [ -z "$SIGNING_KEY" ]; then
+  die "enroll response missing fields: $RESP"
+fi
+
+install -d -m 0755 /etc/agentmon
+umask 077
+printf '%s' "$BEARER" > /etc/agentmon/hub_token
+printf '%s' "$SIGNING_KEY" > /etc/agentmon/signing_key
+cat > /etc/agentmon/agent.toml <<EOF
+listen = "0.0.0.0:$AGENT_PORT"
+server_id = "$SERVER_ID"
+hub_token = "file:/etc/agentmon/hub_token"
+directive_key = "file:/etc/agentmon/signing_key"
+scrollback_lines = 5000
+[[targets]]
+  os_user = "$RUN_USER"
+  socket_name = "$SOCKET"
+  label = "default"
+EOF
+chown "$RUN_USER" /etc/agentmon/agent.toml /etc/agentmon/hub_token /etc/agentmon/signing_key
+chmod 600 /etc/agentmon/agent.toml /etc/agentmon/hub_token /etc/agentmon/signing_key
+
+cat > /etc/systemd/system/agentmon-agent.service <<EOF
+[Unit]
+Description=AgentMon agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$RUN_USER
+ExecStart=/usr/local/bin/agentmon-agent --config /etc/agentmon/agent.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now agentmon-agent
+
+echo "Smoke-testing the agent..."
+ok="0"
+for _ in 1 2 3 4 5; do
+  if curl -fsS "http://127.0.0.1:$AGENT_PORT/healthz" >/dev/null 2>&1; then ok="1"; break; fi
+  sleep 1
+done
+[ "$ok" = "1" ] || die "agent did not become healthy; check: journalctl -u agentmon-agent"
+
+echo "✓ $HOST enrolled — pending approval. Run 'agentmon-hubd server approve $HOST' on the hub."

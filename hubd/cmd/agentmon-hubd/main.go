@@ -32,6 +32,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "server" {
+		if err := runServerCmd(os.Args[2:]); err != nil {
+			log.Fatalf("server: %v", err)
+		}
+		return
+	}
 	cfgPath := flag.String("config", "/data/config.yaml", "path to config.yaml")
 	flag.Parse()
 
@@ -45,10 +51,11 @@ func main() {
 	}
 	defer database.Close()
 
-	reg := registry.New(cfg.Servers)
+	reg := registry.New(database)
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)
+	onboard := authn.NewLimiter(enrollMax(cfg), enrollWindow(cfg))
 
 	router := api.NewRouter(api.RouterDeps{
 		Version:             version,
@@ -72,7 +79,10 @@ func main() {
 			HealthTimeout:       3 * time.Second,
 			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
-		WebUI: webui.Handler(),
+		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
+		Onboard: onboard,
+		Install: api.InstallDeps{HubURL: cfg.ExternalOrigin},
+		WebUI:   webui.Handler(),
 	})
 
 	srv := &http.Server{
@@ -87,7 +97,7 @@ func main() {
 	if strings.HasPrefix(cfg.ExternalOrigin, "https://") && !cfg.TrustForwardedProto {
 		log.Printf("WARNING: external_origin is HTTPS but trust_forwarded_proto is false — session cookies will be issued WITHOUT the Secure flag. Behind Caddy/TLS set trust_forwarded_proto: true.")
 	}
-	log.Printf("agentmon-hubd %s listening on %s (%d servers)", version, cfg.Listen, len(cfg.Servers))
+	log.Printf("agentmon-hubd %s listening on %s", version, cfg.Listen)
 	log.Fatal(srv.ListenAndServe())
 }
 
@@ -118,6 +128,20 @@ func rateWindow(cfg config.Config) time.Duration {
 		return cfg.LoginRateLimit.Window
 	}
 	return 15 * time.Minute
+}
+
+func enrollMax(cfg config.Config) int {
+	if cfg.EnrollRateLimit.MaxAttempts > 0 {
+		return cfg.EnrollRateLimit.MaxAttempts
+	}
+	return 30
+}
+
+func enrollWindow(cfg config.Config) time.Duration {
+	if cfg.EnrollRateLimit.Window > 0 {
+		return cfg.EnrollRateLimit.Window
+	}
+	return time.Minute
 }
 
 // runUserCmd implements: agentmon-hubd user set-password --username <u> [--display <d>] [--config <path>]

@@ -12,6 +12,9 @@ type RouterDeps struct {
 	Login               authn.LoginDeps
 	TrustForwardedProto bool
 	API                 Deps
+	Enroll              EnrollDeps
+	Onboard             *authn.Limiter
+	Install             InstallDeps
 	WebUI               http.Handler
 }
 
@@ -28,6 +31,11 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("GET /api/v1/servers/{id}/sessions", rd.Auth.RequireAuth(rd.API.ServerSessionsHandler()))
 	mux.Handle("GET /api/v1/servers/{id}/sessions/{name}", rd.Auth.RequireAuth(rd.API.SessionDetailHandler()))
 	mux.Handle("GET /api/v1/audit", rd.Auth.RequireAuth(rd.API.AuditHandler()))
+
+	mux.Handle("POST /api/v1/enroll", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Enroll.Handler()))
+
+	mux.Handle("GET /install.sh", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Install.ScriptHandler()))
+	mux.Handle("GET /dl/{file}", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Install.BinaryHandler()))
 
 	mux.Handle("/", rd.WebUI)
 	return mux

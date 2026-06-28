@@ -12,7 +12,6 @@ import (
 
 	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authn"
-	"agentmon/hubd/internal/config"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/registry"
 )
@@ -27,10 +26,16 @@ func buildHub(t *testing.T, agentURL, agentToken string) (http.Handler, *db.DB) 
 	if err := d.SetPassword(context.Background(), "u1", "patrik", "Patrik", hash); err != nil {
 		t.Fatal(err)
 	}
+	if err := d.EnrollServer(context.Background(), db.Server{
+		ID: "server-a", Name: "A", Hostname: "server-a", URL: agentURL,
+		Status: "active", Bearer: agentToken, SigningKey: "k",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reg := registry.New(d)
 	store := authn.NewStore(time.Hour)
 	auth := &authn.Authenticator{Store: store, CookieName: "agentmon_session"}
 	rec := audit.NewRecorder(d)
-	reg := registry.New([]config.Server{{ID: "server-a", Name: "A", URL: agentURL, Token: agentToken}})
 	router := NewRouter(RouterDeps{
 		Version: "test", Auth: auth,
 		Login: authn.LoginDeps{Users: d, Store: store, Limiter: authn.NewLimiter(5, time.Minute),

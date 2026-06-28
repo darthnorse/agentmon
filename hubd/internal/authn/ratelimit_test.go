@@ -1,6 +1,8 @@
 package authn
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -55,5 +57,24 @@ func TestLimiterResetOnSuccess(t *testing.T) {
 	l.Reset("p")
 	if !l.Allowed("p") {
 		t.Fatal("reset must clear failures")
+	}
+}
+
+func TestTakeIsAtomicUnderConcurrency(t *testing.T) {
+	l := NewLimiter(5, time.Minute)
+	var wg sync.WaitGroup
+	var granted int64
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if l.Take("1.2.3.4") {
+				atomic.AddInt64(&granted, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if granted != 5 {
+		t.Fatalf("Take must grant exactly max=5 under concurrency, got %d", granted)
 	}
 }

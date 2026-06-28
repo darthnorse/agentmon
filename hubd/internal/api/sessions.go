@@ -14,7 +14,11 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 		if _, ok := d.authorizeOr403(w, r, authz.SessionView, "server:"+id); !ok {
 			return
 		}
-		srv, ok := d.Reg.Get(id)
+		srv, ok, err := d.Reg.Get(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "unknown server")
 			return
@@ -25,6 +29,7 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusBadGateway, "agent unavailable")
 			return
 		}
+		_ = d.Reg.TouchLastSeen(r.Context(), id)
 		writeJSON(w, http.StatusOK, sessions)
 	}
 }
@@ -36,7 +41,11 @@ func (d Deps) SessionDetailHandler() http.HandlerFunc {
 		if _, ok := d.authorizeOr403(w, r, authz.SessionView, shared.SessionID(id, "default", name)); !ok {
 			return
 		}
-		srv, ok := d.Reg.Get(id)
+		srv, ok, err := d.Reg.Get(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "unknown server")
 			return

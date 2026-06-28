@@ -1,28 +1,88 @@
 package registry
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"testing"
 
-	"agentmon/hubd/internal/config"
+	"agentmon/hubd/internal/db"
 )
 
-func TestRegistryListAndGet(t *testing.T) {
-	r := New([]config.Server{
-		{ID: "server-a", Name: "A", URL: "http://10.0.0.5:8377", Token: "t", Labels: []string{"prod"}},
-		{ID: "server-b", Name: "B", URL: "http://10.0.0.6:8377", Token: "t2"},
-	})
-	list := r.List()
-	if len(list) != 2 || list[0].ID != "server-a" || !list[0].Enabled {
-		t.Fatalf("list: %+v", list)
+// fakeStore is an in-memory registry.Store for tests.
+type fakeStore struct {
+	servers map[string]db.Server
+	err     error
+	touched []string
+}
+
+func (f *fakeStore) ListServers(_ context.Context, status string) ([]db.Server, error) {
+	if f.err != nil {
+		return nil, f.err
 	}
-	if list[1].Labels == nil {
+	var out []db.Server
+	for _, s := range f.servers {
+		if status == "" || s.Status == status {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetServer(_ context.Context, id string) (db.Server, error) {
+	if f.err != nil {
+		return db.Server{}, f.err
+	}
+	s, ok := f.servers[id]
+	if !ok {
+		return db.Server{}, sql.ErrNoRows // mirrors *db.DB.GetServer's missing-row error
+	}
+	return s, nil
+}
+
+func (f *fakeStore) TouchServerLastSeen(_ context.Context, id string) error {
+	f.touched = append(f.touched, id)
+	return nil
+}
+
+func TestListReturnsOnlyActive(t *testing.T) {
+	r := New(&fakeStore{servers: map[string]db.Server{
+		"a": {ID: "a", Name: "A", Status: "active", Labels: []string{"prod"}},
+		"b": {ID: "b", Name: "B", Status: "pending"},
+		"c": {ID: "c", Name: "C", Status: "revoked"},
+	}})
+	list, err := r.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != "a" || !list[0].Enabled {
+		t.Fatalf("list must contain only active: %+v", list)
+	}
+	if list[0].Labels == nil {
 		t.Fatal("nil labels must normalize to empty slice")
 	}
-	s, ok := r.Get("server-b")
-	if !ok || s.Token != "t2" {
-		t.Fatalf("get: %+v ok=%v", s, ok)
+}
+
+func TestGetPropagatesDBError(t *testing.T) {
+	r := New(&fakeStore{err: errors.New("db is down")})
+	if _, _, err := r.Get(context.Background(), "a"); err == nil {
+		t.Fatal("a genuine DB error must propagate, not be masked as not-found")
 	}
-	if _, ok := r.Get("nope"); ok {
-		t.Fatal("unknown id must not be found")
+}
+
+func TestGetActiveOnly(t *testing.T) {
+	r := New(&fakeStore{servers: map[string]db.Server{
+		"a": {ID: "a", Status: "active", Bearer: "tok"},
+		"p": {ID: "p", Status: "pending"},
+	}})
+	srv, ok, err := r.Get(context.Background(), "a")
+	if err != nil || !ok || srv.Bearer != "tok" {
+		t.Fatalf("active get: %+v ok=%v err=%v", srv, ok, err)
+	}
+	if _, ok, _ := r.Get(context.Background(), "p"); ok {
+		t.Fatal("pending server must not be found by the registry")
+	}
+	if _, ok, _ := r.Get(context.Background(), "missing"); ok {
+		t.Fatal("missing server must not be found")
 	}
 }

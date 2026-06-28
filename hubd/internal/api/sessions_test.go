@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"agentmon/hubd/internal/authz"
-	"agentmon/hubd/internal/config"
+	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/registry"
 	"agentmon/shared"
 )
@@ -23,8 +23,8 @@ func fakeAgentSrv(t *testing.T, token string) *httptest.Server {
 	}))
 }
 
-func depsWith(srv config.Server) Deps {
-	d := testDeps(registry.New([]config.Server{srv}))
+func depsWith(srv db.Server) Deps {
+	d := testDeps(registry.New(fakeStore{servers: map[string]db.Server{srv.ID: srv}}))
 	d.Agent = registry.NewClient(2 * time.Second)
 	return d
 }
@@ -32,7 +32,7 @@ func depsWith(srv config.Server) Deps {
 func TestServerSessionsReturnsStampedList(t *testing.T) {
 	ts := fakeAgentSrv(t, "tok-a")
 	defer ts.Close()
-	d := depsWith(config.Server{ID: "server-a", URL: ts.URL, Token: "tok-a"})
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a", Status: "active"})
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/server-a/sessions", nil), authz.Principal{ID: "u1"})
 	r.SetPathValue("id", "server-a")
 	w := httptest.NewRecorder()
@@ -50,7 +50,7 @@ func TestServerSessionsReturnsStampedList(t *testing.T) {
 func TestServerSessionsAgentErrorIs502(t *testing.T) {
 	ts := fakeAgentSrv(t, "tok-a")
 	defer ts.Close()
-	d := depsWith(config.Server{ID: "server-a", URL: ts.URL, Token: "WRONG"}) // agent will 401
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "WRONG", Status: "active"}) // agent will 401
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/server-a/sessions", nil), authz.Principal{ID: "u1"})
 	r.SetPathValue("id", "server-a")
 	w := httptest.NewRecorder()
@@ -61,7 +61,7 @@ func TestServerSessionsAgentErrorIs502(t *testing.T) {
 }
 
 func TestServerSessionsUnknownServerIs404(t *testing.T) {
-	d := depsWith(config.Server{ID: "server-a", URL: "http://x", Token: "tok-a"})
+	d := depsWith(db.Server{ID: "server-a", URL: "http://x", Bearer: "tok-a", Status: "active"})
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/no-such/sessions", nil), authz.Principal{ID: "u1"})
 	r.SetPathValue("id", "no-such")
 	w := httptest.NewRecorder()
@@ -72,7 +72,7 @@ func TestServerSessionsUnknownServerIs404(t *testing.T) {
 }
 
 func TestSessionDetailUnknownServerIs404(t *testing.T) {
-	d := depsWith(config.Server{ID: "server-a", URL: "http://x", Token: "tok-a"})
+	d := depsWith(db.Server{ID: "server-a", URL: "http://x", Bearer: "tok-a", Status: "active"})
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/no-such/sessions/whatever", nil), authz.Principal{ID: "u1"})
 	r.SetPathValue("id", "no-such")
 	r.SetPathValue("name", "whatever")
@@ -86,7 +86,7 @@ func TestSessionDetailUnknownServerIs404(t *testing.T) {
 func TestSessionDetailFoundAndNotFound(t *testing.T) {
 	ts := fakeAgentSrv(t, "tok-a")
 	defer ts.Close()
-	d := depsWith(config.Server{ID: "server-a", URL: ts.URL, Token: "tok-a"})
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a", Status: "active"})
 
 	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/server-a/sessions/proj", nil), authz.Principal{ID: "u1"})
 	r.SetPathValue("id", "server-a")
