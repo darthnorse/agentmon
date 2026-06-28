@@ -106,3 +106,29 @@ func TestSessionDetailFoundAndNotFound(t *testing.T) {
 		t.Fatalf("missing session must be 404, got %d", w2.Code)
 	}
 }
+
+func TestSessionDetailHonorsTargetQuery(t *testing.T) {
+	var gotTarget string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok-a" {
+			w.WriteHeader(401)
+			return
+		}
+		gotTarget = r.URL.Query().Get("target")
+		w.Write([]byte(`{"sessions":[{"name":"proj","server":"x","target":"work","cwd":"/p","command":"claude","windows":[]}]}`))
+	}))
+	defer ts.Close()
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a", Status: "active"})
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/server-a/sessions/proj?target=work", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "server-a")
+	r.SetPathValue("name", "proj")
+	w := httptest.NewRecorder()
+	d.SessionDetailHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	if gotTarget != "work" {
+		t.Fatalf("agent saw target %q, want work", gotTarget)
+	}
+}

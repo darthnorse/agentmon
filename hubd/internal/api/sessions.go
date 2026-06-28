@@ -38,7 +38,11 @@ func (d Deps) SessionDetailHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		name := r.PathValue("name")
-		if _, ok := d.authorizeOr403(w, r, authz.SessionView, shared.SessionID(id, "default", name)); !ok {
+		target := r.URL.Query().Get("target")
+		if target == "" {
+			target = "default"
+		}
+		if _, ok := d.authorizeOr403(w, r, authz.SessionView, shared.SessionID(id, target, name)); !ok {
 			return
 		}
 		srv, ok, err := d.Reg.Get(r.Context(), id)
@@ -50,7 +54,7 @@ func (d Deps) SessionDetailHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "unknown server")
 			return
 		}
-		sessions, err := d.Agent.Sessions(r.Context(), srv, "")
+		sessions, err := d.Agent.Sessions(r.Context(), srv, target)
 		if err != nil {
 			log.Printf("sessions: agent %s: %v", id, err)
 			writeJSONError(w, http.StatusBadGateway, "agent unavailable")
