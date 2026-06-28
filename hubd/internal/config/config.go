@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-
-	"agentmon/shared"
 )
 
 type CookieCfg struct {
@@ -20,18 +18,6 @@ type RateLimitCfg struct {
 	Window      time.Duration `yaml:"window"`
 }
 
-type Server struct {
-	ID            string   `yaml:"id"`
-	Name          string   `yaml:"name"`
-	URL           string   `yaml:"url"`
-	TokenRef      string   `yaml:"token_ref"`
-	SigningKeyRef string   `yaml:"signing_key_ref"`
-	Labels        []string `yaml:"labels"`
-	// resolved at load:
-	Token      string `yaml:"-"`
-	SigningKey string `yaml:"-"`
-}
-
 type Config struct {
 	Listen              string       `yaml:"listen"`
 	ExternalOrigin      string       `yaml:"external_origin"`
@@ -40,7 +26,6 @@ type Config struct {
 	SessionCookie       CookieCfg    `yaml:"session_cookie"`
 	LoginRateLimit      RateLimitCfg `yaml:"login_rate_limit"`
 	EnrollRateLimit     RateLimitCfg `yaml:"enroll_rate_limit"`
-	Servers             []Server     `yaml:"servers"`
 }
 
 func Load(path string) (Config, error) {
@@ -55,18 +40,5 @@ func Load(path string) (Config, error) {
 	if c.SessionCookie.Name == "" {
 		c.SessionCookie.Name = "agentmon_session"
 	}
-	for i := range c.Servers {
-		tok, err := shared.ResolveSecretRef(c.Servers[i].TokenRef)
-		if err != nil {
-			return Config{}, fmt.Errorf("server %s token: %w", c.Servers[i].ID, err)
-		}
-		key, err := shared.ResolveSecretRef(c.Servers[i].SigningKeyRef)
-		if err != nil {
-			return Config{}, fmt.Errorf("server %s signing_key: %w", c.Servers[i].ID, err)
-		}
-		c.Servers[i].Token = tok
-		c.Servers[i].SigningKey = key
-	}
 	return c, nil
 }
-

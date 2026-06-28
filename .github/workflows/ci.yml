@@ -20,6 +20,17 @@ jobs:
           if grep -q '/assets/' hubd/internal/webui/dist/index.html; then
             echo "ERROR: committed embed index.html references built /assets/ — only the placeholder may be tracked"; exit 1
           fi
+      - name: Embedded agent binaries must be placeholders (not real binaries)
+        run: |
+          for f in hubd/internal/agentbin/bin/agent-linux-amd64 hubd/internal/agentbin/bin/agent-linux-arm64; do
+            if ! grep -q 'AGENTMON_AGENT_PLACEHOLDER' "$f"; then
+              echo "ERROR: $f is not the tracked placeholder — a real binary was committed"; exit 1
+            fi
+          done
+      - name: Shellcheck the installer template
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck hubd/internal/api/install.sh.tmpl
   web:
     runs-on: ubuntu-latest
     steps:
