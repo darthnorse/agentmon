@@ -75,6 +75,7 @@ func main() {
 		},
 		Enroll: api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,
+		Install: api.InstallDeps{HubURL: cfg.ExternalOrigin},
 		WebUI: webui.Handler(),
 	})
 

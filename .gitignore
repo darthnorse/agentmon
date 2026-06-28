@@ -32,3 +32,9 @@ web/dist/
 # Built SPA copied into the embed dir; keep only the placeholder index.html tracked
 /hubd/internal/webui/dist/*
 !/hubd/internal/webui/dist/index.html
+
+# Embedded agent binaries: only the placeholders are tracked; the real
+# cross-compiled binaries are baked into the image at build time.
+/hubd/internal/agentbin/bin/*
+!/hubd/internal/agentbin/bin/agent-linux-amd64
+!/hubd/internal/agentbin/bin/agent-linux-arm64
