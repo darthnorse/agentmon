@@ -7,7 +7,10 @@ import (
 )
 
 func TestUserRepoRoundTrip(t *testing.T) {
-	d, _ := Open(filepath.Join(t.TempDir(), "t.sqlite"))
+	d, err := Open(filepath.Join(t.TempDir(), "t.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer d.Close()
 	ctx := context.Background()
 
@@ -63,5 +66,27 @@ func TestAuditAppendAndRecent(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Action != "terminal.open" {
 		t.Fatalf("recent: %+v", rows)
+	}
+}
+
+func TestSetPasswordUpserts(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "t.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	if err := d.SetPassword(ctx, "u1", "patrik", "Patrik", "$argon2id$v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetPassword(ctx, "u1", "patrik", "Patrik R", "$argon2id$v2"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetUserByUsername(ctx, "patrik")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PasswordHash != "$argon2id$v2" || got.DisplayName != "Patrik R" {
+		t.Fatalf("upsert did not update: %+v", got)
 	}
 }

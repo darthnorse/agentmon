@@ -1,0 +1,45 @@
+// Package audit records security-relevant events to the append-only audit_log.
+// Writes never include secrets or raw keystrokes; the session name (if any) goes
+// in the JSON meta. Append failures are logged, never propagated to the caller —
+// a broken audit write must not break the request it describes.
+package audit
+
+import (
+	"context"
+	"log"
+
+	"github.com/google/uuid"
+
+	"agentmon/hubd/internal/authz"
+	"agentmon/hubd/internal/db"
+)
+
+type Sink interface {
+	Append(ctx context.Context, e db.AuditEntry) error
+}
+
+type Recorder struct{ sink Sink }
+
+func NewRecorder(s Sink) *Recorder { return &Recorder{sink: s} }
+
+func (r *Recorder) write(ctx context.Context, e db.AuditEntry) {
+	e.ID = uuid.NewString()
+	if err := r.sink.Append(ctx, e); err != nil {
+		log.Printf("audit: append failed (action=%s result=%s): %v", e.Action, e.Result, err)
+	}
+}
+
+func (r *Recorder) LoginSuccess(ctx context.Context, principalID, ip, ua string) {
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "login.success",
+		Resource: "user:" + principalID, Result: "allow", IP: ip, UserAgent: ua})
+}
+
+func (r *Recorder) LoginFailure(ctx context.Context, username, ip, ua string) {
+	r.write(ctx, db.AuditEntry{Action: "login.failure",
+		Resource: "user:" + username, Result: "deny", IP: ip, UserAgent: ua})
+}
+
+func (r *Recorder) Deny(ctx context.Context, principalID string, action authz.Action, resource, ip, ua, meta string) {
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: string(action),
+		Resource: resource, Result: "deny", IP: ip, UserAgent: ua, Meta: meta})
+}
