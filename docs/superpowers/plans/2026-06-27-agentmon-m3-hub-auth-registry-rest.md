@@ -6,11 +6,11 @@
 
 **Architecture:** A single `agentmon-hubd` process resolves every request to a principal at the edge (session cookie → `RequireAuth` middleware → `authz.Authorize()` per handler), reads its server list from `config.yaml` at boot, and proxies session-tree reads to LAN agents using each agent's bearer token. TLS/origin is terminated by Caddy; the hub derives cookie `Secure` from `X-Forwarded-Proto` and origin-checks against `external_origin`. Sessions are held in an in-memory store (single-process, single-user; re-login after restart is acceptable for Phase 1).
 
-**Tech Stack:** Go 1.25 (latest), `modernc.org/sqlite` (`CGO_ENABLED=0`), `golang.org/x/crypto/argon2`, `github.com/google/uuid`, `net/http` (stdlib routing), `httptest` for integration.
+**Tech Stack:** Go 1.26.4 (latest, verified via go.dev/VERSION), `modernc.org/sqlite` (`CGO_ENABLED=0`), `golang.org/x/crypto/argon2`, `github.com/google/uuid`, `net/http` (stdlib routing), `httptest` for integration.
 
 ## Global Constraints
 
-- **Go module layout:** three modules in a `go.work` (`agent`, `hubd`, `shared`) all on **Go 1.25** (bumped from 1.23 in Task 2 so `golang.org/x/crypto` v0.53.0 resolves; Dockerfile builder `golang:1.25-alpine` and CI `go-version: "1.25"` track it); hub code lives under `hubd/internal/...`; cross-module shared types live in `agentmon/shared`.
+- **Go module layout:** three modules in a `go.work` (`agent`, `hubd`, `shared`) all on **Go 1.26.4** (latest; bumped from 1.23 in Task 2 so `golang.org/x/crypto` v0.53.0 resolves; Dockerfile builder `golang:1.26-alpine` and CI `go-version: "1.26"` track it); hub code lives under `hubd/internal/...`; cross-module shared types live in `agentmon/shared`.
 - **`CGO_ENABLED=0`** must keep building (pure-Go deps only; argon2/x-crypto are pure Go).
 - **No secrets to the browser** (§10, #8): server token / signing key / password hash never appear in any `/api/v1` JSON response or the SPA bundle.
 - **No raw keystroke logging; no secrets in audit** (§10): audit rows carry action/result/principal/resource and a JSON `meta` (session name allowed); never passwords, tokens, or terminal bytes.
