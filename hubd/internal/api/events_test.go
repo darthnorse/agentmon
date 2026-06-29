@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/state"
@@ -44,6 +45,33 @@ func (w *pipeResponseWriter) Header() http.Header         { return w.header }
 func (w *pipeResponseWriter) WriteHeader(code int)        { w.code = code }
 func (w *pipeResponseWriter) Write(b []byte) (int, error) { return w.pw.Write(b) }
 func (w *pipeResponseWriter) Flush()                      {} // pipe writes are already streaming
+
+// TestEventsHandler_DeniesUnauthedPrincipal asserts that EventsHandler returns 403
+// when the request context has no authenticated principal (empty-ID principal), and
+// that the handler returns without writing any SSE stream content.
+// This exercises the authorizeOr403 chokepoint that FIX 1 adds.
+func TestEventsHandler_DeniesUnauthedPrincipal(t *testing.T) {
+	d := Deps{
+		Proj:         state.NewProjection(),
+		Bcast:        state.NewBroadcaster(),
+		Seen:         &fakeSeenStore{},
+		SSEHeartbeat: 50 * time.Millisecond, // fast heartbeat so test exits quickly if authz gate is missing
+		Audit:        audit.NewRecorder(nopSink{}),
+	}
+	// withPrincipal with empty ID — authorizeOr403 denies when principal.ID == "".
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/events", nil).WithContext(ctx), authz.Principal{})
+	w := httptest.NewRecorder()
+	d.EventsHandler()(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("want 403 for unauthenticated principal, got %d (body=%s)", w.Code, w.Body)
+	}
+	// Ensure no SSE content was written (no "event:" lines).
+	if strings.Contains(w.Body.String(), "event:") {
+		t.Fatalf("SSE stream must not be started for unauthorized request; body=%s", w.Body)
+	}
+}
 
 // TestEventsHandler_SnapshotAndDelta asserts:
 //  1. An initial event:snapshot containing all projection sessions

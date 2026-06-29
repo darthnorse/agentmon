@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"agentmon/hubd/internal/authn"
+	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/state"
 	"agentmon/shared"
@@ -35,7 +35,10 @@ type sseKey struct{ server, target, session string }
 // during an active stream is not reflected until the client reconnects.
 func (d Deps) EventsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		p, _ := authn.PrincipalFrom(r.Context())
+		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*")
+		if !ok {
+			return
+		}
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {

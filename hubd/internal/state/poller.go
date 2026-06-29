@@ -32,6 +32,9 @@ type AgentAPI interface {
 // EventStore is satisfied by *db.DB.
 type EventStore interface {
 	AppendStateEvent(ctx context.Context, e db.StateEvent) error
+	// LatestSessionEvent returns the most recent durable event for a session triple,
+	// used by the hub-restart reseed path to avoid re-stamping received_at.
+	LatestSessionEvent(ctx context.Context, serverID, target, session string) (db.StateEvent, bool, error)
 }
 
 // ─── Poller ───────────────────────────────────────────────────────────────────
@@ -185,6 +188,11 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 	activePanes := make(map[paneKey]struct{})
 	// Per-session pane states (for the rolled-up projection Global).
 	sessionStates := make(map[string][]shared.State)
+	// reseedTS holds the durable ReceivedAt for sessions that were restart-reseeded
+	// on this tick (first-seen pane whose state matches the durable log). Used to
+	// anchor the projection's LatestReceivedAt to the pre-restart timestamp so the
+	// seen-projection math is not disrupted by the hub going down and coming back up.
+	reseedTS := map[string]string{}
 
 	p.mu.Lock()
 	for _, pane := range st.Panes {
@@ -205,6 +213,25 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 			// Counter went backwards → agent restart, treat as new.
 			pane.TransitionSeq < last.TransitionSeq ||
 			pane.DoneSeq < last.DoneSeq
+
+		// Hub-restart reseed: on first-seen, reconcile against the durable log.
+		// If the latest persisted state matches the current live state, this is a
+		// hub restart (not a new transition) — suppress the re-stamp so the old
+		// received_at is preserved and seen-projection boundaries are not broken.
+		if !seen {
+			sessTarget := sessionTarget[sessName]
+			if latest, found, _ := p.store.LatestSessionEvent(ctx, id, sessTarget, sessName); found && latest.DerivedState == string(pane.State) {
+				// State already in the durable log — hub came back up to the same state.
+				// Seed lastSeen so subsequent ticks compare against the current snapshot.
+				// NOTE: if the agent completed a new turn with the same state string
+				// (e.g., done→done via a higher DoneSeq) during the hub-down window, we
+				// will miss that re-alert here. This is an acceptable trade-off far
+				// better than re-alerting every session on every deploy.
+				p.lastSeen[key] = pane
+				reseedTS[sessName] = latest.ReceivedAt
+				shouldWrite = false
+			}
+		}
 
 		if shouldWrite {
 			raw, _ := json.Marshal(pane)
@@ -247,23 +274,35 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 	views := make([]SessionView, 0, len(sessionStates))
 	for sessName, states := range sessionStates {
 		tgt := sessionTarget[sessName]
+		lra := p.latestReceivedAt(id, tgt, sessName, committedSessions[sessName], receivedAt)
+		// For restart-reseeded sessions, carry the durable timestamp instead of ""
+		// (the projection is empty after restart, so latestReceivedAt would return "").
+		if lra == "" {
+			if ts, ok := reseedTS[sessName]; ok {
+				lra = ts
+			}
+		}
 		views = append(views, SessionView{
 			ServerID:         id,
 			Target:           tgt,
 			Session:          sessName,
 			Global:           shared.RollUp(states...),
-			LatestReceivedAt: p.latestReceivedAt(id, tgt, sessName, committedSessions[sessName], receivedAt),
+			LatestReceivedAt: lra,
 		})
 	}
 
 	// Collect per-session changes before ReplaceServer overwrites the projection.
 	// Publish for sessions whose rolled-up Global differs from the prior value, or
 	// which had a new event written this tick (new finished turn / transition).
+	// Restart-reseeded sessions are excluded — no real state change occurred.
 	var toPublish []Change
 	if p.bcast != nil {
 		for _, v := range views {
 			prior, hasPrior := p.proj.Session(v.ServerID, v.Target, v.Session)
 			if !hasPrior || prior.Global != v.Global || committedSessions[v.Session] {
+				if _, reseeded := reseedTS[v.Session]; reseeded {
+					continue // hub restart: no real change, suppress publish
+				}
 				toPublish = append(toPublish, Change{
 					ServerID:         v.ServerID,
 					Target:           v.Target,
@@ -286,6 +325,8 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 
 // pollDegraded is the fallback when the agent does not support GET /state
 // (returns 404). It synthesises one PaneState per session from Sessions().
+// NOTE: the hub-restart reseed (LatestSessionEvent reconciliation) is not applied
+// here — the degraded path is rare (old agents) and out of scope for the reseed fix.
 func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 	sessions, err := p.agent.Sessions(ctx, srv, "")
 	if err != nil {

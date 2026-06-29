@@ -49,9 +49,11 @@ func (f *fakeAgent) Sessions(_ context.Context, srv db.Server, _ string) ([]shar
 }
 
 // fakeStore optionally fails AppendStateEvent when appendErr is set.
+// latestEvents is a pre-seeded list for LatestSessionEvent lookups (restart reseed tests).
 type fakeStore struct {
-	events    []db.StateEvent
-	appendErr error
+	events       []db.StateEvent
+	appendErr    error
+	latestEvents []db.StateEvent // pre-seeded prior events for LatestSessionEvent
 }
 
 func (f *fakeStore) AppendStateEvent(_ context.Context, e db.StateEvent) error {
@@ -60,6 +62,18 @@ func (f *fakeStore) AppendStateEvent(_ context.Context, e db.StateEvent) error {
 	}
 	f.events = append(f.events, e)
 	return nil
+}
+
+// LatestSessionEvent returns the last pre-seeded event matching (serverID, target, session).
+// It searches in reverse order to return the most recent match first.
+func (f *fakeStore) LatestSessionEvent(_ context.Context, serverID, target, session string) (db.StateEvent, bool, error) {
+	for i := len(f.latestEvents) - 1; i >= 0; i-- {
+		e := f.latestEvents[i]
+		if e.ServerID == serverID && e.TargetID == target && e.Session == session {
+			return e, true, nil
+		}
+	}
+	return db.StateEvent{}, false, nil
 }
 
 // ─── Fixture ─────────────────────────────────────────────────────────────────
@@ -475,6 +489,89 @@ func TestPollerPublishesOnChange(t *testing.T) {
 		t.Fatalf("tick 2: unexpected Change on unchanged tick: %+v", c)
 	default:
 		// correct: nothing published
+	}
+}
+
+// ─── Restart reseed tests (FIX 2) ───────────────────────────────────────────
+
+// TestPollerRestartReseed: when the hub restarts (lastSeen is empty), a first-seen
+// pane whose state matches the durable event log must NOT write a new event and must
+// carry the durable ReceivedAt into the projection's LatestReceivedAt — preserving
+// the "seen" boundary so principals who focused after the old timestamp don't see a
+// spurious re-alert.
+func TestPollerRestartReseed(t *testing.T) {
+	p, _, store, proj := newPollerFixture()
+	// Pre-seed the store with a prior event for (server=s, target="", session=api)
+	// that was received before the hub restart.
+	const oldTS = "2026-01-01T09:00:00.000"
+	store.latestEvents = []db.StateEvent{{
+		ID:           "prior-evt",
+		ServerID:     "s",
+		TargetID:     "",
+		Session:      "api",
+		DerivedState: "done",
+		ReceivedAt:   oldTS,
+	}}
+
+	// Live pane is `done`, which matches the durable event. This simulates the
+	// first Tick after a hub restart — pane not yet in lastSeen.
+	p.Tick(context.Background())
+
+	// No new event must be written (the restart-reseed suppresses it).
+	if len(store.events) != 0 {
+		t.Fatalf("restart reseed: want 0 new events, got %d: %+v", len(store.events), store.events)
+	}
+
+	// The projection must carry the DURABLE ReceivedAt (oldTS), not a fresh now().
+	// This is what keeps the "seen" math intact for principals who focused after oldTS.
+	v, ok := proj.Session("s", "", "api")
+	if !ok {
+		t.Fatal("restart reseed: projection must have a view for session 'api'")
+	}
+	if v.LatestReceivedAt != oldTS {
+		t.Fatalf("restart reseed: LatestReceivedAt must be durable %q, got %q", oldTS, v.LatestReceivedAt)
+	}
+}
+
+// TestPollerFirstSeenNoEvent: when a pane is first-seen and there is no prior event
+// in the durable log (cold start, not a restart), a new event must be written as
+// before — this is the baseline today's-behavior path.
+func TestPollerFirstSeenNoEvent(t *testing.T) {
+	p, _, store, _ := newPollerFixture()
+	// latestEvents is empty → LatestSessionEvent returns (zero, false, nil).
+	p.Tick(context.Background())
+	if len(store.events) != 1 {
+		t.Fatalf("first-seen with no prior event: want 1 new event, got %d", len(store.events))
+	}
+	if store.events[0].DerivedState != "done" {
+		t.Fatalf("first-seen event DerivedState = %q, want done", store.events[0].DerivedState)
+	}
+}
+
+// TestPollerFirstSeenPriorDifferentState: when a pane is first-seen and the durable
+// log has a DIFFERENT state (e.g., prior event was "working", live pane is "done"),
+// this is a genuine transition that arrived while the hub was down — a new event
+// MUST be written (not suppressed by the reseed path).
+func TestPollerFirstSeenPriorDifferentState(t *testing.T) {
+	p, _, store, _ := newPollerFixture()
+	// Pre-seed with a "working" event; live pane is "done" — different state.
+	store.latestEvents = []db.StateEvent{{
+		ID:           "prior-evt",
+		ServerID:     "s",
+		TargetID:     "",
+		Session:      "api",
+		DerivedState: "working",
+		ReceivedAt:   "2026-01-01T09:00:00.000",
+	}}
+
+	p.Tick(context.Background())
+
+	// A new event must be written for the real working→done transition.
+	if len(store.events) != 1 {
+		t.Fatalf("prior different state: want 1 new event, got %d", len(store.events))
+	}
+	if store.events[0].DerivedState != "done" {
+		t.Fatalf("prior different state: new event DerivedState = %q, want done", store.events[0].DerivedState)
 	}
 }
 
