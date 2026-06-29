@@ -1,6 +1,8 @@
 import * as React from "react";
-import type { Session, ServerSummary, Window, Pane } from "@/lib/contracts";
+import type { Session, ServerSummary, Window, Pane, SessionState } from "@/lib/contracts";
 import { Input } from "@/components/ui/input";
+import { sortBlockedFirst } from "@/lib/state";
+import { StateDot } from "@/components/StateDot";
 
 export interface SessionRow {
   server: ServerSummary;
@@ -33,14 +35,15 @@ export function matchesQuery(row: SessionRow, q: string): boolean {
 }
 
 export function SessionList({
-  rows, query, onQueryChange, onOpen,
+  rows, query, onQueryChange, onOpen, stateOf,
 }: {
   rows: SessionRow[];
   query: string;
   onQueryChange(q: string): void;
   onOpen(row: SessionRow): void;
+  stateOf(row: SessionRow): SessionState;
 }) {
-  const filtered = rows.filter((r) => matchesQuery(r, query));
+  const filtered = sortBlockedFirst(rows.filter((r) => matchesQuery(r, query)), stateOf);
   return (
     <div className="flex h-full flex-col">
       <div className="p-3">
@@ -51,12 +54,13 @@ export function SessionList({
         {filtered.map((row) => (
           <li key={`${row.server.id}:${row.session.target}:${row.session.name}:${row.pane.id}`}>
             <button
-              className="w-full border-b border-border px-4 py-3 text-left hover:bg-accent"
+              className="flex w-full items-center gap-2 border-b border-border px-4 py-3 text-left hover:bg-accent"
               onClick={() => onOpen(row)}
             >
-              <div className="font-medium">{row.session.name}</div>
-              <div className="text-xs text-muted-foreground">
-                {row.server.name} · {row.session.cwd || "—"}
+              <StateDot state={stateOf(row)} />
+              <div className="min-w-0">
+                <div className="font-medium">{row.session.name}</div>
+                <div className="text-xs text-muted-foreground">{row.server.name} · {row.session.cwd || "—"}</div>
               </div>
             </button>
           </li>

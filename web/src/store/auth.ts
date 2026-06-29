@@ -2,12 +2,14 @@ import { create } from "zustand";
 import type { SessionInfo } from "@/lib/contracts";
 import * as api from "@/lib/api-client";
 import { usePanes } from "@/store/panes";
+import { useSessionState } from "@/store/session-state";
 
 /** Reset panes + query cache without a static import cycle.
  *  query-client.ts imports auth.ts (for useAuth), so auth.ts must not
  *  statically import query-client.ts — use a lazy dynamic import instead. */
 function resetGridAndCache() {
   usePanes.setState({ panes: [], focusedId: null });
+  useSessionState.getState().reset();
   void import("@/lib/query-client").then((m) => m.queryClient.clear());
 }
 

@@ -9,6 +9,7 @@ vi.mock("@/lib/api-client", () => ({
 
 import { useAuth } from "@/store/auth";
 import { usePanes } from "@/store/panes";
+import { useSessionState } from "@/store/session-state";
 import * as api from "@/lib/api-client";
 
 const info = { principalId: "p", username: "u", displayName: "U", csrfToken: "tok" };
@@ -66,6 +67,12 @@ describe("auth store", () => {
     });
     await useAuth.getState().signOut();
     expect(usePanes.getState().panes).toHaveLength(0);
+  });
+
+  it("clears the live-state store on sign-out", () => {
+    useSessionState.getState().applySnapshot([{ server: "s", target: "t", session: "a", state: "blocked" }]);
+    useAuth.getState().clear();
+    expect(useSessionState.getState().live.size).toBe(0);
   });
 
   it("signOut resolves and clears even when logout() rejects", async () => {

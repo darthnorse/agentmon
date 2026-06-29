@@ -81,4 +81,17 @@ describe("api-client", () => {
     expect(typeof (err as ApiError).message).toBe("string");
     expect((err as ApiError).message).not.toMatch(/unexpected token/i);
   });
+
+  it("postSeen POSTs the body with X-CSRF-Token", async () => {
+    const f = mockFetch(204, undefined);
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    const { postSeen } = await import("@/lib/api-client");
+    await postSeen({ serverId: "s", target: "default", sessionName: "x" });
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/seen");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ serverId: "s", target: "default", sessionName: "x" }));
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
+  });
 });

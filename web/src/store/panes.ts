@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { SessionState } from "@/lib/contracts";
 
 export const GRID_TILE_CAP = 6; // client-side soft cap on simultaneously-live tiles
 
@@ -9,6 +10,7 @@ export interface OpenPane {
   target: string;
   session: string;
   serverName: string;
+  state?: SessionState; // REST state captured at open — first-paint fallback until the SSE store has it
 }
 
 const idOf = (p: Omit<OpenPane, "id">) => `${p.serverId}:${p.target}:${p.session}:${p.paneId}`;

@@ -10,12 +10,26 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
 }));
 
+// vi.hoisted: vi.mock is hoisted above plain consts, so the mock fn must be too.
+const { postSeen } = vi.hoisted(() => ({ postSeen: vi.fn(async () => {}) }));
+vi.mock("@/lib/api-client", () => ({ postSeen }));
+
 import { MobileTerminalRoute } from "@/routes/terminal";
+import { useSessionState } from "@/store/session-state";
+import { stateKey } from "@/lib/state";
 
 describe("MobileTerminalRoute", () => {
   it("passes params/search into a key-bar TerminalView and shows the session header", () => {
     render(<MobileTerminalRoute />);
     expect(screen.getByTestId("tv")).toHaveTextContent("s1:%0:default:true");
     expect(screen.getByText("demo-web")).toBeInTheDocument();
+  });
+
+  it("marks the opened session seen/focused on mount", () => {
+    useSessionState.getState().reset();
+    postSeen.mockClear();
+    render(<MobileTerminalRoute />);
+    expect(useSessionState.getState().focusedKey).toBe(stateKey("s1", "default", "demo-web"));
+    expect(postSeen).toHaveBeenCalledWith({ serverId: "s1", target: "default", sessionName: "demo-web" });
   });
 });
