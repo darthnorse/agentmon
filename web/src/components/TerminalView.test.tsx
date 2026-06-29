@@ -2,9 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 
 // xterm.js needs a real canvas/WebGL; mock the DOM wrapper to a smoke double.
-vi.mock("@/components/XTerm", () => ({
-  XTerm: () => <div data-testid="xterm" />,
-}));
+vi.mock("@/components/XTerm", async () => {
+  const { forwardRef } = await import("react");
+  return { XTerm: forwardRef((_p: unknown, _r: unknown) => <div data-testid="xterm" />) };
+});
 // Avoid opening a real socket in jsdom.
 const open = vi.fn();
 const dispose = vi.fn();

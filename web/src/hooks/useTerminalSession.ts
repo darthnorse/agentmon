@@ -53,7 +53,7 @@ export function useTerminalSession(target: TerminalTarget) {
     // re-create only when the pane target changes
   }, [target.serverId, target.paneId, target.target]);
 
-  const controller: TerminalController = {
+  const controller = React.useMemo<TerminalController>(() => ({
     ctrlArmed,
     sendKey(k) {
       switch (k) {
@@ -86,7 +86,7 @@ export function useTerminalSession(target: TerminalTarget) {
       if (!sel) return;
       try { await navigator.clipboard.writeText(sel); } catch { /* secure context */ }
     },
-  };
+  }), [ctrlArmed, send]);
 
   return { xtermRef, controller, connected, handleData, handleResize };
 }
