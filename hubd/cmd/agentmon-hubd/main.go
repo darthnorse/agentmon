@@ -63,7 +63,8 @@ func main() {
 	rec := audit.NewRecorder(database)
 	onboard := authn.NewLimiter(enrollMax(cfg), enrollWindow(cfg))
 
-	poller := state.NewPoller(reg, agentClient, database, proj, statePoll(cfg), time.Now)
+	bcast := state.NewBroadcaster()
+	poller := state.NewPoller(reg, agentClient, database, proj, statePoll(cfg), time.Now, bcast)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

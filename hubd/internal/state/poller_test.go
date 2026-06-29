@@ -87,7 +87,7 @@ func newPollerFixture() (*Poller, *fakeAgent, *fakeStore, *Projection) {
 	store := &fakeStore{}
 	proj := NewProjection()
 	clk := time.Unix(100, 0)
-	p := NewPoller(lister, agent, store, proj, time.Second, func() time.Time { return clk })
+	p := NewPoller(lister, agent, store, proj, time.Second, func() time.Time { return clk }, nil)
 	return p, agent, store, proj
 }
 
@@ -166,7 +166,7 @@ func TestPollerNormalPathUsesSessionTarget(t *testing.T) {
 	store := &fakeStore{}
 	proj := NewProjection()
 	clk := time.Unix(100, 0)
-	p := NewPoller(lister, agent, store, proj, time.Second, func() time.Time { return clk })
+	p := NewPoller(lister, agent, store, proj, time.Second, func() time.Time { return clk }, nil)
 
 	p.Tick(context.Background())
 
@@ -374,7 +374,7 @@ func TestPollerBackoffDoublesAndResets(t *testing.T) {
 	}
 	store := &fakeStore{}
 	now := time.Unix(100, 0)
-	p := NewPoller(lister, agent, store, NewProjection(), time.Second, func() time.Time { return now })
+	p := NewPoller(lister, agent, store, NewProjection(), time.Second, func() time.Time { return now }, nil)
 
 	// Tick 1 (t=100.0): error → backoff delay = interval (1s), nextAttempt = 101.0.
 	p.Tick(ctx)
@@ -413,5 +413,59 @@ func TestPollerBackoffDoublesAndResets(t *testing.T) {
 	p.Tick(ctx)
 	if agent.stateCalls != 4 {
 		t.Fatalf("backoff should be reset after success; got %d State calls", agent.stateCalls)
+	}
+}
+
+// TestPollerPublishesOnChange: first tick of a new session publishes a Change;
+// an identical second tick (no new event, no global change) publishes nothing.
+func TestPollerPublishesOnChange(t *testing.T) {
+	bcast := NewBroadcaster()
+	_, ch, cancel := bcast.Subscribe()
+	defer cancel()
+
+	lister := &fakeLister{
+		servers: []registry.ServerSummary{{ID: "s"}},
+		get:     map[string]db.Server{"s": {ID: "s", URL: "http://x", Bearer: "b"}},
+	}
+	agent := &fakeAgent{
+		state: map[string]shared.AgentState{
+			"s": {Panes: []shared.PaneState{{
+				Target:        "",
+				Pane:          "%0",
+				State:         shared.StateDone,
+				TransitionSeq: 1,
+				DoneSeq:       1,
+				Epoch:         "1",
+			}}},
+		},
+		sessions: map[string][]shared.Session{
+			"s": {{Name: "api", Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}},
+		},
+	}
+	store := &fakeStore{}
+	proj := NewProjection()
+	clk := time.Unix(100, 0)
+	p := NewPoller(lister, agent, store, proj, time.Second, func() time.Time { return clk }, bcast)
+
+	// Tick 1: session first seen → global changes (none→done) → must publish.
+	p.Tick(context.Background())
+
+	select {
+	case c := <-ch:
+		if c.ServerID != "s" || c.Session != "api" || c.Global != shared.StateDone {
+			t.Fatalf("tick 1: unexpected Change: %+v", c)
+		}
+	default:
+		t.Fatal("tick 1: expected a Change to be published, got none")
+	}
+
+	// Tick 2: identical snapshot → no new event, no global change → nothing published.
+	p.Tick(context.Background())
+
+	select {
+	case c := <-ch:
+		t.Fatalf("tick 2: unexpected Change on unchanged tick: %+v", c)
+	default:
+		// correct: nothing published
 	}
 }

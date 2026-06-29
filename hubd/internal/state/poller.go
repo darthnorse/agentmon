@@ -61,6 +61,7 @@ type Poller struct {
 	proj     *Projection
 	interval time.Duration
 	now      func() time.Time
+	bcast    *Broadcaster // nil-safe: may be nil in tests
 
 	mu       sync.Mutex
 	lastSeen map[paneKey]shared.PaneState
@@ -68,6 +69,7 @@ type Poller struct {
 }
 
 // NewPoller constructs a Poller. now is the hub clock (injected for testing).
+// bcast may be nil (tests that do not exercise publishing pass nil).
 func NewPoller(
 	lister ServerLister,
 	agent AgentAPI,
@@ -75,6 +77,7 @@ func NewPoller(
 	proj *Projection,
 	interval time.Duration,
 	now func() time.Time,
+	bcast *Broadcaster,
 ) *Poller {
 	return &Poller{
 		lister:   lister,
@@ -83,6 +86,7 @@ func NewPoller(
 		proj:     proj,
 		interval: interval,
 		now:      now,
+		bcast:    bcast,
 		lastSeen: make(map[paneKey]shared.PaneState),
 		backoffs: make(map[string]*backoffState),
 	}
@@ -251,7 +255,31 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 			LatestReceivedAt: p.latestReceivedAt(id, tgt, sessName, committedSessions[sessName], receivedAt),
 		})
 	}
+
+	// Collect per-session changes before ReplaceServer overwrites the projection.
+	// Publish for sessions whose rolled-up Global differs from the prior value, or
+	// which had a new event written this tick (new finished turn / transition).
+	var toPublish []Change
+	if p.bcast != nil {
+		for _, v := range views {
+			prior, hasPrior := p.proj.Session(v.ServerID, v.Target, v.Session)
+			if !hasPrior || prior.Global != v.Global || committedSessions[v.Session] {
+				toPublish = append(toPublish, Change{
+					ServerID:         v.ServerID,
+					Target:           v.Target,
+					Session:          v.Session,
+					Global:           v.Global,
+					LatestReceivedAt: v.LatestReceivedAt,
+				})
+			}
+		}
+	}
+
 	p.proj.ReplaceServer(id, views)
+
+	for _, c := range toPublish {
+		p.bcast.Publish(c)
+	}
 }
 
 // pollDegraded is the fallback when the agent does not support GET /state
@@ -318,7 +346,29 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 			LatestReceivedAt: p.latestReceivedAt(srv.ID, sess.Target, sess.Name, committedSessions[sess.Name], receivedAt),
 		})
 	}
+
+	// Collect per-session changes before ReplaceServer overwrites the projection.
+	var toPublish []Change
+	if p.bcast != nil {
+		for _, v := range views {
+			prior, hasPrior := p.proj.Session(v.ServerID, v.Target, v.Session)
+			if !hasPrior || prior.Global != v.Global || committedSessions[v.Session] {
+				toPublish = append(toPublish, Change{
+					ServerID:         v.ServerID,
+					Target:           v.Target,
+					Session:          v.Session,
+					Global:           v.Global,
+					LatestReceivedAt: v.LatestReceivedAt,
+				})
+			}
+		}
+	}
+
 	p.proj.ReplaceServer(srv.ID, views)
+
+	for _, c := range toPublish {
+		p.bcast.Publish(c)
+	}
 }
 
 // commit writes pending events to the store and advances lastSeen only for those
