@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,8 @@ import (
 )
 
 type Client struct{ HTTP *http.Client }
+
+var ErrStateUnsupported = errors.New("agent does not support /state")
 
 func NewClient(timeout time.Duration) *Client {
 	return &Client{HTTP: &http.Client{Timeout: timeout}}
@@ -46,6 +49,34 @@ func (c *Client) Sessions(ctx context.Context, srv db.Server, target string) ([]
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+func (c *Client) State(ctx context.Context, srv db.Server, target string) (shared.AgentState, error) {
+	u := srv.URL + "/state"
+	if target != "" {
+		u += "?target=" + url.QueryEscape(target)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return shared.AgentState{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+srv.Bearer)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return shared.AgentState{}, fmt.Errorf("dial agent %s: %w", srv.ID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return shared.AgentState{}, ErrStateUnsupported
+	}
+	if resp.StatusCode != http.StatusOK {
+		return shared.AgentState{}, fmt.Errorf("agent %s state returned %d", srv.ID, resp.StatusCode)
+	}
+	var st shared.AgentState
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return shared.AgentState{}, fmt.Errorf("decode agent %s state: %w", srv.ID, err)
+	}
+	return st, nil
 }
 
 func (c *Client) Health(ctx context.Context, srv db.Server) bool {

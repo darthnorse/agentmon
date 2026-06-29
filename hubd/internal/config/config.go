@@ -19,13 +19,15 @@ type RateLimitCfg struct {
 }
 
 type Config struct {
-	Listen              string       `yaml:"listen"`
-	ExternalOrigin      string       `yaml:"external_origin"`
-	TrustForwardedProto bool         `yaml:"trust_forwarded_proto"`
-	DataDir             string       `yaml:"data_dir"`
-	SessionCookie       CookieCfg    `yaml:"session_cookie"`
-	LoginRateLimit      RateLimitCfg `yaml:"login_rate_limit"`
-	EnrollRateLimit     RateLimitCfg `yaml:"enroll_rate_limit"`
+	Listen              string        `yaml:"listen"`
+	ExternalOrigin      string        `yaml:"external_origin"`
+	TrustForwardedProto bool          `yaml:"trust_forwarded_proto"`
+	DataDir             string        `yaml:"data_dir"`
+	SessionCookie       CookieCfg     `yaml:"session_cookie"`
+	LoginRateLimit      RateLimitCfg  `yaml:"login_rate_limit"`
+	EnrollRateLimit     RateLimitCfg  `yaml:"enroll_rate_limit"`
+	StatePollInterval   time.Duration `yaml:"state_poll_interval"`
+	SSEHeartbeat        time.Duration `yaml:"sse_heartbeat"`
 }
 
 func Load(path string) (Config, error) {

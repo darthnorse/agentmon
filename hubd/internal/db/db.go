@@ -28,3 +28,12 @@ func Open(path string) (*DB, error) {
 }
 
 func (d *DB) Close() error { return d.sql.Close() }
+
+// nullIfEmpty converts an empty string to nil (SQL NULL); non-empty strings pass through.
+// Used for nullable TEXT columns. Reuse this wherever a string column is nullable.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}

@@ -3,6 +3,7 @@
 package state
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ type Event struct {
 	Name             string    // hook_event_name
 	NotificationKind string    // notification_type (Notification only; else "")
 	ClaudeSessionID  string    // session_id (UUID) — informational
+	Epoch            string    // $TMUX server pid; "" if unknown
 	At               time.Time // event time; defaults to now() when zero
 }
 
@@ -24,6 +26,10 @@ type paneState struct {
 	State           shared.State
 	LastEvent       string
 	ClaudeSessionID string
+	Epoch           string
+	TransitionSeq   uint64
+	DoneSeq         uint64
+	ChangedAt       time.Time
 	UpdatedAt       time.Time
 }
 
@@ -70,26 +76,39 @@ func (m *Machine) Apply(ev Event) (shared.State, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := key{ev.Target, ev.Pane}
-	prior := m.panes[k].State
+	ps := m.panes[k]            // zero value for a new pane (counters 0)
+	prior := ps.State
 	if prior == "" {
 		prior = shared.StateUnknown
-	}
-	if ev.Name == "SessionEnd" {
-		// Delete the pane entry and report the transition directly; derive() is
-		// not called for SessionEnd (the pane ceases to exist rather than changing state).
-		delete(m.panes, k)
-		return shared.StateUnknown, prior != shared.StateUnknown
-	}
-	next := prior
-	if d, ok := derive(ev.Name, ev.NotificationKind); ok {
-		next = d
 	}
 	at := ev.At
 	if at.IsZero() {
 		at = m.now()
 	}
-	m.panes[k] = paneState{State: next, LastEvent: ev.Name, ClaudeSessionID: ev.ClaudeSessionID, UpdatedAt: at}
-	return next, next != prior
+	if ev.Name == "SessionEnd" {
+		delete(m.panes, k) // counters die with the entry
+		return shared.StateUnknown, prior != shared.StateUnknown
+	}
+	next := prior
+	d, ok := derive(ev.Name, ev.NotificationKind)
+	if ok {
+		next = d
+	}
+	changed := next != prior
+	if changed {
+		ps.TransitionSeq++
+		ps.ChangedAt = at
+	}
+	if ok && d == shared.StateDone { // every finished turn, incl. done→done
+		ps.DoneSeq++
+	}
+	ps.State = next
+	ps.LastEvent = ev.Name
+	ps.ClaudeSessionID = ev.ClaudeSessionID
+	ps.Epoch = ev.Epoch
+	ps.UpdatedAt = at
+	m.panes[k] = ps
+	return next, changed
 }
 
 // Pane returns the current state for one pane (ok=false if never seen).
@@ -115,4 +134,30 @@ func (m *Machine) Rollup(target string, panes []string) shared.State {
 		}
 	}
 	return shared.RollUp(states...)
+}
+
+// Snapshot returns the per-pane state for all panes matching target (or all panes
+// if target is ""). Results are sorted by target then pane for determinism.
+func (m *Machine) Snapshot(target string) []shared.PaneState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]shared.PaneState, 0, len(m.panes))
+	for k, ps := range m.panes {
+		if target != "" && k.target != target {
+			continue
+		}
+		out = append(out, shared.PaneState{
+			Target: k.target, Pane: k.pane, State: ps.State,
+			TransitionSeq: ps.TransitionSeq, DoneSeq: ps.DoneSeq,
+			Epoch: ps.Epoch, ClaudeSessionID: ps.ClaudeSessionID,
+			LastChangeAt: ps.ChangedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Target != out[j].Target {
+			return out[i].Target < out[j].Target
+		}
+		return out[i].Pane < out[j].Pane
+	})
+	return out
 }

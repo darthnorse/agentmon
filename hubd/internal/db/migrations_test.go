@@ -63,3 +63,25 @@ func TestServersTableHasEnrollmentColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestStateEventsReceivedIndexExists verifies that migration 0003 creates the
+// idx_state_events_received index used to order LatestSessionEvent queries by
+// received_at DESC without a full sort.
+func TestStateEventsReceivedIndexExists(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "idx.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var name string
+	err = d.sql.QueryRowContext(context.Background(),
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_state_events_received'`,
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("idx_state_events_received index not found after migration: %v", err)
+	}
+	if name != "idx_state_events_received" {
+		t.Fatalf("unexpected index name: %q", name)
+	}
+}

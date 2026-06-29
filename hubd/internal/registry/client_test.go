@@ -2,6 +2,8 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -72,5 +74,32 @@ func TestClientHealth(t *testing.T) {
 	ts.Close()
 	if c.Health(context.Background(), db.Server{URL: ts.URL}) {
 		t.Fatal("dead agent must report false")
+	}
+}
+
+func TestClientStateDecodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/state" || r.Header.Get("Authorization") != "Bearer b" {
+			w.WriteHeader(401)
+			return
+		}
+		json.NewEncoder(w).Encode(shared.AgentState{Panes: []shared.PaneState{{Pane: "%0", State: shared.StateBlocked, DoneSeq: 2}}})
+	}))
+	defer srv.Close()
+	got, err := NewClient(time.Second).State(context.Background(), db.Server{ID: "s", URL: srv.URL, Bearer: "b"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Panes) != 1 || got.Panes[0].State != shared.StateBlocked || got.Panes[0].DoneSeq != 2 {
+		t.Fatalf("got %+v", got.Panes)
+	}
+}
+
+func TestClientStateUnsupportedOn404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) }))
+	defer srv.Close()
+	_, err := NewClient(time.Second).State(context.Background(), db.Server{ID: "s", URL: srv.URL, Bearer: "b"}, "")
+	if !errors.Is(err, ErrStateUnsupported) {
+		t.Fatalf("err = %v, want ErrStateUnsupported", err)
 	}
 }

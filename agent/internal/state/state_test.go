@@ -116,3 +116,62 @@ func TestPaneAndRollup(t *testing.T) {
 		t.Fatalf("rollup wrong target = %q, want unknown", got)
 	}
 }
+
+func TestApplyCountersTransitionAndDone(t *testing.T) {
+	m := New(func() time.Time { return time.Unix(0, 0) })
+	// SessionStart: unknown→idle = first change
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "SessionStart"})
+	// UserPromptSubmit: idle→working = change
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "UserPromptSubmit"})
+	// Stop: working→done = change AND a finished turn
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "Stop"})
+	// Stop again: done→done = NOT a change, but a NEW finished turn
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "Stop"})
+
+	snap := m.Snapshot("dev")
+	if len(snap) != 1 {
+		t.Fatalf("want 1 pane, got %d", len(snap))
+	}
+	got := snap[0]
+	if got.State != shared.StateDone {
+		t.Errorf("state = %q, want done", got.State)
+	}
+	if got.TransitionSeq != 3 { // unknown→idle→working→done (the 2nd Stop is not a change)
+		t.Errorf("TransitionSeq = %d, want 3", got.TransitionSeq)
+	}
+	if got.DoneSeq != 2 { // both Stops are finished turns
+		t.Errorf("DoneSeq = %d, want 2", got.DoneSeq)
+	}
+}
+
+func TestApplyPreserveDoesNotBumpCounters(t *testing.T) {
+	m := New(func() time.Time { return time.Unix(0, 0) })
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "Stop"}) // →done: Transition=1, Done=1
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "SubagentStop"}) // preserve
+	got := m.Snapshot("dev")[0]
+	if got.TransitionSeq != 1 || got.DoneSeq != 1 {
+		t.Errorf("counters = (%d,%d), want (1,1)", got.TransitionSeq, got.DoneSeq)
+	}
+}
+
+func TestApplyCapturesEpoch(t *testing.T) {
+	m := New(func() time.Time { return time.Unix(0, 0) })
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "SessionStart", Epoch: "8421"})
+	if got := m.Snapshot("dev")[0].Epoch; got != "8421" {
+		t.Errorf("Epoch = %q, want 8421", got)
+	}
+}
+
+func TestSnapshotFiltersByTargetAndSorts(t *testing.T) {
+	m := New(func() time.Time { return time.Unix(0, 0) })
+	m.Apply(Event{Target: "dev", Pane: "%1", Name: "Stop"})
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "Stop"})
+	m.Apply(Event{Target: "prod", Pane: "%0", Name: "Stop"})
+	dev := m.Snapshot("dev")
+	if len(dev) != 2 || dev[0].Pane != "%0" || dev[1].Pane != "%1" {
+		t.Fatalf("dev snapshot wrong: %+v", dev)
+	}
+	if len(m.Snapshot("")) != 3 {
+		t.Errorf("empty target should return all panes")
+	}
+}

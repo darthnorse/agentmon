@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/state"
@@ -111,6 +112,24 @@ func TestHookToleratesExtraFields(t *testing.T) {
 	}
 	if s, _ := m.Pane("default", "%3"); s != shared.StateWorking {
 		t.Fatalf("state %q, want working", s)
+	}
+}
+
+func TestHookCapturesEpoch(t *testing.T) {
+	m := state.New(func() time.Time { return time.Unix(0, 0) })
+	h := RequireLoopback(RequireHookAuth("hooktok", HookHandler(testCfg(), m, nil)))
+	req := httptest.NewRequest("POST", "http://127.0.0.1/hook", strings.NewReader(`{"hook_event_name":"SessionStart"}`))
+	req.Header.Set("Authorization", "Bearer hooktok")
+	req.Header.Set("X-AgentMon-Pane", "%0")
+	req.Header.Set("X-AgentMon-Tmux", "/tmp/tmux-0/default,8421,0")
+	req.RemoteAddr = "127.0.0.1:5000"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 204 {
+		t.Fatalf("status %d", w.Code)
+	}
+	if got := m.Snapshot("")[0].Epoch; got != "8421" { // testCfg() default target label
+		t.Errorf("epoch = %q, want 8421", got)
 	}
 }
 

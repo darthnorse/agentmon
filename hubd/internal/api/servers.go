@@ -12,11 +12,21 @@ import (
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/directive"
 	"agentmon/hubd/internal/registry"
+	"agentmon/hubd/internal/state"
+	"agentmon/shared"
 )
 
 // AuditReader is the read-side of the audit log. *db.DB satisfies it.
 type AuditReader interface {
 	Recent(ctx context.Context, limit int) ([]db.AuditEntry, error)
+}
+
+// SeenStore is the persistence interface for principal_seen. *db.DB satisfies it.
+type SeenStore interface {
+	UpsertSeen(ctx context.Context, s db.PrincipalSeen) error
+	GetSeen(ctx context.Context, principalID, serverID, target, session string) (db.PrincipalSeen, bool, error)
+	ListSeenForPrincipal(ctx context.Context, principalID string) ([]db.PrincipalSeen, error)
+	LatestSessionEvent(ctx context.Context, serverID, target, session string) (db.StateEvent, bool, error)
 }
 
 // Deps holds the shared dependencies for all API handlers.
@@ -27,10 +37,14 @@ type Deps struct {
 	AuditRepo           AuditReader
 	HealthTimeout       time.Duration
 	TrustForwardedProto bool
-	Minter              directive.Minter // M4: mints hub→agent WS access directives
-	ExternalOrigin      string           // M4: WS upgrade Origin check
-	RelayPongWait       time.Duration    // M4 relay liveness; 0 → default (60s)
-	RelayPingPeriod     time.Duration    // M4 relay ping cadence; 0 → default (20s). Must be < RelayPongWait.
+	Minter              directive.Minter   // M4: mints hub→agent WS access directives
+	ExternalOrigin      string             // M4: WS upgrade Origin check
+	RelayPongWait       time.Duration      // M4 relay liveness; 0 → default (60s)
+	RelayPingPeriod     time.Duration      // M4 relay ping cadence; 0 → default (20s). Must be < RelayPongWait.
+	Proj                *state.Projection  // M7: in-memory projection for server/session state rollup
+	Seen                SeenStore          // M7: principal_seen persistence
+	Bcast               *state.Broadcaster // M7: fan-out broadcaster for SSE deltas
+	SSEHeartbeat        time.Duration      // M7: heartbeat interval for SSE (default 25s)
 }
 
 // authorizeOr403 resolves the principal from the request context, calls
@@ -47,17 +61,48 @@ func (d Deps) authorizeOr403(w http.ResponseWriter, r *http.Request, action auth
 	return p, true
 }
 
+// serverRollup returns the §9.2 rollup of a server's per-principal
+// seen-projected session states from the projection (empty string when the
+// projection is nil or has no sessions yet, so json:"state,omitempty" suppresses
+// the field rather than emitting a misleading "unknown"). GetSeen errors are
+// non-fatal: treated as "no seen row" so the global state passes through.
+func (d Deps) serverRollup(ctx context.Context, principalID, serverID string) shared.State {
+	if d.Proj == nil {
+		return ""
+	}
+	views := d.Proj.Server(serverID)
+	if len(views) == 0 {
+		return ""
+	}
+	states := make([]shared.State, 0, len(views))
+	for _, v := range views {
+		var (
+			ps  db.PrincipalSeen
+			has bool
+		)
+		if d.Seen != nil {
+			ps, has, _ = d.Seen.GetSeen(ctx, principalID, serverID, v.Target, v.Session)
+		}
+		states = append(states, state.SeenProject(v.Global, v.LatestReceivedAt, ps, has))
+	}
+	return shared.RollUp(states...)
+}
+
 // ServersHandler handles GET /api/v1/servers: authorize ServerView on server:*,
 // then return the full list of server summaries as JSON.
 func (d Deps) ServersHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*"); !ok {
+		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*")
+		if !ok {
 			return
 		}
 		list, err := d.Reg.List(r.Context())
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		for i := range list {
+			list[i].State = d.serverRollup(r.Context(), p.ID, list[i].ID)
 		}
 		writeJSON(w, http.StatusOK, list)
 	}
@@ -68,7 +113,8 @@ func (d Deps) ServersHandler() http.HandlerFunc {
 func (d Deps) ServerHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:"+id); !ok {
+		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:"+id)
+		if !ok {
 			return
 		}
 		srv, ok, err := d.Reg.Get(r.Context(), id)
@@ -82,12 +128,16 @@ func (d Deps) ServerHandler() http.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), d.HealthTimeout)
 		defer cancel()
+		// serverRollup's seen lookups use r.Context() (SQLite reads), not the
+		// agent health-check timeout ctx — otherwise a slow Health() probe could
+		// exhaust the deadline and silently drop the seen projection.
 		writeJSON(w, http.StatusOK, registry.ServerDetail{
 			ID:      srv.ID,
 			Name:    srv.Name,
 			Labels:  registry.LabelsOrEmpty(srv.Labels),
 			Enabled: true,
 			Healthy: d.Agent.Health(ctx, srv),
+			State:   d.serverRollup(r.Context(), p.ID, srv.ID),
 		})
 	}
 }

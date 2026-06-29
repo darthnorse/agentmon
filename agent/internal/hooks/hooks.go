@@ -64,7 +64,8 @@ func HookHandler(cfg config.Config, m *state.Machine, now func() time.Time) http
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		pane := r.Header.Get("X-AgentMon-Pane")
-		socket := socketFromTmux(r.Header.Get("X-AgentMon-Tmux"))
+		tmuxEnv := r.Header.Get("X-AgentMon-Tmux")
+		socket := socketFromTmux(tmuxEnv)
 		target, matched := matchTarget(cfg, socket)
 		if !tmux.ValidatePaneID(pane) || !matched {
 			log.Printf("hook: soft drop (pane=%q socket=%q matched=%v)", pane, socket, matched)
@@ -84,10 +85,21 @@ func HookHandler(cfg config.Config, m *state.Machine, now func() time.Time) http
 			Name:             body.HookEventName,
 			NotificationKind: body.NotificationType,
 			ClaudeSessionID:  body.SessionID,
+			Epoch:            epochFromTmux(tmuxEnv),
 			At:               now(),
 		})
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// epochFromTmux extracts the tmux server pid (field 2 of $TMUX
+// "<path>,<pid>,<idx>"). "" when absent/malformed — epoch is best-effort.
+func epochFromTmux(tmuxEnv string) string {
+	parts := strings.SplitN(tmuxEnv, ",", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 // socketFromTmux extracts the socket name from $TMUX ("<path>,<pid>,<idx>"): the
