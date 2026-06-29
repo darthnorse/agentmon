@@ -7,6 +7,8 @@ vi.mock("@/components/TerminalView", () => ({
 
 import { GridView } from "@/components/GridView";
 import { usePanes } from "@/store/panes";
+import { useSessionState } from "@/store/session-state";
+import { stateKey } from "@/lib/state";
 
 describe("GridView", () => {
   beforeEach(() => usePanes.setState({ panes: [], focusedId: null }));
@@ -30,5 +32,14 @@ describe("GridView", () => {
     expect(screen.getByTestId("tv-%1")).toBeInTheDocument();
     // a collapse control is present while expanded
     expect(screen.getByRole("button", { name: /grid/i })).toBeInTheDocument();
+  });
+
+  it("shows a state dot per tile from the live store", () => {
+    useSessionState.getState().reset();
+    useSessionState.getState().applySnapshot([{ server: "s", target: "default", session: "a", state: "blocked" }]);
+    usePanes.getState().openPane({ serverId: "s", paneId: "%0", target: "default", session: "a", serverName: "h" });
+    usePanes.getState().collapse();
+    render(<GridView />);
+    expect(screen.getByRole("img", { name: "blocked" })).toBeInTheDocument();
   });
 });
