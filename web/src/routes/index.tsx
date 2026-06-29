@@ -5,6 +5,7 @@ import { listServers, listSessions } from "@/lib/api-client";
 import { useAuth } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
+import { EnableAlerts } from "@/components/EnableAlerts";
 import { DesktopShell } from "@/components/DesktopShell";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useStateSnapshot } from "@/store/session-state";
@@ -39,9 +40,12 @@ export function ShellRoute() {
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <span className="font-semibold">AgentMon</span>
-        <Button variant="ghost" size="sm" onClick={() => signOut().finally(() => navigate({ to: "/login" }))}>
-          Sign out
-        </Button>
+        <div className="flex items-center gap-2">
+          <EnableAlerts />
+          <Button variant="ghost" size="sm" onClick={() => signOut().finally(() => navigate({ to: "/login" }))}>
+            Sign out
+          </Button>
+        </div>
       </header>
       <div className="min-h-0 flex-1">
         {serversQ.isLoading ? (
