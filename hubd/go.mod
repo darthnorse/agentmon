@@ -8,7 +8,12 @@ require gopkg.in/yaml.v3 v3.0.1
 
 require golang.org/x/crypto v0.53.0
 
-require github.com/gorilla/websocket v1.5.3
+require (
+	github.com/SherClockHolmes/webpush-go v1.4.0
+	github.com/gorilla/websocket v1.5.3
+)
+
+require github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

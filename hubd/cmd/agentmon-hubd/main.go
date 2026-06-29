@@ -16,6 +16,8 @@ import (
 
 	"github.com/google/uuid"
 
+	webpush "github.com/SherClockHolmes/webpush-go"
+
 	"agentmon/hubd/internal/api"
 	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authn"
@@ -70,6 +72,22 @@ func main() {
 	defer stop()
 	go poller.Run(ctx)
 
+	// M9: Web-Push. Load (or generate-on-first-boot) the persisted VAPID keypair,
+	// track live-SSE presence for server-side push de-dup, and run the dispatcher
+	// as a broadcaster subscriber over the same ctx lifetime as the poller.
+	presence := state.NewPresence()
+	vapid, err := database.LoadOrCreateVAPID(ctx, webpush.GenerateVAPIDKeys, state.HubTS(time.Now()))
+	if err != nil {
+		log.Fatalf("vapid: %v", err)
+	}
+	go state.RunPushDispatcher(ctx, state.DispatcherDeps{
+		Bcast:      bcast,
+		Presence:   presence,
+		Store:      database,
+		Send:       state.NewWebPushSender(vapid, vapidSubject(cfg)),
+		NowRFC3339: func() string { return time.Now().UTC().Format(time.RFC3339) },
+	})
+
 	router := api.NewRouter(api.RouterDeps{
 		Version:             version,
 		Auth:                auth,
@@ -97,6 +115,9 @@ func main() {
 			Seen:                database,
 			Bcast:               bcast,
 			SSEHeartbeat:        sseHeartbeat(cfg),
+			Push:                database,
+			VAPIDPublic:         vapid.Public,
+			Presence:            presence,
 		},
 		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,
@@ -149,6 +170,20 @@ func statePoll(cfg config.Config) time.Duration {
 		return cfg.StatePollInterval
 	}
 	return 3 * time.Second
+}
+
+// vapidSubject returns the VAPID JWT subject (a mailto:/URL contact the protocol
+// requires). It prefers the explicit config value, falls back to the configured
+// external origin, and finally to a placeholder so webpush never sends an empty
+// subscriber.
+func vapidSubject(cfg config.Config) string {
+	if cfg.VAPIDSubject != "" {
+		return cfg.VAPIDSubject
+	}
+	if cfg.ExternalOrigin != "" {
+		return cfg.ExternalOrigin
+	}
+	return "mailto:admin@localhost"
 }
 
 func sseHeartbeat(cfg config.Config) time.Duration {
