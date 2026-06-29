@@ -243,7 +243,7 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 					TargetID:     sessionTarget[sessName], // agent-reported session label
 					Session:      sessName,
 					Pane:         pane.Pane,
-					Source:       "hook",
+					Source:       "poll",
 					RawEvent:     string(raw),
 					DerivedState: string(pane.State),
 					EventTs:      HubTS(pane.LastChangeAt),

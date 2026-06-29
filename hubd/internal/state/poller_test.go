@@ -208,8 +208,8 @@ func TestPollerIngestsFirstSeenEventAndProjects(t *testing.T) {
 	if len(store.events) != 1 || store.events[0].DerivedState != "done" || store.events[0].Session != "api" {
 		t.Fatalf("events = %+v", store.events)
 	}
-	if store.events[0].Source != "hook" {
-		t.Fatalf("source = %q, want hook", store.events[0].Source)
+	if store.events[0].Source != "poll" {
+		t.Fatalf("source = %q, want poll", store.events[0].Source)
 	}
 	if v, ok := proj.Session("s", "", "api"); !ok || v.Global != shared.StateDone {
 		t.Fatalf("projection = %+v ok=%v", v, ok)
