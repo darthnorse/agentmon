@@ -138,6 +138,43 @@ func isAgentmonGroup(g any) bool {
 	return false
 }
 
+// InstallWarnings returns zero or more human-readable warning strings about the
+// given config that may cause silent hook failures. It performs no I/O.
+func InstallWarnings(cfg config.Config) []string {
+	var warnings []string
+
+	// (a) Non-loopback listen host: hooks always POST to 127.0.0.1:<port>.
+	host, port, err := net.SplitHostPort(cfg.Listen)
+	if err == nil {
+		ip := net.ParseIP(host)
+		// Warn when host is a concrete address that is neither loopback nor wildcard.
+		concreteNonLoopback := false
+		if host == "" {
+			// bare ":port" — wildcard, OK
+		} else if ip == nil {
+			// hostname (not an IP literal) — conservatively warn
+			concreteNonLoopback = true
+		} else if !ip.IsLoopback() && !ip.IsUnspecified() {
+			concreteNonLoopback = true
+		}
+		if concreteNonLoopback {
+			warnings = append(warnings, fmt.Sprintf(
+				"agent listen host %q is not loopback or a wildcard; hooks POST to 127.0.0.1:%s"+
+					" and will silently no-op unless the agent is reachable on loopback"+
+					" (bind 0.0.0.0 or include loopback).",
+				host, port))
+		}
+	}
+
+	// (b) Literal token embedded in settings file.
+	if cfg.HookTokenFile == "" && cfg.HookToken != "" {
+		warnings = append(warnings, "hook token will be embedded in the settings file;"+
+			" set hook_token_file to keep the secret out of the settings file.")
+	}
+
+	return warnings
+}
+
 // LoadSettings reads a Claude Code settings JSON file. A missing or empty file
 // loads as an empty map (so install can create it).
 func LoadSettings(path string) (map[string]any, error) {

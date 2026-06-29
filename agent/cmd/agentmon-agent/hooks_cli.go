@@ -33,6 +33,9 @@ func hooksMain(args []string, stdout io.Writer) error {
 	}
 	switch sub {
 	case "print":
+		for _, w := range hooks.InstallWarnings(cfg) {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
 		snip, err := hooks.Snippet(cfg)
 		if err != nil {
 			return err
@@ -41,6 +44,9 @@ func hooksMain(args []string, stdout io.Writer) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(snip)
 	case "install":
+		for _, w := range hooks.InstallWarnings(cfg) {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
 		if *settings == "" {
 			return fmt.Errorf("hooks install requires --settings <PATH>")
 		}

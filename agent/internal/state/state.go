@@ -76,6 +76,10 @@ func (m *Machine) Apply(ev Event) (shared.State, bool) {
 	if prior == "" {
 		prior = shared.StateUnknown
 	}
+	if ev.Name == "SessionEnd" {
+		delete(m.panes, k)
+		return shared.StateUnknown, prior != shared.StateUnknown
+	}
 	next := prior
 	if d, ok := derive(ev.Name, ev.NotificationKind); ok {
 		next = d

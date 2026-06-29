@@ -121,6 +121,52 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInstallWarnings(t *testing.T) {
+	t.Run("loopback+tokenfile_no_warnings", func(t *testing.T) {
+		cfg := config.Config{Listen: "127.0.0.1:8377", HookToken: "tok", HookTokenFile: "/run/agentmon/hook-token"}
+		if w := InstallWarnings(cfg); len(w) != 0 {
+			t.Fatalf("expected no warnings, got: %v", w)
+		}
+	})
+
+	t.Run("wildcard_no_listen_warning", func(t *testing.T) {
+		cfg := config.Config{Listen: "0.0.0.0:8377", HookToken: "tok", HookTokenFile: "/run/agentmon/hook-token"}
+		for _, w := range InstallWarnings(cfg) {
+			if strings.Contains(w, "loopback") {
+				t.Fatalf("wildcard should not produce a listen warning, got: %s", w)
+			}
+		}
+	})
+
+	t.Run("concrete_nonloopback_listen_warning", func(t *testing.T) {
+		cfg := config.Config{Listen: "10.0.0.5:8377", HookToken: "tok", HookTokenFile: "/run/agentmon/hook-token"}
+		warnings := InstallWarnings(cfg)
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "loopback") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected a listen warning containing 'loopback', got: %v", warnings)
+		}
+	})
+
+	t.Run("literal_token_warning", func(t *testing.T) {
+		cfg := config.Config{Listen: "127.0.0.1:8377", HookToken: "tok", HookTokenFile: ""}
+		warnings := InstallWarnings(cfg)
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "settings file") || strings.Contains(w, "hook_token_file") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected a literal-token warning, got: %v", warnings)
+		}
+	})
+}
+
 func TestWriteTokenFilePerms(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "sub", "hook-token")

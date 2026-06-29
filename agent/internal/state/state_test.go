@@ -62,6 +62,40 @@ func TestApplyChangedFlag(t *testing.T) {
 	}
 }
 
+func TestSessionEndDeletesEntry(t *testing.T) {
+	m := New(fixedNow())
+	// SessionEnd on a working pane: returns (StateUnknown, true) and deletes the entry.
+	m.Apply(Event{Target: "default", Pane: "%5", Name: "PreToolUse"}) // working
+	got, changed := m.Apply(Event{Target: "default", Pane: "%5", Name: "SessionEnd"})
+	if got != shared.StateUnknown {
+		t.Fatalf("SessionEnd on working pane: got %q, want StateUnknown", got)
+	}
+	if !changed {
+		t.Fatal("SessionEnd on working pane should report changed=true")
+	}
+	if _, ok := m.Pane("default", "%5"); ok {
+		t.Fatal("SessionEnd should delete pane entry (Pane ok should be false)")
+	}
+	if s := m.Rollup("default", []string{"%5"}); s != shared.StateUnknown {
+		t.Fatalf("Rollup after SessionEnd = %q, want StateUnknown", s)
+	}
+}
+
+func TestSessionEndNeverSeenPane(t *testing.T) {
+	m := New(fixedNow())
+	// SessionEnd on a never-seen pane: returns (StateUnknown, false) and creates no entry.
+	got, changed := m.Apply(Event{Target: "default", Pane: "%99", Name: "SessionEnd"})
+	if got != shared.StateUnknown {
+		t.Fatalf("SessionEnd on unseen pane: got %q, want StateUnknown", got)
+	}
+	if changed {
+		t.Fatal("SessionEnd on never-seen pane should report changed=false")
+	}
+	if _, ok := m.Pane("default", "%99"); ok {
+		t.Fatal("SessionEnd on never-seen pane must not create an entry")
+	}
+}
+
 func TestPaneAndRollup(t *testing.T) {
 	m := New(fixedNow())
 	if s, ok := m.Pane("default", "%9"); ok || s != shared.StateUnknown {
