@@ -4,13 +4,16 @@ import { useNavigate } from "@tanstack/react-router";
 import { listServers, listSessions } from "@/lib/api-client";
 import { useAuth } from "@/store/auth";
 import { Button } from "@/components/ui/button";
-import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
+import { SessionList, flattenSessions } from "@/components/SessionList";
+import { DesktopShell } from "@/components/DesktopShell";
+import { useMediaQuery } from "@/lib/use-media-query";
 import type { Session } from "@/lib/contracts";
 
 export function ShellRoute() {
   const navigate = useNavigate();
   const signOut = useAuth((s) => s.signOut);
   const [query, setQuery] = React.useState("");
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   const serversQ = useQuery({ queryKey: ["servers"], queryFn: listServers });
   const servers = serversQ.data ?? [];
@@ -26,14 +29,6 @@ export function ShellRoute() {
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
   const rows = flattenSessions(servers, byServer);
 
-  function open(row: SessionRow) {
-    navigate({
-      to: "/t/$serverId/$paneId",
-      params: { serverId: row.server.id, paneId: row.pane.id },
-      search: { target: row.session.target, session: row.session.name },
-    });
-  }
-
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
@@ -43,7 +38,22 @@ export function ShellRoute() {
         </Button>
       </header>
       <div className="min-h-0 flex-1">
-        <SessionList rows={rows} query={query} onQueryChange={setQuery} onOpen={open} />
+        {isDesktop ? (
+          <DesktopShell rows={rows} query={query} onQueryChange={setQuery} />
+        ) : (
+          <SessionList
+            rows={rows}
+            query={query}
+            onQueryChange={setQuery}
+            onOpen={(row) =>
+              navigate({
+                to: "/t/$serverId/$paneId",
+                params: { serverId: row.server.id, paneId: row.pane.id },
+                search: { target: row.session.target, session: row.session.name },
+              })
+            }
+          />
+        )}
       </div>
     </div>
   );
