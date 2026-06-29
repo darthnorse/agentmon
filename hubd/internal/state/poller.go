@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"sync"
 	"time"
 
@@ -36,6 +37,15 @@ type EventStore interface {
 // ─── Poller ───────────────────────────────────────────────────────────────────
 
 type paneKey struct{ server, target, pane string }
+
+// pendingEvent pairs a not-yet-written event with the lastSeen update it implies.
+// lastSeen is only advanced once the event is durably written (so a failed write
+// is retried next tick).
+type pendingEvent struct {
+	evt  db.StateEvent
+	key  paneKey
+	pane shared.PaneState
+}
 
 type backoffState struct {
 	nextAttempt time.Time
@@ -131,6 +141,8 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 	st, err := p.agent.State(ctx, srv, "")
 	if err != nil {
 		if errors.Is(err, registry.ErrStateUnsupported) {
+			// 404 means the agent IS reachable; clear any prior transient backoff.
+			p.resetBackoff(id)
 			p.pollDegraded(ctx, srv)
 		} else {
 			p.bumpBackoff(id)
@@ -140,7 +152,15 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 	p.resetBackoff(id)
 
 	// Build pane-ID → session-name map from the live session tree.
-	sessions, _ := p.agent.Sessions(ctx, srv, "")
+	sessions, err := p.agent.Sessions(ctx, srv, "")
+	if err != nil {
+		// sessions error → skip this server's processing this tick.
+		// State() succeeded, so treat this as transient: no backoff bump, and
+		// crucially no ghost-prune (which would wipe lastSeen and cause a re-ingest
+		// storm on the next successful tick), no projection update, no event writes.
+		log.Printf("poller: sessions (server=%s): %v", id, err)
+		return
+	}
 	paneToSession := make(map[string]string, len(sessions)*4)
 	for _, sess := range sessions {
 		for _, win := range sess.Windows {
@@ -152,23 +172,11 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 
 	receivedAt := hubTS(p.now())
 
-	// Collect events to write (computed under lock, written after).
-	type evtEntry struct {
-		evt  db.StateEvent
-		key  paneKey
-		pane shared.PaneState
-	}
-	var toWrite []evtEntry
-
-	// Track panes that are present in the live tree for this server this tick.
+	var toWrite []pendingEvent
+	// Panes present in the live tree for this server this tick.
 	activePanes := make(map[paneKey]struct{})
-
-	// Per-session aggregation for projection.
-	type sessData struct {
-		states      []shared.State
-		hadNewEvent bool
-	}
-	sessionMap := make(map[string]*sessData)
+	// Per-session pane states (for the rolled-up projection Global).
+	sessionStates := make(map[string][]shared.State)
 
 	p.mu.Lock()
 	for _, pane := range st.Panes {
@@ -192,7 +200,7 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 
 		if shouldWrite {
 			raw, _ := json.Marshal(pane)
-			toWrite = append(toWrite, evtEntry{
+			toWrite = append(toWrite, pendingEvent{
 				evt: db.StateEvent{
 					ID:           uuid.New().String(),
 					ServerID:     id,
@@ -210,15 +218,7 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 			})
 		}
 
-		sd := sessionMap[sessName]
-		if sd == nil {
-			sd = &sessData{}
-			sessionMap[sessName] = sd
-		}
-		sd.states = append(sd.states, pane.State)
-		if shouldWrite {
-			sd.hadNewEvent = true
-		}
+		sessionStates[sessName] = append(sessionStates[sessName], pane.State)
 	}
 
 	// Prune lastSeen entries for panes no longer in the live tree.
@@ -231,36 +231,19 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 	}
 	p.mu.Unlock()
 
-	// Write events outside the lock (I/O).
-	for _, e := range toWrite {
-		_ = p.store.AppendStateEvent(ctx, e.evt)
-	}
-
-	// Update lastSeen after successful writes.
-	p.mu.Lock()
-	for _, e := range toWrite {
-		p.lastSeen[e.key] = e.pane
-	}
-	p.mu.Unlock()
+	// Write events outside the lock. Only advance lastSeen for events that were
+	// durably written (a failed write is retried next tick).
+	committedSessions := p.commit(ctx, id, toWrite)
 
 	// Build and replace projection views for this server.
-	views := make([]SessionView, 0, len(sessionMap))
-	for sessName, sd := range sessionMap {
-		latestRecvAt := ""
-		if sd.hadNewEvent {
-			latestRecvAt = receivedAt
-		} else {
-			// Carry the prior LatestReceivedAt from the projection when nothing changed.
-			if prior, ok := p.proj.Session(id, "", sessName); ok {
-				latestRecvAt = prior.LatestReceivedAt
-			}
-		}
+	views := make([]SessionView, 0, len(sessionStates))
+	for sessName, states := range sessionStates {
 		views = append(views, SessionView{
 			ServerID:         id,
 			Target:           "",
 			Session:          sessName,
-			Global:           shared.RollUp(sd.states...),
-			LatestReceivedAt: latestRecvAt,
+			Global:           shared.RollUp(states...),
+			LatestReceivedAt: p.latestReceivedAt(id, "", sessName, committedSessions[sessName], receivedAt),
 		})
 	}
 	p.proj.ReplaceServer(id, views)
@@ -271,33 +254,26 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 	sessions, err := p.agent.Sessions(ctx, srv, "")
 	if err != nil {
+		log.Printf("poller: degraded sessions (server=%s): %v", srv.ID, err)
 		return
 	}
 
 	receivedAt := hubTS(p.now())
 
-	type evtEntry struct {
-		evt  db.StateEvent
-		key  paneKey
-		pane shared.PaneState
-	}
-	var toWrite []evtEntry
-
-	views := make([]SessionView, 0, len(sessions))
+	var toWrite []pendingEvent
+	activeKeys := make(map[paneKey]struct{})
 
 	p.mu.Lock()
 	for _, sess := range sessions {
 		// Synthesise a single PaneState from the rolled-up session state.
-		synth := shared.PaneState{
-			Target: sess.Target,
-			State:  sess.State,
-		}
+		synth := shared.PaneState{Target: sess.Target, State: sess.State}
 		key := paneKey{srv.ID, sess.Target, "snapshot:" + sess.Name}
+		activeKeys[key] = struct{}{}
 
 		last, seen := p.lastSeen[key]
 		if !seen || synth.State != last.State {
 			raw, _ := json.Marshal(synth)
-			toWrite = append(toWrite, evtEntry{
+			toWrite = append(toWrite, pendingEvent{
 				evt: db.StateEvent{
 					ID:           uuid.New().String(),
 					ServerID:     srv.ID,
@@ -313,28 +289,68 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 				pane: synth,
 			})
 		}
+	}
 
+	// Prune stale synthetic lastSeen keys for sessions that vanished.
+	for key := range p.lastSeen {
+		if key.server == srv.ID {
+			if _, active := activeKeys[key]; !active {
+				delete(p.lastSeen, key)
+			}
+		}
+	}
+	p.mu.Unlock()
+
+	committedSessions := p.commit(ctx, srv.ID, toWrite)
+
+	views := make([]SessionView, 0, len(sessions))
+	for _, sess := range sessions {
 		views = append(views, SessionView{
 			ServerID:         srv.ID,
 			Target:           sess.Target,
 			Session:          sess.Name,
 			Global:           sess.State,
-			LatestReceivedAt: receivedAt,
+			LatestReceivedAt: p.latestReceivedAt(srv.ID, sess.Target, sess.Name, committedSessions[sess.Name], receivedAt),
 		})
 	}
-	p.mu.Unlock()
+	p.proj.ReplaceServer(srv.ID, views)
+}
 
+// commit writes pending events to the store and advances lastSeen only for those
+// that were durably written. It returns the set of sessions that had at least one
+// event written this tick (used to advance the projection's LatestReceivedAt).
+func (p *Poller) commit(ctx context.Context, serverID string, toWrite []pendingEvent) map[string]bool {
+	committedSessions := make(map[string]bool)
+	var committed []pendingEvent
 	for _, e := range toWrite {
-		_ = p.store.AppendStateEvent(ctx, e.evt)
+		if err := p.store.AppendStateEvent(ctx, e.evt); err != nil {
+			// Drop the lastSeen update so this transition is retried next tick.
+			log.Printf("poller: append state event (server=%s pane=%s): %v", serverID, e.evt.Pane, err)
+			continue
+		}
+		committed = append(committed, e)
+		committedSessions[e.evt.Session] = true
 	}
-
 	p.mu.Lock()
-	for _, e := range toWrite {
+	for _, e := range committed {
 		p.lastSeen[e.key] = e.pane
 	}
 	p.mu.Unlock()
+	return committedSessions
+}
 
-	p.proj.ReplaceServer(srv.ID, views)
+// latestReceivedAt returns the LatestReceivedAt to record for a session view:
+// the freshly-written received_at if the session had a new event this tick,
+// otherwise the prior value carried forward from the projection (so an unchanged
+// — already-seen — session does not keep re-advancing).
+func (p *Poller) latestReceivedAt(serverID, target, session string, hadNewEvent bool, receivedAt string) string {
+	if hadNewEvent {
+		return receivedAt
+	}
+	if prior, ok := p.proj.Session(serverID, target, session); ok {
+		return prior.LatestReceivedAt
+	}
+	return ""
 }
 
 // ─── Backoff helpers ─────────────────────────────────────────────────────────
