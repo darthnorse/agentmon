@@ -19,6 +19,8 @@ type Config struct {
 	ServerID        string   `toml:"server_id"`
 	HubToken        string   `toml:"hub_token"`
 	DirectiveKey    string   `toml:"directive_key"`
+	HookToken       string   `toml:"hook_token"`      // optional; enables /hook when set
+	HookTokenFile   string   `toml:"hook_token_file"` // optional path the agent writes the token to
 	ScrollbackLines int      `toml:"scrollback_lines"`
 	Targets         []Target `toml:"targets"`
 }
@@ -37,6 +39,13 @@ func Load(path string) (Config, error) {
 			return Config{}, err
 		}
 		*p = v
+	}
+	if c.HookToken != "" {
+		v, err := shared.ResolveSecretRef(c.HookToken)
+		if err != nil {
+			return Config{}, err
+		}
+		c.HookToken = v
 	}
 	return c, nil
 }
