@@ -48,11 +48,3 @@ func (d *DB) LatestSessionEvent(ctx context.Context, serverID, target, session s
 	return e, true, nil
 }
 
-// nullIfEmpty converts an empty string to nil (SQL NULL); non-empty strings pass through.
-// Used for nullable TEXT columns. Reuse this wherever a string column is nullable.
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}

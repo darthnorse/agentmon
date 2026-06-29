@@ -202,7 +202,8 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 			continue
 		}
 
-		key := paneKey{id, pane.Target, pane.Pane}
+		// key uses the agent-reported session target for consistency with the projection and event TargetID.
+		key := paneKey{id, sessionTarget[sessName], pane.Pane}
 		activePanes[key] = struct{}{}
 
 		last, seen := p.lastSeen[key]
@@ -257,13 +258,7 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 	}
 
 	// Prune lastSeen entries for panes no longer in the live tree.
-	for key := range p.lastSeen {
-		if key.server == id {
-			if _, active := activePanes[key]; !active {
-				delete(p.lastSeen, key)
-			}
-		}
-	}
+	p.pruneLastSeen(id, activePanes)
 	p.mu.Unlock()
 
 	// Write events outside the lock. Only advance lastSeen for events that were
@@ -291,37 +286,8 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 		})
 	}
 
-	// Collect per-session changes before ReplaceServer overwrites the projection.
-	// Publish for sessions whose rolled-up Global differs from the prior value, or
-	// which had a new event written this tick (new finished turn / transition).
-	// Restart-reseeded sessions are excluded — no real state change occurred.
-	var toPublish []Change
-	if p.bcast != nil {
-		for _, v := range views {
-			prior, hasPrior := p.proj.Session(v.ServerID, v.Target, v.Session)
-			if !hasPrior || prior.Global != v.Global || committedSessions[v.Session] {
-				if _, reseeded := reseedTS[v.Session]; reseeded && !committedSessions[v.Session] {
-					continue // hub restart with no real change: suppress publish (but a
-					// genuine transition on any pane of the session still broadcasts)
-				}
-				toPublish = append(toPublish, Change{
-					ServerID:         v.ServerID,
-					Target:           v.Target,
-					Session:          v.Session,
-					Global:           v.Global,
-					LatestReceivedAt: v.LatestReceivedAt,
-				})
-			}
-		}
-	}
-
-	p.proj.ReplaceServer(id, views)
-
-	if p.bcast != nil {
-		for _, c := range toPublish {
-			p.bcast.Publish(c)
-		}
-	}
+	// Collect changes, replace projection, publish deltas.
+	p.finalize(id, views, committedSessions, reseedTS)
 }
 
 // pollDegraded is the fallback when the agent does not support GET /state
@@ -369,13 +335,7 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 	}
 
 	// Prune stale synthetic lastSeen keys for sessions that vanished.
-	for key := range p.lastSeen {
-		if key.server == srv.ID {
-			if _, active := activeKeys[key]; !active {
-				delete(p.lastSeen, key)
-			}
-		}
-	}
+	p.pruneLastSeen(srv.ID, activeKeys)
 	p.mu.Unlock()
 
 	committedSessions := p.commit(ctx, srv.ID, toWrite)
@@ -391,12 +351,35 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 		})
 	}
 
-	// Collect per-session changes before ReplaceServer overwrites the projection.
+	// Collect changes, replace projection, publish deltas.
+	p.finalize(srv.ID, views, committedSessions, nil)
+}
+
+// pruneLastSeen deletes p.lastSeen entries for the given server whose paneKey is
+// absent from the active set. Must be called under p.mu (the caller holds the lock).
+func (p *Poller) pruneLastSeen(serverID string, active map[paneKey]struct{}) {
+	for key := range p.lastSeen {
+		if key.server == serverID {
+			if _, ok := active[key]; !ok {
+				delete(p.lastSeen, key)
+			}
+		}
+	}
+}
+
+// finalize collects per-session publish candidates, replaces the server's
+// projection, and broadcasts deltas. reseedTS suppresses publishes for
+// hub-restart-reseeded sessions with no real state change; pass nil to skip
+// suppression (degraded path).
+func (p *Poller) finalize(serverID string, views []SessionView, committed map[string]bool, reseedTS map[string]string) {
 	var toPublish []Change
 	if p.bcast != nil {
 		for _, v := range views {
 			prior, hasPrior := p.proj.Session(v.ServerID, v.Target, v.Session)
-			if !hasPrior || prior.Global != v.Global || committedSessions[v.Session] {
+			if !hasPrior || prior.Global != v.Global || committed[v.Session] {
+				if _, reseeded := reseedTS[v.Session]; reseeded && !committed[v.Session] {
+					continue
+				}
 				toPublish = append(toPublish, Change{
 					ServerID:         v.ServerID,
 					Target:           v.Target,
@@ -407,13 +390,9 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 			}
 		}
 	}
-
-	p.proj.ReplaceServer(srv.ID, views)
-
-	if p.bcast != nil {
-		for _, c := range toPublish {
-			p.bcast.Publish(c)
-		}
+	p.proj.ReplaceServer(serverID, views)
+	for _, c := range toPublish {
+		p.bcast.Publish(c)
 	}
 }
 

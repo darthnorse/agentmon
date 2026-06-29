@@ -6,12 +6,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authn"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/registry"
-	"agentmon/hubd/internal/audit"
-	"time"
 )
 
 // buildHubWithSeen is like buildHub but also wires Seen into api.Deps so the

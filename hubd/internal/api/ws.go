@@ -344,7 +344,8 @@ func relayPanes(browser, agent *websocket.Conn, pongWait, pingPeriod time.Durati
 				}
 			case c, ok := <-stateCh:
 				if !ok {
-					return // subscription channel was closed
+					// stateCh is closed only by defer cancel() after relayPanes returns; the !ok branch is defensive.
+					return
 				}
 				// Filter: only inject frames for this relay's session.
 				if c.ServerID != si.serverID || c.Target != si.target || c.Session != si.sessionName {

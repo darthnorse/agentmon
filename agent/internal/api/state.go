@@ -25,9 +25,7 @@ func StateHandler(cfg config.Config, m *state.Machine) http.HandlerFunc {
 		}
 		panes := []shared.PaneState{}
 		if m != nil {
-			if s := m.Snapshot(target); s != nil {
-				panes = s
-			}
+			panes = m.Snapshot(target)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(shared.AgentState{Panes: panes})

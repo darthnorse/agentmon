@@ -76,7 +76,7 @@ func (d Deps) EventsHandler() http.HandlerFunc {
 		}
 
 		// Send initial snapshot.
-		snap := make([]stateEvent, 0)
+		snap := []stateEvent{}
 		for _, v := range d.Proj.All() {
 			snap = append(snap, stateEvent{v.ServerID, v.Target, v.Session, project(v)})
 		}
