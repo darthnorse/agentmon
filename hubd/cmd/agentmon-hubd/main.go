@@ -8,8 +8,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,10 +57,17 @@ func main() {
 
 	reg := registry.New(database)
 	proj := state.NewProjection()
+	agentClient := registry.NewClient(10 * time.Second)
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)
 	onboard := authn.NewLimiter(enrollMax(cfg), enrollWindow(cfg))
+
+	poller := state.NewPoller(reg, agentClient, database, proj, statePoll(cfg), time.Now)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go poller.Run(ctx)
 
 	router := api.NewRouter(api.RouterDeps{
 		Version:             version,
@@ -76,7 +85,7 @@ func main() {
 		},
 		API: api.Deps{
 			Reg:                 reg,
-			Agent:               registry.NewClient(10 * time.Second),
+			Agent:               agentClient,
 			Audit:               rec,
 			AuditRepo:           database,
 			HealthTimeout:       3 * time.Second,
@@ -104,7 +113,16 @@ func main() {
 		log.Printf("WARNING: external_origin is HTTPS but trust_forwarded_proto is false — session cookies will be issued WITHOUT the Secure flag. Behind Caddy/TLS set trust_forwarded_proto: true.")
 	}
 	log.Printf("agentmon-hubd %s listening on %s", version, cfg.Listen)
-	log.Fatal(srv.ListenAndServe())
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+	<-ctx.Done()
+	stop()
+	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutCtx)
 }
 
 func openDB(cfg config.Config) (*db.DB, error) {
@@ -120,6 +138,13 @@ func cookieTTL(cfg config.Config) time.Duration {
 		return cfg.SessionCookie.TTL
 	}
 	return 168 * time.Hour
+}
+
+func statePoll(cfg config.Config) time.Duration {
+	if cfg.StatePollInterval > 0 {
+		return cfg.StatePollInterval
+	}
+	return 3 * time.Second
 }
 
 func rateMax(cfg config.Config) int {

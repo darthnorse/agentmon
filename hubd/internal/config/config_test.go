@@ -47,3 +47,31 @@ func TestLoadDefaultsCookieName(t *testing.T) {
 		t.Fatalf("cookie name default not applied: %q", cfg.SessionCookie.Name)
 	}
 }
+
+func TestStatePollInterval(t *testing.T) {
+	t.Run("parses_explicit_value", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "config.yaml")
+		os.WriteFile(p, []byte("listen: \"127.0.0.1:8080\"\nstate_poll_interval: \"10s\"\n"), 0o600)
+		cfg, err := Load(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.StatePollInterval != 10*time.Second {
+			t.Fatalf("state_poll_interval: got %v, want 10s", cfg.StatePollInterval)
+		}
+	})
+
+	t.Run("zero_when_unset", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "config.yaml")
+		os.WriteFile(p, []byte("listen: \"127.0.0.1:8080\"\n"), 0o600)
+		cfg, err := Load(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.StatePollInterval != 0 {
+			t.Fatalf("state_poll_interval: expected zero when unset, got %v", cfg.StatePollInterval)
+		}
+	})
+}
