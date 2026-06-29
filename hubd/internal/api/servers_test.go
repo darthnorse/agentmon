@@ -14,6 +14,8 @@ import (
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/registry"
+	"agentmon/hubd/internal/state"
+	"agentmon/shared"
 )
 
 type nopSink struct{}
@@ -83,5 +85,41 @@ func TestServerHandlerUnknownIDIs404(t *testing.T) {
 	d.ServerHandler()(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("code %d", w.Code)
+	}
+}
+
+// TestServerDetailHasRollupState: GET /servers/{id} includes a State field rolled
+// up from the projection's sessions. With done+blocked the rollup must be blocked.
+func TestServerDetailHasRollupState(t *testing.T) {
+	// Minimal agent stub: just answers healthz so ServerHandler completes.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{ServerID: "s", Session: "a", Global: shared.StateDone})
+	proj.Set(state.SessionView{ServerID: "s", Session: "b", Global: shared.StateBlocked})
+
+	reg := registry.New(fakeStore{servers: map[string]db.Server{
+		"s": {ID: "s", Name: "Server S", URL: ts.URL, Bearer: "tok", Status: "active"},
+	}})
+	d := testDeps(reg)
+	d.Proj = proj
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got registry.ServerDetail
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.State != shared.StateBlocked {
+		t.Fatalf("rollup: want state=%q, got %q", shared.StateBlocked, got.State)
 	}
 }

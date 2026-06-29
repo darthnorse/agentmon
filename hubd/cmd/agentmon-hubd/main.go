@@ -21,6 +21,7 @@ import (
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/directive"
 	"agentmon/hubd/internal/registry"
+	"agentmon/hubd/internal/state"
 	"agentmon/hubd/internal/webui"
 )
 
@@ -53,6 +54,7 @@ func main() {
 	defer database.Close()
 
 	reg := registry.New(database)
+	proj := state.NewProjection()
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)
@@ -81,6 +83,7 @@ func main() {
 			TrustForwardedProto: cfg.TrustForwardedProto,
 			Minter:              directive.Minter{}, // defaults: time.Now, CSPRNG nonce, uuid requestId
 			ExternalOrigin:      cfg.ExternalOrigin,
+			Proj:                proj,
 		},
 		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,

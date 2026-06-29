@@ -12,6 +12,8 @@ import (
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/directive"
 	"agentmon/hubd/internal/registry"
+	"agentmon/hubd/internal/state"
+	"agentmon/shared"
 )
 
 // AuditReader is the read-side of the audit log. *db.DB satisfies it.
@@ -31,6 +33,7 @@ type Deps struct {
 	ExternalOrigin      string           // M4: WS upgrade Origin check
 	RelayPongWait       time.Duration    // M4 relay liveness; 0 → default (60s)
 	RelayPingPeriod     time.Duration    // M4 relay ping cadence; 0 → default (20s). Must be < RelayPongWait.
+	Proj                *state.Projection // M7: in-memory projection for server/session state rollup
 }
 
 // authorizeOr403 resolves the principal from the request context, calls
@@ -47,6 +50,22 @@ func (d Deps) authorizeOr403(w http.ResponseWriter, r *http.Request, action auth
 	return p, true
 }
 
+// serverRollup returns the §9.2 rollup of a server's session states from the
+// projection (empty string when the projection is nil or has no sessions yet,
+// so json:"state,omitempty" suppresses the field rather than emitting a
+// misleading "unknown").
+func (d Deps) serverRollup(serverID string) shared.State {
+	if d.Proj == nil {
+		return ""
+	}
+	views := d.Proj.Server(serverID)
+	states := make([]shared.State, 0, len(views))
+	for _, v := range views {
+		states = append(states, v.Global)
+	}
+	return shared.RollUp(states...)
+}
+
 // ServersHandler handles GET /api/v1/servers: authorize ServerView on server:*,
 // then return the full list of server summaries as JSON.
 func (d Deps) ServersHandler() http.HandlerFunc {
@@ -58,6 +77,9 @@ func (d Deps) ServersHandler() http.HandlerFunc {
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		for i := range list {
+			list[i].State = d.serverRollup(list[i].ID)
 		}
 		writeJSON(w, http.StatusOK, list)
 	}
@@ -88,6 +110,7 @@ func (d Deps) ServerHandler() http.HandlerFunc {
 			Labels:  registry.LabelsOrEmpty(srv.Labels),
 			Enabled: true,
 			Healthy: d.Agent.Health(ctx, srv),
+			State:   d.serverRollup(srv.ID),
 		})
 	}
 }

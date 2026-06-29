@@ -11,21 +11,24 @@ import (
 	"errors"
 
 	"agentmon/hubd/internal/db"
+	"agentmon/shared"
 )
 
 type ServerSummary struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Labels  []string `json:"labels"`
-	Enabled bool     `json:"enabled"`
+	ID      string       `json:"id"`
+	Name    string       `json:"name"`
+	Labels  []string     `json:"labels"`
+	Enabled bool         `json:"enabled"`
+	State   shared.State `json:"state,omitempty"`
 }
 
 type ServerDetail struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Labels  []string `json:"labels"`
-	Enabled bool     `json:"enabled"`
-	Healthy bool     `json:"healthy"`
+	ID      string       `json:"id"`
+	Name    string       `json:"name"`
+	Labels  []string     `json:"labels"`
+	Enabled bool         `json:"enabled"`
+	Healthy bool         `json:"healthy"`
+	State   shared.State `json:"state,omitempty"`
 }
 
 // Store is the subset of *db.DB the registry needs. Defined here so the registry

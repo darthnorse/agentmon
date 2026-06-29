@@ -8,6 +8,20 @@ import (
 	"agentmon/shared"
 )
 
+// overlayState replaces each session's State with the hub projection's global
+// state when known; otherwise keeps the agent's inline state (pre-poll fallback).
+// (B3 extends this with the per-principal seen projection.)
+func (d Deps) overlayState(serverID, target string, sessions []shared.Session) {
+	if d.Proj == nil {
+		return
+	}
+	for i := range sessions {
+		if v, ok := d.Proj.Session(serverID, target, sessions[i].Name); ok {
+			sessions[i].State = v.Global
+		}
+	}
+}
+
 func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -30,6 +44,7 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 			return
 		}
 		_ = d.Reg.TouchLastSeen(r.Context(), id)
+		d.overlayState(id, "", sessions)
 		writeJSON(w, http.StatusOK, sessions)
 	}
 }
@@ -60,6 +75,7 @@ func (d Deps) SessionDetailHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusBadGateway, "agent unavailable")
 			return
 		}
+		d.overlayState(id, target, sessions)
 		for _, s := range sessions {
 			if s.Name == name {
 				writeJSON(w, http.StatusOK, s)

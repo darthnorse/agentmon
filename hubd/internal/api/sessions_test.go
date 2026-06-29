@@ -10,6 +10,7 @@ import (
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/registry"
+	"agentmon/hubd/internal/state"
 	"agentmon/shared"
 )
 
@@ -130,5 +131,74 @@ func TestSessionDetailHonorsTargetQuery(t *testing.T) {
 	}
 	if gotTarget != "work" {
 		t.Fatalf("agent saw target %q, want work", gotTarget)
+	}
+}
+
+// TestServerSessionsOverlaysProjectionState: the projection's Global state wins
+// over the agent's inline state when the projection has an entry for the session.
+func TestServerSessionsOverlaysProjectionState(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(401)
+			return
+		}
+		// agent reports session "api" with state=unknown (pre-poll inline value)
+		w.Write([]byte(`{"sessions":[{"name":"api","server":"s","target":"","state":"unknown","cwd":"/","command":"claude","windows":[]}]}`))
+	}))
+	defer ts.Close()
+
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{ServerID: "s", Session: "api", Global: shared.StateBlocked})
+
+	d := depsWith(db.Server{ID: "s", URL: ts.URL, Bearer: "tok", Status: "active"})
+	d.Proj = proj
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s/sessions", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerSessionsHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got []shared.Session
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].State != shared.StateBlocked {
+		t.Fatalf("overlay: want state=%q, got %+v", shared.StateBlocked, got)
+	}
+}
+
+// TestServerSessionsPrePollFallback: when the projection has no entry for a session
+// the agent's inline state is kept unchanged (pre-poll fallback).
+func TestServerSessionsPrePollFallback(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(401)
+			return
+		}
+		// agent reports session "api" with state=working
+		w.Write([]byte(`{"sessions":[{"name":"api","server":"s","target":"","state":"working","cwd":"/","command":"claude","windows":[]}]}`))
+	}))
+	defer ts.Close()
+
+	d := depsWith(db.Server{ID: "s", URL: ts.URL, Bearer: "tok", Status: "active"})
+	d.Proj = state.NewProjection() // empty projection — no entry for "api"
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s/sessions", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerSessionsHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got []shared.Session
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].State != shared.StateWorking {
+		t.Fatalf("fallback: want state=%q, got %+v", shared.StateWorking, got)
 	}
 }
