@@ -1,6 +1,7 @@
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
+import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 
 export interface TerminalSearch { target: string; session: string; }
 
@@ -8,6 +9,8 @@ export function MobileTerminalRoute() {
   const { serverId, paneId } = useParams({ strict: false }) as { serverId: string; paneId: string };
   const { target, session } = useSearch({ strict: false }) as TerminalSearch;
   const navigate = useNavigate();
+
+  useFocusedSeen({ serverId, target, sessionName: session });
 
   return (
     <div className="flex h-full flex-col">

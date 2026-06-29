@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, redirect, Outlet } from "@tanstack/react-router";
 import { useAuth } from "@/store/auth";
+import { AuthLayout } from "@/components/AuthLayout";
 import { LoginRoute } from "./routes/login";
 import { ShellRoute } from "./routes/index";
 import { MobileTerminalRoute, type TerminalSearch } from "./routes/terminal";
@@ -28,7 +29,7 @@ const authRoute = createRoute({
     await ensureStatus();
     if (useAuth.getState().status !== "authed") throw redirect({ to: "/login" });
   },
-  component: () => <Outlet />,
+  component: AuthLayout,
 });
 
 const indexRoute = createRoute({ getParentRoute: () => authRoute, path: "/", component: ShellRoute });

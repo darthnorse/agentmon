@@ -4,10 +4,12 @@ import { useNavigate } from "@tanstack/react-router";
 import { listServers, listSessions } from "@/lib/api-client";
 import { useAuth } from "@/store/auth";
 import { Button } from "@/components/ui/button";
-import { SessionList, flattenSessions } from "@/components/SessionList";
+import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
 import { DesktopShell } from "@/components/DesktopShell";
 import { useMediaQuery } from "@/lib/use-media-query";
-import type { Session } from "@/lib/contracts";
+import { useSessionState } from "@/store/session-state";
+import { effectiveSessionState } from "@/lib/state";
+import type { Session, SessionState } from "@/lib/contracts";
 
 export function ShellRoute() {
   const navigate = useNavigate();
@@ -29,6 +31,15 @@ export function ShellRoute() {
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
   const rows = flattenSessions(servers, byServer);
 
+  const live = useSessionState((s) => s.live);
+  const seen = useSessionState((s) => s.seen);
+  const focusedKey = useSessionState((s) => s.focusedKey);
+  const stateOf = React.useCallback(
+    (row: SessionRow): SessionState =>
+      effectiveSessionState({ live, seen, focusedKey }, row.server.id, row.session.target, row.session.name, row.session.state),
+    [live, seen, focusedKey],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
@@ -48,12 +59,13 @@ export function ShellRoute() {
             <Button variant="outline" size="sm" onClick={() => serversQ.refetch()}>Retry</Button>
           </div>
         ) : isDesktop ? (
-          <DesktopShell rows={rows} query={query} onQueryChange={setQuery} />
+          <DesktopShell rows={rows} query={query} onQueryChange={setQuery} stateOf={stateOf} />
         ) : (
           <SessionList
             rows={rows}
             query={query}
             onQueryChange={setQuery}
+            stateOf={stateOf}
             onOpen={(row) =>
               navigate({
                 to: "/t/$serverId/$paneId",
