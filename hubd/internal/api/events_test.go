@@ -189,6 +189,119 @@ func TestEventsHandler_SnapshotAndDelta(t *testing.T) {
 	}
 }
 
+// TestEventsHandler_PublishInRaceWindow is the regression test for FIX 1
+// (subscribe-after-snapshot race).  A Change published immediately after the
+// snapshot pipe-write unblocks — WITHOUT any sleep — must not be lost.
+//
+// io.Pipe Write blocks until the reader has fully consumed the bytes. Once the
+// scanner drains the snapshot, the handler goroutine's Write returns.  On
+// GOMAXPROCS=1 the test goroutine keeps the CPU and calls Publish before the
+// handler goroutine reaches Subscribe() (old code), deterministically hitting
+// the race.  With the fix (Subscribe before snapshot) the channel is open
+// before any Write can occur, so the buffered Change is always delivered.
+func TestEventsHandler_PublishInRaceWindow(t *testing.T) {
+	// Empty projection — the snapshot is "[]".  Any missed Change produces zero
+	// event:state lines and the test times out, proving the race.
+	proj := state.NewProjection()
+	bcast := state.NewBroadcaster()
+	d := Deps{
+		Proj:         proj,
+		Bcast:        bcast,
+		Seen:         &fakeSeenStore{},
+		SSEHeartbeat: time.Hour,
+	}
+
+	pr, pw := io.Pipe()
+	pw2 := &pipeResponseWriter{pw: pw, header: make(http.Header)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := httptest.NewRequest("GET", "/api/v1/events", nil).WithContext(ctx)
+	req = withPrincipal(req, authz.Principal{ID: "u1"})
+
+	handlerDone := make(chan struct{})
+	go func() {
+		defer close(handlerDone)
+		defer pw.Close() //nolint:errcheck
+		d.EventsHandler()(pw2, req)
+	}()
+
+	sc := bufio.NewScanner(pr)
+
+	// Drain the snapshot lines.  After sc.Scan() consumes the last byte of the
+	// snapshot frame the handler goroutine's pw.Write has returned; with OLD
+	// code Subscribe() has NOT been called yet.
+	for sc.Scan() {
+		if strings.HasPrefix(sc.Text(), "event: snapshot") {
+			sc.Scan() // data: [...]
+			sc.Scan() // blank separator
+			break
+		}
+	}
+
+	// Publish with NO sleep — on GOMAXPROCS=1 this arrives before the handler
+	// goroutine runs again (old: Subscribe not yet called → lost).
+	// With fix: Subscribe was first → buffered → delivered.
+	bcast.Publish(state.Change{
+		ServerID: "s", Target: "", Session: "race-session",
+		Global: shared.StateDone, LatestReceivedAt: "2026-06-29 10:00:00.000",
+	})
+
+	// Read SSE lines in a goroutine so we can use a select timeout.
+	type scanResult struct{ data string }
+	found := make(chan scanResult, 1)
+	go func() {
+		for sc.Scan() {
+			if strings.HasPrefix(sc.Text(), "event: state") {
+				sc.Scan() // data line
+				found <- scanResult{sc.Text()}
+				return
+			}
+		}
+	}()
+
+	select {
+	case r := <-found:
+		var delta stateEvent
+		data := strings.TrimPrefix(r.data, "data: ")
+		if err := json.Unmarshal([]byte(data), &delta); err != nil {
+			t.Fatalf("unmarshal delta: %v", err)
+		}
+		if delta.Server != "s" || delta.Session != "race-session" || delta.State != shared.StateDone {
+			t.Fatalf("unexpected delta content: %+v", delta)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("no event:state delta received — Change was lost (subscribe-after-snapshot race)")
+	}
+
+	cancel()
+	for sc.Scan() {} // drain until handler closes pipe
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler goroutine did not exit after context cancel")
+	}
+}
+
+// TestEventsHandler_NilBcastIs503 is the regression test for FIX 2
+// (nil-Bcast guard): a request against a Deps with no Broadcaster must
+// return 503 without panicking.
+func TestEventsHandler_NilBcastIs503(t *testing.T) {
+	d := Deps{
+		Proj:         state.NewProjection(),
+		Bcast:        nil, // intentionally nil
+		Seen:         &fakeSeenStore{},
+		SSEHeartbeat: time.Hour,
+	}
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/events", nil), authz.Principal{ID: "u1"})
+	w := httptest.NewRecorder()
+	d.EventsHandler()(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("nil Bcast: want 503, got %d (body=%s)", w.Code, w.Body)
+	}
+}
+
 // TestEventsHandler_NoFlusherIs500 asserts that a ResponseWriter not
 // implementing http.Flusher causes the handler to return 500 immediately.
 func TestEventsHandler_NoFlusherIs500(t *testing.T) {

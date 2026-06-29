@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,11 +32,11 @@ type fakeAgent struct {
 	sessions    map[string][]shared.Session
 	stateErr    map[string]error
 	sessionsErr map[string]error
-	stateCalls  int // total State() invocations (used by the backoff test)
+	stateCalls  atomic.Int64 // total State() invocations; atomic to avoid data races under -race
 }
 
 func (f *fakeAgent) State(_ context.Context, srv db.Server, _ string) (shared.AgentState, error) {
-	f.stateCalls++
+	f.stateCalls.Add(1)
 	if e := f.stateErr[srv.ID]; e != nil {
 		return shared.AgentState{}, e
 	}
@@ -392,41 +393,41 @@ func TestPollerBackoffDoublesAndResets(t *testing.T) {
 
 	// Tick 1 (t=100.0): error → backoff delay = interval (1s), nextAttempt = 101.0.
 	p.Tick(ctx)
-	if agent.stateCalls != 1 {
-		t.Fatalf("tick1: want 1 State call, got %d", agent.stateCalls)
+	if agent.stateCalls.Load() != 1 {
+		t.Fatalf("tick1: want 1 State call, got %d", agent.stateCalls.Load())
 	}
 
 	// Tick 2 (t=100.0, unchanged): within backoff window → skipped.
 	p.Tick(ctx)
-	if agent.stateCalls != 1 {
-		t.Fatalf("backoff should skip the immediate next tick, got %d State calls", agent.stateCalls)
+	if agent.stateCalls.Load() != 1 {
+		t.Fatalf("backoff should skip the immediate next tick, got %d State calls", agent.stateCalls.Load())
 	}
 
 	// Advance past the 1s delay → retried; still errors → delay doubles to 2s.
 	now = now.Add(1100 * time.Millisecond) // t=101.1, nextAttempt becomes 103.1
 	p.Tick(ctx)
-	if agent.stateCalls != 2 {
-		t.Fatalf("want retry after the delay elapsed, got %d State calls", agent.stateCalls)
+	if agent.stateCalls.Load() != 2 {
+		t.Fatalf("want retry after the delay elapsed, got %d State calls", agent.stateCalls.Load())
 	}
 
 	// Advance only 1.5s (< the new 2s delay): still skipped → proves it doubled.
 	now = now.Add(1500 * time.Millisecond) // t=102.6 < 103.1
 	p.Tick(ctx)
-	if agent.stateCalls != 2 {
-		t.Fatalf("delay should have doubled to 2s; got %d State calls", agent.stateCalls)
+	if agent.stateCalls.Load() != 2 {
+		t.Fatalf("delay should have doubled to 2s; got %d State calls", agent.stateCalls.Load())
 	}
 
 	// Advance past 2s and clear the error → success resets the backoff.
 	now = now.Add(1 * time.Second) // t=103.6 >= 103.1
 	delete(agent.stateErr, "s")
 	p.Tick(ctx)
-	if agent.stateCalls != 3 {
-		t.Fatalf("want retry once delay elapsed, got %d State calls", agent.stateCalls)
+	if agent.stateCalls.Load() != 3 {
+		t.Fatalf("want retry once delay elapsed, got %d State calls", agent.stateCalls.Load())
 	}
 	// Backoff reset → the very next tick (clock unchanged) polls again.
 	p.Tick(ctx)
-	if agent.stateCalls != 4 {
-		t.Fatalf("backoff should be reset after success; got %d State calls", agent.stateCalls)
+	if agent.stateCalls.Load() != 4 {
+		t.Fatalf("backoff should be reset after success; got %d State calls", agent.stateCalls.Load())
 	}
 }
 
@@ -502,8 +503,11 @@ func TestPollerPublishesOnChange(t *testing.T) {
 func TestPollerRestartReseed(t *testing.T) {
 	p, _, store, proj := newPollerFixture()
 	// Pre-seed the store with a prior event for (server=s, target="", session=api)
-	// that was received before the hub restart.
-	const oldTS = "2026-01-01T09:00:00.000"
+	// that was received before the hub restart.  Use the space-separated HubTS
+	// format ("2006-01-02 15:04:05.000") so lexical ordering is correct — the
+	// T-separator form ("2006-01-02T15:04:05.000") would sort differently from
+	// hub-generated timestamps because 'T' (0x54) > ' ' (0x20).
+	const oldTS = "2026-01-01 09:00:00.000"
 	store.latestEvents = []db.StateEvent{{
 		ID:           "prior-evt",
 		ServerID:     "s",
@@ -561,7 +565,7 @@ func TestPollerFirstSeenPriorDifferentState(t *testing.T) {
 		TargetID:     "",
 		Session:      "api",
 		DerivedState: "working",
-		ReceivedAt:   "2026-01-01T09:00:00.000",
+		ReceivedAt:   "2026-01-01 09:00:00.000",
 	}}
 
 	p.Tick(context.Background())

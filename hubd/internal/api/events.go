@@ -46,6 +46,19 @@ func (d Deps) EventsHandler() http.HandlerFunc {
 			return
 		}
 
+		// FIX 2: guard nil Bcast before any subscription attempt.
+		if d.Bcast == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "state streaming not configured")
+			return
+		}
+
+		// FIX 1: subscribe BEFORE reading the projection snapshot so that any
+		// Publish in the window between snapshot-send and select entry is buffered
+		// in the channel rather than lost.  A delta that duplicates a snapshotted
+		// entry is harmless (idempotent current-state); a missed change is not.
+		_, ch, cancel := d.Bcast.Subscribe()
+		defer cancel()
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
@@ -69,9 +82,6 @@ func (d Deps) EventsHandler() http.HandlerFunc {
 		}
 		writeSSE(w, "snapshot", snap)
 		flusher.Flush()
-
-		_, ch, cancel := d.Bcast.Subscribe()
-		defer cancel()
 
 		hb := time.NewTicker(d.SSEHeartbeat)
 		defer hb.Stop()
