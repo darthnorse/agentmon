@@ -126,13 +126,16 @@ func (d Deps) ServerHandler() http.HandlerFunc {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), d.HealthTimeout)
 		defer cancel()
+		// serverRollup's seen lookups use r.Context() (SQLite reads), not the
+		// agent health-check timeout ctx — otherwise a slow Health() probe could
+		// exhaust the deadline and silently drop the seen projection.
 		writeJSON(w, http.StatusOK, registry.ServerDetail{
 			ID:      srv.ID,
 			Name:    srv.Name,
 			Labels:  registry.LabelsOrEmpty(srv.Labels),
 			Enabled: true,
 			Healthy: d.Agent.Health(ctx, srv),
-			State:   d.serverRollup(ctx, p.ID, srv.ID),
+			State:   d.serverRollup(r.Context(), p.ID, srv.ID),
 		})
 	}
 }

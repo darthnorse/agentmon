@@ -27,9 +27,11 @@ func withPrincipal(r *http.Request, p authz.Principal) *http.Request {
 	return r.WithContext(authn.ContextWithPrincipal(r.Context(), p))
 }
 
-// fakeSeenStore is an in-memory SeenStore for unit tests.
+// fakeSeenStore is an in-memory SeenStore for unit tests. When getErr is set,
+// GetSeen returns it (with no row) to exercise the non-fatal error path.
 type fakeSeenStore struct {
-	rows map[string]db.PrincipalSeen
+	rows   map[string]db.PrincipalSeen
+	getErr error
 }
 
 func seenKey(principalID, serverID, target, session string) string {
@@ -45,6 +47,9 @@ func (f *fakeSeenStore) UpsertSeen(_ context.Context, s db.PrincipalSeen) error 
 }
 
 func (f *fakeSeenStore) GetSeen(_ context.Context, principalID, serverID, target, session string) (db.PrincipalSeen, bool, error) {
+	if f.getErr != nil {
+		return db.PrincipalSeen{}, false, f.getErr
+	}
 	if f.rows == nil {
 		return db.PrincipalSeen{}, false, nil
 	}

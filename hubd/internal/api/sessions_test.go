@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -334,5 +335,48 @@ func TestServerSessionsSeenProjection_DoneNoSeen_YieldsDone(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].State != shared.StateDone {
 		t.Fatalf("no-seen passthrough: want state=%q, got %+v", shared.StateDone, got)
+	}
+}
+
+// TestServerSessionsSeenProjection_GetSeenError_PassesThroughGlobal: a GetSeen
+// error is non-fatal — the projection's global state passes through unmasked
+// (no 500, no idle masking) so a transient seen-store failure can't hide a done.
+func TestServerSessionsSeenProjection_GetSeenError_PassesThroughGlobal(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(401)
+			return
+		}
+		w.Write([]byte(`{"sessions":[{"name":"api","server":"s","target":"","state":"unknown","cwd":"/","command":"claude","windows":[]}]}`))
+	}))
+	defer ts.Close()
+
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{
+		ServerID:         "s",
+		Target:           "",
+		Session:          "api",
+		Global:           shared.StateDone,
+		LatestReceivedAt: "2026-01-01T10:00:00.000",
+	})
+
+	d := depsWith(db.Server{ID: "s", URL: ts.URL, Bearer: "tok", Status: "active"})
+	d.Proj = proj
+	d.Seen = &fakeSeenStore{getErr: errors.New("seen store unavailable")}
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s/sessions", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerSessionsHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("GetSeen error must not 500: code %d body %s", w.Code, w.Body)
+	}
+	var got []shared.Session
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].State != shared.StateDone {
+		t.Fatalf("error passthrough: want state=%q, got %+v", shared.StateDone, got)
 	}
 }
