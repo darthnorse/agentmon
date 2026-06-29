@@ -1,3 +1,9 @@
+# Pin the compose project name so `docker compose up -d --build` targets the same
+# container regardless of CWD or -p. Without this, the default project name is the
+# basename of this file's directory ("deploy"), which spawns a duplicate that
+# crash-loops on the already-bound host port.
+name: agentmon
+
 services:
   agentmon-hub:
     build:
