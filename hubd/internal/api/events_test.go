@@ -1,0 +1,257 @@
+package api
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"agentmon/hubd/internal/authz"
+	"agentmon/hubd/internal/db"
+	"agentmon/hubd/internal/state"
+	"agentmon/shared"
+)
+
+// noFlushWriter is a minimal http.ResponseWriter that intentionally does NOT
+// implement http.Flusher, to exercise the 500 "stream unsupported" path.
+type noFlushWriter struct {
+	header http.Header
+	code   int
+	body   bytes.Buffer
+}
+
+func (w *noFlushWriter) Header() http.Header         { return w.header }
+func (w *noFlushWriter) WriteHeader(code int)        { w.code = code }
+func (w *noFlushWriter) Write(b []byte) (int, error) { return w.body.Write(b) }
+
+// pipeResponseWriter wraps an io.PipeWriter as an http.ResponseWriter +
+// http.Flusher. Flush() is a no-op because io.Pipe is already streaming —
+// each Write blocks until the reader consumes the bytes, so data is
+// immediately visible to the scanner without explicit flush semantics.
+type pipeResponseWriter struct {
+	pw     *io.PipeWriter
+	header http.Header
+	code   int
+}
+
+func (w *pipeResponseWriter) Header() http.Header         { return w.header }
+func (w *pipeResponseWriter) WriteHeader(code int)        { w.code = code }
+func (w *pipeResponseWriter) Write(b []byte) (int, error) { return w.pw.Write(b) }
+func (w *pipeResponseWriter) Flush()                      {} // pipe writes are already streaming
+
+// TestEventsHandler_SnapshotAndDelta asserts:
+//  1. An initial event:snapshot containing all projection sessions
+//     seen-projected for the principal.
+//  2. After a Publish, an event:state delta with the seen-projected change.
+//  3. Clean handler return on context cancel — no goroutine leak
+//     (test ends without hanging on handlerDone).
+func TestEventsHandler_SnapshotAndDelta(t *testing.T) {
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{
+		ServerID: "srv", Target: "", Session: "api",
+		Global: shared.StateWorking, LatestReceivedAt: "ts0",
+	})
+
+	bcast := state.NewBroadcaster()
+
+	d := Deps{
+		Proj:         proj,
+		Bcast:        bcast,
+		Seen:         &fakeSeenStore{},
+		SSEHeartbeat: time.Hour, // prevent heartbeat ticks during test
+	}
+
+	pr, pw := io.Pipe()
+	pw2 := &pipeResponseWriter{pw: pw, header: make(http.Header)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := httptest.NewRequest("GET", "/api/v1/events", nil).WithContext(ctx)
+	req = withPrincipal(req, authz.Principal{ID: "u1"})
+
+	handlerDone := make(chan struct{})
+	go func() {
+		defer close(handlerDone)
+		defer pw.Close() //nolint:errcheck
+		d.EventsHandler()(pw2, req)
+	}()
+
+	sc := bufio.NewScanner(pr)
+
+	// ── (1) Snapshot ───────────────────────────────────────────────────────────
+	var snapData string
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "event: snapshot") {
+			if !sc.Scan() {
+				t.Fatal("expected data line after event: snapshot")
+			}
+			snapData = strings.TrimPrefix(sc.Text(), "data: ")
+			sc.Scan() // consume empty separator line
+			break
+		}
+	}
+	if snapData == "" {
+		t.Fatal("no event:snapshot received")
+	}
+	var snap []stateEvent
+	if err := json.Unmarshal([]byte(snapData), &snap); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	if len(snap) != 1 || snap[0].Server != "srv" || snap[0].Session != "api" || snap[0].State != shared.StateWorking {
+		t.Fatalf("snapshot content: got %+v", snap)
+	}
+
+	// After reading the snapshot through the pipe, the handler goroutine's
+	// io.Pipe Write has returned (pipe Write blocks until the reader has
+	// consumed all bytes). The handler then called Flush() (no-op) and
+	// Subscribe(). A brief yield ensures the scheduler runs the handler
+	// goroutine past Subscribe() before we Publish.
+	time.Sleep(time.Millisecond)
+
+	// ── (2) Delta ──────────────────────────────────────────────────────────────
+	bcast.Publish(state.Change{
+		ServerID: "srv", Target: "", Session: "api",
+		Global: shared.StateDone, LatestReceivedAt: "ts1",
+	})
+
+	var deltaData string
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "event: state") {
+			if !sc.Scan() {
+				t.Fatal("expected data line after event: state")
+			}
+			deltaData = strings.TrimPrefix(sc.Text(), "data: ")
+			sc.Scan() // consume empty separator line
+			break
+		}
+	}
+	if deltaData == "" {
+		t.Fatal("no event:state delta received")
+	}
+	var delta stateEvent
+	if err := json.Unmarshal([]byte(deltaData), &delta); err != nil {
+		t.Fatalf("unmarshal delta: %v", err)
+	}
+	if delta.Server != "srv" || delta.Session != "api" || delta.State != shared.StateDone {
+		t.Fatalf("delta content: got %+v", delta)
+	}
+
+	// ── (3) Clean teardown ─────────────────────────────────────────────────────
+	cancel()
+
+	// Drain any remaining lines; the pipe close (from handler goroutine) will
+	// cause the scanner to see EOF and exit.
+	for sc.Scan() {
+	}
+
+	select {
+	case <-handlerDone:
+		// handler returned cleanly — no goroutine leak
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler goroutine did not exit after context cancel — goroutine leak")
+	}
+}
+
+// TestEventsHandler_NoFlusherIs500 asserts that a ResponseWriter not
+// implementing http.Flusher causes the handler to return 500 immediately.
+func TestEventsHandler_NoFlusherIs500(t *testing.T) {
+	d := Deps{
+		Proj:         state.NewProjection(),
+		Bcast:        state.NewBroadcaster(),
+		Seen:         &fakeSeenStore{},
+		SSEHeartbeat: time.Hour,
+	}
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/events", nil), authz.Principal{ID: "u1"})
+	w := &noFlushWriter{header: make(http.Header)}
+	d.EventsHandler()(w, r)
+	if w.code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", w.code)
+	}
+}
+
+// TestEventsHandler_SeenProjection asserts that a principal with a seen row
+// for a done session gets state=idle in the snapshot (seen projection applied).
+func TestEventsHandler_SeenProjection(t *testing.T) {
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{
+		ServerID: "s", Target: "", Session: "work",
+		Global:           shared.StateDone,
+		LatestReceivedAt: "2026-01-01T10:00:00.000",
+	})
+
+	seen := &fakeSeenStore{}
+	_ = seen.UpsertSeen(context.Background(), db.PrincipalSeen{
+		PrincipalID:   "u1",
+		ServerID:      "s",
+		TargetID:      "",
+		Session:       "work",
+		LastFocusedAt: "2026-01-01T10:00:01.000", // after LatestReceivedAt → masks done→idle
+	})
+
+	bcast := state.NewBroadcaster()
+	d := Deps{
+		Proj:         proj,
+		Bcast:        bcast,
+		Seen:         seen,
+		SSEHeartbeat: time.Hour,
+	}
+
+	pr, pw := io.Pipe()
+	pw2 := &pipeResponseWriter{pw: pw, header: make(http.Header)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := httptest.NewRequest("GET", "/api/v1/events", nil).WithContext(ctx)
+	req = withPrincipal(req, authz.Principal{ID: "u1"})
+
+	handlerDone := make(chan struct{})
+	go func() {
+		defer close(handlerDone)
+		defer pw.Close() //nolint:errcheck
+		d.EventsHandler()(pw2, req)
+	}()
+
+	sc := bufio.NewScanner(pr)
+
+	var snapData string
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "event: snapshot") {
+			if !sc.Scan() {
+				t.Fatal("expected data line")
+			}
+			snapData = strings.TrimPrefix(sc.Text(), "data: ")
+			sc.Scan()
+			break
+		}
+	}
+	if snapData == "" {
+		t.Fatal("no snapshot received")
+	}
+	var snap []stateEvent
+	if err := json.Unmarshal([]byte(snapData), &snap); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(snap) != 1 || snap[0].State != shared.StateIdle {
+		t.Fatalf("seen projection: want state=idle, got %+v", snap)
+	}
+
+	cancel()
+	for sc.Scan() {
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler goroutine leak")
+	}
+}

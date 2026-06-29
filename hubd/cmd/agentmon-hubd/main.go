@@ -95,6 +95,8 @@ func main() {
 			ExternalOrigin:      cfg.ExternalOrigin,
 			Proj:                proj,
 			Seen:                database,
+			Bcast:               bcast,
+			SSEHeartbeat:        sseHeartbeat(cfg),
 		},
 		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,
@@ -147,6 +149,13 @@ func statePoll(cfg config.Config) time.Duration {
 		return cfg.StatePollInterval
 	}
 	return 3 * time.Second
+}
+
+func sseHeartbeat(cfg config.Config) time.Duration {
+	if cfg.SSEHeartbeat > 0 {
+		return cfg.SSEHeartbeat
+	}
+	return 25 * time.Second
 }
 
 func rateMax(cfg config.Config) int {

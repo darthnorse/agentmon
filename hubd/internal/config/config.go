@@ -27,6 +27,7 @@ type Config struct {
 	LoginRateLimit      RateLimitCfg  `yaml:"login_rate_limit"`
 	EnrollRateLimit     RateLimitCfg  `yaml:"enroll_rate_limit"`
 	StatePollInterval   time.Duration `yaml:"state_poll_interval"`
+	SSEHeartbeat        time.Duration `yaml:"sse_heartbeat"`
 }
 
 func Load(path string) (Config, error) {

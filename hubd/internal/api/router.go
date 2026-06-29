@@ -33,6 +33,7 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("GET /api/v1/servers/{id}/panes/{paneId}/io", rd.Auth.RequireAuth(rd.API.PaneRelayHandler()))
 	mux.Handle("GET /api/v1/audit", rd.Auth.RequireAuth(rd.API.AuditHandler()))
 	mux.Handle("POST /api/v1/seen", rd.Auth.RequireAuth(rd.API.SeenHandler()))
+	mux.Handle("GET /api/v1/events", rd.Auth.RequireAuth(rd.API.EventsHandler()))
 
 	mux.Handle("POST /api/v1/enroll", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Enroll.Handler()))
 
