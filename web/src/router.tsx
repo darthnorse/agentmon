@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, createRouter, redirect, Outlet } from "@t
 import { useAuth } from "@/store/auth";
 import { LoginRoute } from "./routes/login";
 import { ShellRoute } from "./routes/index";
+import { MobileTerminalRoute, type TerminalSearch } from "./routes/terminal";
 
 const rootRoute = createRootRoute({ component: () => <Outlet /> });
 
@@ -32,7 +33,17 @@ const authRoute = createRoute({
 
 const indexRoute = createRoute({ getParentRoute: () => authRoute, path: "/", component: ShellRoute });
 
-const routeTree = rootRoute.addChildren([loginRoute, authRoute.addChildren([indexRoute])]);
+const terminalRoute = createRoute({
+  getParentRoute: () => authRoute,
+  path: "/t/$serverId/$paneId",
+  validateSearch: (s: Record<string, unknown>): TerminalSearch => ({
+    target: typeof s.target === "string" ? s.target : "default",
+    session: typeof s.session === "string" ? s.session : "",
+  }),
+  component: MobileTerminalRoute,
+});
+
+const routeTree = rootRoute.addChildren([loginRoute, authRoute.addChildren([indexRoute, terminalRoute])]);
 export const router = createRouter({ routeTree });
 
 declare module "@tanstack/react-router" {

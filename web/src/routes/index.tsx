@@ -26,9 +26,12 @@ export function ShellRoute() {
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
   const rows = flattenSessions(servers, byServer);
 
-  function open(_row: SessionRow) {
-    // TODO(Task 8): navigate to /t/$serverId/$paneId once that route is registered
-    navigate({ to: "/" });
+  function open(row: SessionRow) {
+    navigate({
+      to: "/t/$serverId/$paneId",
+      params: { serverId: row.server.id, paneId: row.pane.id },
+      search: { target: row.session.target, session: row.session.name },
+    });
   }
 
   return (
