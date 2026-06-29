@@ -31,7 +31,7 @@ export function DesktopShell({
   function onOpen(row: SessionRow) {
     const r = openPane({
       serverId: row.server.id, paneId: row.pane.id, target: row.session.target,
-      session: row.session.name, serverName: row.server.name,
+      session: row.session.name, serverName: row.server.name, state: row.session.state,
     });
     if (!r.ok && r.reason === "cap") {
       clearTimeout(noticeTimer.current);

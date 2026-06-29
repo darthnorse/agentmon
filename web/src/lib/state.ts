@@ -4,6 +4,15 @@ export const STATE_PRIORITY: Record<SessionState, number> = {
   blocked: 5, done: 4, working: 3, idle: 2, unknown: 1,
 };
 
+// Clamp any external/agent-supplied state string to a known union member. The SSE
+// `stateEvent.State` has no omitempty and the degraded poller forwards the agent's
+// raw inline state, so an empty/unexpected value can reach the wire; coercing it to
+// "unknown" keeps STATE_META / STATE_PRIORITY lookups from going undefined (crash)
+// or NaN (corrupted sort).
+export function normalizeState(s: string | null | undefined): SessionState {
+  return s != null && s in STATE_PRIORITY ? (s as SessionState) : "unknown";
+}
+
 // Roll up many states to the highest-priority one. Empty/unrecognized → "unknown".
 export function rollUp(...states: SessionState[]): SessionState {
   let best: SessionState = "unknown";
@@ -46,7 +55,7 @@ export function effectiveSessionState(
   snap: StateSnapshot, server: string, target: string, session: string, fallback?: SessionState,
 ): SessionState {
   const key = stateKey(server, target, session);
-  const raw = snap.live.get(key) ?? fallback ?? "unknown";
+  const raw = normalizeState(snap.live.get(key) ?? fallback);
   return present(raw, { seen: snap.seen.has(key), focused: snap.focusedKey === key });
 }
 

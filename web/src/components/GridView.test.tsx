@@ -8,7 +8,6 @@ vi.mock("@/components/TerminalView", () => ({
 import { GridView } from "@/components/GridView";
 import { usePanes } from "@/store/panes";
 import { useSessionState } from "@/store/session-state";
-import { stateKey } from "@/lib/state";
 
 describe("GridView", () => {
   beforeEach(() => usePanes.setState({ panes: [], focusedId: null }));
@@ -41,5 +40,13 @@ describe("GridView", () => {
     usePanes.getState().collapse();
     render(<GridView />);
     expect(screen.getByRole("img", { name: "blocked" })).toBeInTheDocument();
+  });
+
+  it("falls back to the pane's REST state before live state arrives", () => {
+    useSessionState.getState().reset();
+    usePanes.getState().openPane({ serverId: "s", paneId: "%0", target: "default", session: "a", serverName: "h", state: "working" });
+    usePanes.getState().collapse();
+    render(<GridView />);
+    expect(screen.getByRole("img", { name: "working" })).toBeInTheDocument();
   });
 });

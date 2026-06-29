@@ -1,9 +1,27 @@
 import { describe, it, expect } from "vitest";
 import {
-  rollUp, STATE_PRIORITY, STATE_META, stateKey, present,
+  rollUp, normalizeState, STATE_META, stateKey, present,
   effectiveSessionState, sortBlockedFirst, type StateSnapshot,
 } from "@/lib/state";
 import type { SessionState } from "@/lib/contracts";
+
+describe("normalizeState", () => {
+  it("passes through known states and clamps anything else to unknown", () => {
+    (["blocked", "done", "working", "idle", "unknown"] as SessionState[]).forEach((s) =>
+      expect(normalizeState(s)).toBe(s));
+    expect(normalizeState("")).toBe("unknown");
+    expect(normalizeState("garbage")).toBe("unknown");
+    expect(normalizeState(undefined)).toBe("unknown");
+    expect(normalizeState(null)).toBe("unknown");
+  });
+});
+
+describe("effectiveSessionState clamps", () => {
+  it("coerces an out-of-enum live value to unknown (no crash, no NaN sort)", () => {
+    const live = new Map<string, SessionState>([[stateKey("s", "t", "x"), "weird" as SessionState]]);
+    expect(effectiveSessionState({ live, seen: new Set(), focusedKey: null }, "s", "t", "x")).toBe("unknown");
+  });
+});
 
 describe("rollUp", () => {
   it("picks the highest-priority state", () => {

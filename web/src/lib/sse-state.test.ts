@@ -50,6 +50,11 @@ describe("StateStream", () => {
     expect(onSnapshot).not.toHaveBeenCalled();
     expect(onDelta).not.toHaveBeenCalled();
   });
+  it("ignores a state event whose payload is an array (not a frame)", () => {
+    const { es, onDelta } = mk();
+    es.emit("state", JSON.stringify([{ server: "s", target: "t", session: "x", state: "done" }]));
+    expect(onDelta).not.toHaveBeenCalled();
+  });
   it("dispose() closes the EventSource and blocks re-open", () => {
     const { s, es } = mk();
     s.dispose();

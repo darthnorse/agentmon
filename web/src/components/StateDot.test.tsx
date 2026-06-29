@@ -16,4 +16,10 @@ describe("StateDot", () => {
       unmount();
     }
   });
+
+  it("renders the unknown dot for an out-of-enum value (no crash)", () => {
+    render(<StateDot state={"weird" as SessionState} />);
+    const dot = screen.getByRole("img", { name: "unknown" });
+    expect(dot.className).toContain("bg-zinc-400");
+  });
 });

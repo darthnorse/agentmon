@@ -1,11 +1,18 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useSessionState } from "@/store/session-state";
 import { stateKey, effectiveSessionState } from "@/lib/state";
+import type { SessionState } from "@/lib/contracts";
 
 const k = (s: string, t: string, n: string) => stateKey(s, t, n);
 
 describe("session-state store", () => {
   beforeEach(() => useSessionState.getState().reset());
+
+  it("clamps an out-of-enum delta state to unknown (crash/NaN guard)", () => {
+    useSessionState.getState().applyDelta({ server: "s", target: "t", session: "a", state: "" as SessionState });
+    expect(useSessionState.getState().live.get(k("s", "t", "a"))).toBe("unknown");
+    expect(effectiveSessionState(useSessionState.getState(), "s", "t", "a")).toBe("unknown");
+  });
 
   it("applySnapshot replaces live, clears seen, sets connected", () => {
     useSessionState.getState().markSeen(k("s", "t", "old"));

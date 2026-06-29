@@ -37,7 +37,7 @@ export class StateStream {
     });
     es.addEventListener("state", (ev: MessageEvent) => {
       const frame = parseJSON<StateEventFrame>(ev.data);
-      if (frame && typeof frame === "object") this.handlers.onDelta(frame);
+      if (frame && typeof frame === "object" && !Array.isArray(frame)) this.handlers.onDelta(frame);
     });
     es.onopen = () => this.handlers.onOpen?.();
     es.onerror = () => this.handlers.onError?.();

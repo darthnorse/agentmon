@@ -1,7 +1,7 @@
 import { usePanes } from "@/store/panes";
 import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
-import { useSessionState } from "@/store/session-state";
+import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
 
@@ -12,10 +12,7 @@ export function GridView() {
   // Guard against a stale focusedId pointing at a removed pane — fall back to grid view.
   const focused = panes.find((p) => p.id === focusedId);
   const activeId = focused ? focusedId : null;
-  const live = useSessionState((s) => s.live);
-  const seen = useSessionState((s) => s.seen);
-  const focusedKey = useSessionState((s) => s.focusedKey);
-  const snap = { live, seen, focusedKey };
+  const snap = useStateSnapshot();
 
   if (panes.length === 0) {
     return (
@@ -45,7 +42,7 @@ export function GridView() {
             >
               <div className="flex items-center justify-between border-b border-border bg-card px-2 py-1 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <StateDot state={effectiveSessionState(snap, p.serverId, p.target, p.session)} />
+                  <StateDot state={effectiveSessionState(snap, p.serverId, p.target, p.session, p.state)} />
                   <button className="min-w-0 truncate text-left hover:underline"
                     onClick={() => (expanded ? collapse() : focus(p.id))}
                     title={expanded ? "Back to grid" : "Expand"}>

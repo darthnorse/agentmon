@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
 import { DesktopShell } from "@/components/DesktopShell";
 import { useMediaQuery } from "@/lib/use-media-query";
-import { useSessionState } from "@/store/session-state";
+import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import type { Session, SessionState } from "@/lib/contracts";
 
@@ -31,14 +31,9 @@ export function ShellRoute() {
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
   const rows = flattenSessions(servers, byServer);
 
-  const live = useSessionState((s) => s.live);
-  const seen = useSessionState((s) => s.seen);
-  const focusedKey = useSessionState((s) => s.focusedKey);
-  const stateOf = React.useCallback(
-    (row: SessionRow): SessionState =>
-      effectiveSessionState({ live, seen, focusedKey }, row.server.id, row.session.target, row.session.name, row.session.state),
-    [live, seen, focusedKey],
-  );
+  const snap = useStateSnapshot();
+  const stateOf = (row: SessionRow): SessionState =>
+    effectiveSessionState(snap, row.server.id, row.session.target, row.session.name, row.session.state);
 
   return (
     <div className="flex h-full flex-col">

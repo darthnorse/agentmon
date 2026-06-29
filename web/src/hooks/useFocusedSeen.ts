@@ -10,7 +10,10 @@ export function useFocusedSeen(req: SeenRequest | null): void {
   const key = req ? stateKey(req.serverId, req.target, req.sessionName) : null;
   const reqRef = React.useRef(req);
   reqRef.current = req;
-  React.useEffect(() => {
+  // useLayoutEffect (not useEffect): apply the focus/seen mask BEFORE paint so the
+  // newly-focused tile never paints a one-frame `done` dot before suppression lands.
+  // The POST stays an async fire-and-forget side effect.
+  React.useLayoutEffect(() => {
     const store = useSessionState.getState();
     if (!key) { store.setFocusedKey(null); return; }
     store.setFocusedKey(key);

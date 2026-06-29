@@ -11,7 +11,10 @@ export interface Session {
 export interface ResizeFrame { type: "resize"; cols: number; rows: number; }
 export interface ErrorFrame { type: "error"; code: string; message: string; }
 export interface ReconnectFrame { type: "reconnect"; status: string; }
-// Mirrors hubd registry.ServerSummary (browser-safe; no secrets).
+// Mirrors hubd registry.ServerSummary (browser-safe; no secrets). `state` is the
+// hub's server rollup dot (mirrors the wire); the desktop sidebar currently rolls up
+// from its live sessions, so this REST field is reserved for the deferred
+// session-less-server first-paint fallback (see m8-carryover).
 export interface ServerSummary { id: string; name: string; labels: string[]; enabled: boolean; state?: SessionState; }
 // Mirrors the hub's login/me JSON body.
 export interface SessionInfo { principalId: string; username: string; displayName: string; csrfToken: string; }
