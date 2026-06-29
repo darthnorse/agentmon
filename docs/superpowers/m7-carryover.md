@@ -112,6 +112,11 @@ was live-accepted earlier.)
   practice; deferred. Fix would track latest-*done* `received_at` separately.
 - **`LatestSessionEvent` runs under the poller mutex** on the first post-restart tick (deep-scan): restart-
   only, tiny scale now. Move the DB lookups outside the lock if it ever matters.
+- **Poller does not `TouchLastSeen`** (found during the prod hub upgrade): a server's `last_seen_at` only
+  refreshes on browser-driven on-demand handlers, not on the every-3s background `/state` poll — so an
+  actively-polled server's "last-seen" reads stale in `server list` / any UI that surfaces it. Fix: have
+  `pollServer` call `reg.TouchLastSeen(ctx, id)` after a successful `State()` (best-effort, like
+  `ServerSessionsHandler` does). Trivial; fold into M8 or a quick patch.
 - **No rate-limit on `/seen` / no SSE per-principal connection cap** (deep-scan): YAGNI for a single-user
   authenticated LAN tool (login already has rate limiting). Add if multi-user lands.
 - **Kept by design (conflicts with spec §5.1):** `POST /seen` records seen for an *unenrolled* server id on
