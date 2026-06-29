@@ -181,13 +181,26 @@ multiple targets.
 | `Notification`, any other kind (idle/waiting)    | `done`                      |
 | `Stop`                                           | `done`                      |
 | `SubagentStop`                                   | **preserve** (no change)    |
-| `SessionEnd`                                     | `unknown` (Claude gone)     |
+| `SessionEnd`                                     | `unknown` (Claude gone — pane entry is **evicted** from the map) |
 | any **unknown** event name                       | **preserve** (no change)    |
+
+On `SessionEnd` the machine **deletes** the pane's entry rather than storing an `unknown` tombstone
+(bounds memory for a long-lived agent serving many short-lived panes); `Apply` still returns
+`(StateUnknown, prior != StateUnknown)` and `Rollup`/`Pane` treat the pane as never-seen → `unknown`.
 
 `Apply` records every event (updates `LastEvent`/`UpdatedAt`) even when the state is preserved, so
 "last activity" is current. `changed` is true only when the derived `State` differs from the prior
-pane state — this is the signal M7's poller will use to decide whether to write a `session_state_event`.
-A first-ever event for a pane counts as changed (prior = implicit `unknown`).
+pane state. A first-ever event for a pane counts as changed (prior = implicit `unknown`).
+
+> **M7 handoff note (from the whole-branch review).** `changed` is a *future-facing* per-pane
+> transition signal — it is **not consumable over M6's pull transport**: the hub reads only the
+> rolled-up `Session.State` via `GET /sessions`, and the production `/hook` handler discards `Apply`'s
+> return. Two consequences M7 must design around: (a) rollup collapses rapid per-pane transitions
+> between polls; (b) pull cannot distinguish a *new* `done` turn from a still-`done` session
+> (`done→done`) — exactly the "unseen done" transition `principal_seen` must catch. So M7 must either
+> add a per-pane transition surface to the agent (an events buffer or a `GET /state?since=<cursor>`
+> endpoint that exposes `changed`/transitions), or accept lossy `done→done` detection. `changed` is
+> kept in M6 (harmless, and ready for that future push/cursor path).
 
 ### 3.3 Tests (TDD, table-driven over the captured payloads)
 - Each row of §3.2 from a clean machine and from each other prior state.
@@ -257,8 +270,22 @@ feature is fully off (no `/hook` route, `hooks` subcommands warn).
   startup, and `hooks print/install` emit a command that reads `$(cat <HookTokenFile>)` — keeping the
   secret **out of `settings.json`**. This is the recommended posture and what the docs show.
 - If `HookTokenFile` is empty, `hooks print/install` bake the literal token into the command (a
-  one-line setup; emitted with a comment noting the secret lands in the settings file). `hook-test`
-  and the handler work either way.
+  one-line setup). In that mode `hooks print/install` emit a **stderr warning** that the token lands
+  in the settings file and that `hook_token_file` keeps it out. `hook-test` and the handler work
+  either way.
+
+**Security caveats (from the whole-branch review).**
+- The hook token appears in curl's argv, so it is visible in the process table (`ps`/`/proc`) to other
+  local users **regardless of file-vs-literal delivery** (`$(cat file)` expands before exec). File
+  delivery's only benefit is keeping the secret out of `settings.json` — not hiding it from local
+  users. Acceptable on the single-tenant LAN host (a leaked hook token only lets a *loopback* caller
+  set in-memory state — no RCE/exfil), but documented so operators don't over-assume.
+- The resolved token is interpolated into a double-quoted shell string unescaped; a token containing
+  shell metacharacters (`"`, `$`, `` ` ``, `\`) would break the command. `hook_token_file` is the
+  recommended posture and sidesteps this.
+- The installed command targets `http://127.0.0.1:<port>/hook` (loopback only). If `listen` binds a
+  concrete non-loopback, non-wildcard address, hooks silently no-op (`curl … || true`); `hooks
+  print/install` emit a **stderr warning** for that case.
 
 ---
 
