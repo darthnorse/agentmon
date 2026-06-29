@@ -99,3 +99,72 @@ func TestResolveTargetNoTargets(t *testing.T) {
 		t.Fatal("no targets configured should not resolve")
 	}
 }
+
+func TestLoadResolvesHookToken(t *testing.T) {
+	t.Setenv("HK_HUB", "h")
+	t.Setenv("HK_DK", "d")
+	t.Setenv("AGENTMON_HOOK_TOKEN", "hooksecret")
+	dir := t.TempDir()
+	p := filepath.Join(dir, "agent.toml")
+	if err := os.WriteFile(p, []byte(`
+listen = "10.0.0.5:8377"
+server_id = "s"
+hub_token = "env:HK_HUB"
+directive_key = "env:HK_DK"
+hook_token = "env:AGENTMON_HOOK_TOKEN"
+hook_token_file = "/run/agentmon/hook-token"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HookToken != "hooksecret" {
+		t.Fatalf("hook token = %q", cfg.HookToken)
+	}
+	if cfg.HookTokenFile != "/run/agentmon/hook-token" {
+		t.Fatalf("hook token file = %q", cfg.HookTokenFile)
+	}
+}
+
+func TestLoadHookTokenOptional(t *testing.T) {
+	t.Setenv("HK_HUB2", "h")
+	t.Setenv("HK_DK2", "d")
+	dir := t.TempDir()
+	p := filepath.Join(dir, "agent.toml")
+	if err := os.WriteFile(p, []byte(`
+listen = "x"
+server_id = "s"
+hub_token = "env:HK_HUB2"
+directive_key = "env:HK_DK2"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("optional hook_token should not error: %v", err)
+	}
+	if cfg.HookToken != "" {
+		t.Fatalf("want empty hook token, got %q", cfg.HookToken)
+	}
+}
+
+func TestLoadHookTokenBareLiteralRejected(t *testing.T) {
+	t.Setenv("HK_HUB3", "h")
+	t.Setenv("HK_DK3", "d")
+	dir := t.TempDir()
+	p := filepath.Join(dir, "agent.toml")
+	if err := os.WriteFile(p, []byte(`
+listen = "x"
+server_id = "s"
+hub_token = "env:HK_HUB3"
+directive_key = "env:HK_DK3"
+hook_token = "plain-literal"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Fatal("bare-literal hook_token must be rejected")
+	}
+}
