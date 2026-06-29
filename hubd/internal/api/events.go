@@ -59,6 +59,16 @@ func (d Deps) EventsHandler() http.HandlerFunc {
 		_, ch, cancel := d.Bcast.Subscribe()
 		defer cancel()
 
+		// M9: mark this principal online for the lifetime of the stream so the
+		// push dispatcher suppresses redundant Web-Push (Tier 3) while in-app
+		// alerts (Tier 1/2) are live. The defer fires on any stream exit
+		// (context-done, error, or return). Nil-guarded: Deps without a
+		// Presence (existing tests, push-disabled builds) are unaffected.
+		if d.Presence != nil {
+			d.Presence.Add(p.ID)
+			defer d.Presence.Remove(p.ID)
+		}
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
