@@ -53,7 +53,7 @@ type wsStateFrame struct {
 // active relay is not reflected until the browser reconnects.
 type relayStateInfo struct {
 	serverID    string
-	target      string           // canonical Target from the found session
+	target      string // canonical Target from the found session
 	sessionName string
 	seen        db.PrincipalSeen // snapshotted at connect time
 	seenOK      bool

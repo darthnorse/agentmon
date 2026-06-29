@@ -37,10 +37,10 @@ type Deps struct {
 	AuditRepo           AuditReader
 	HealthTimeout       time.Duration
 	TrustForwardedProto bool
-	Minter              directive.Minter // M4: mints hub→agent WS access directives
-	ExternalOrigin      string           // M4: WS upgrade Origin check
-	RelayPongWait       time.Duration    // M4 relay liveness; 0 → default (60s)
-	RelayPingPeriod     time.Duration    // M4 relay ping cadence; 0 → default (20s). Must be < RelayPongWait.
+	Minter              directive.Minter   // M4: mints hub→agent WS access directives
+	ExternalOrigin      string             // M4: WS upgrade Origin check
+	RelayPongWait       time.Duration      // M4 relay liveness; 0 → default (60s)
+	RelayPingPeriod     time.Duration      // M4 relay ping cadence; 0 → default (20s). Must be < RelayPongWait.
 	Proj                *state.Projection  // M7: in-memory projection for server/session state rollup
 	Seen                SeenStore          // M7: principal_seen persistence
 	Bcast               *state.Broadcaster // M7: fan-out broadcaster for SSE deltas

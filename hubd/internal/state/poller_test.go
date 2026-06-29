@@ -172,8 +172,8 @@ func TestPollerNormalPathUsesSessionTarget(t *testing.T) {
 		},
 		sessions: map[string][]shared.Session{
 			"s": {{
-				Name:   "api",
-				Target: label,
+				Name:    "api",
+				Target:  label,
 				Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}},
 			}},
 		},

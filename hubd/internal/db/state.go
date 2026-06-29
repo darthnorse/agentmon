@@ -9,9 +9,9 @@ import (
 // EventTs and ReceivedAt are pre-formatted strings stamped by the caller
 // (single-clock invariant: the hub stamps received_at; the agent stamps event_ts).
 type StateEvent struct {
-	ID, ServerID, TargetID, Session, Pane string
+	ID, ServerID, TargetID, Session, Pane   string
 	Source, RawEvent, DerivedState, Payload string
-	EventTs, ReceivedAt string
+	EventTs, ReceivedAt                     string
 }
 
 // AppendStateEvent inserts a new row into session_state_events.
@@ -47,4 +47,3 @@ func (d *DB) LatestSessionEvent(ctx context.Context, serverID, target, session s
 	}
 	return e, true, nil
 }
-

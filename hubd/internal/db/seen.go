@@ -7,7 +7,7 @@ import (
 
 // PrincipalSeen represents a row in the principal_seen table.
 // LastSeenEventID is empty string when the DB column is NULL.
-// TargetID is NOT NULL DEFAULT '' — pass "" to match the PK.
+// TargetID is NOT NULL with an empty-string default — pass "" to match the PK.
 type PrincipalSeen struct {
 	PrincipalID, ServerID, TargetID, Session string
 	LastSeenEventID, LastFocusedAt           string

@@ -276,7 +276,8 @@ func TestEventsHandler_PublishInRaceWindow(t *testing.T) {
 	}
 
 	cancel()
-	for sc.Scan() {} // drain until handler closes pipe
+	for sc.Scan() {
+	} // drain until handler closes pipe
 	select {
 	case <-handlerDone:
 	case <-time.After(2 * time.Second):
