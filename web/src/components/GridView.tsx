@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 // the non-focused tiles are hidden with display:none — sockets + scrollback survive.
 export function GridView() {
   const { panes, focusedId, focus, collapse, closePane } = usePanes();
+  // Guard against a stale focusedId pointing at a removed pane — fall back to grid view.
+  const focused = panes.find((p) => p.id === focusedId);
+  const activeId = focused ? focusedId : null;
 
   if (panes.length === 0) {
     return (
@@ -20,13 +23,13 @@ export function GridView() {
       <div
         className="grid h-full w-full gap-2 p-2"
         style={{
-          gridTemplateColumns: focusedId ? "1fr" : "repeat(auto-fit, minmax(360px, 1fr))",
+          gridTemplateColumns: activeId ? "1fr" : "repeat(auto-fit, minmax(360px, 1fr))",
           // when expanded, the grid collapses to one cell; hidden tiles take no space
         }}
       >
         {panes.map((p) => {
-          const expanded = focusedId === p.id;
-          const hidden = focusedId !== null && !expanded;
+          const expanded = activeId === p.id;
+          const hidden = activeId !== null && !expanded;
           return (
             <div
               key={p.id}
@@ -43,7 +46,7 @@ export function GridView() {
                   {expanded ? (
                     <Button variant="ghost" size="sm" onClick={() => collapse()}>⊟ grid</Button>
                   ) : (
-                    <Button variant="ghost" size="sm" onClick={() => focus(p.id)}>⤢</Button>
+                    <Button variant="ghost" size="sm" onClick={() => focus(p.id)} aria-label="Expand">⤢</Button>
                   )}
                   <Button variant="ghost" size="sm" onClick={() => closePane(p.id)} aria-label="Close">✕</Button>
                 </span>

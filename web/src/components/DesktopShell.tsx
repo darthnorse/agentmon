@@ -13,6 +13,10 @@ export function DesktopShell({
 }) {
   const openPane = usePanes((s) => s.openPane);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const noticeTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Clear the notice timer on unmount to avoid setState-on-unmounted-component.
+  React.useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
   function onOpen(row: SessionRow) {
     const r = openPane({
@@ -20,8 +24,9 @@ export function DesktopShell({
       session: row.session.name, serverName: row.server.name,
     });
     if (!r.ok && r.reason === "cap") {
+      clearTimeout(noticeTimer.current);
       setNotice(`Tile limit reached (${GRID_TILE_CAP}). Close a terminal to open another.`);
-      setTimeout(() => setNotice(null), 4000);
+      noticeTimer.current = setTimeout(() => setNotice(null), 4000);
     }
   }
 

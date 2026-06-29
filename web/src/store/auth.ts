@@ -1,6 +1,15 @@
 import { create } from "zustand";
 import type { SessionInfo } from "@/lib/contracts";
 import * as api from "@/lib/api-client";
+import { usePanes } from "@/store/panes";
+
+/** Reset panes + query cache without a static import cycle.
+ *  query-client.ts imports auth.ts (for useAuth), so auth.ts must not
+ *  statically import query-client.ts — use a lazy dynamic import instead. */
+function resetGridAndCache() {
+  usePanes.setState({ panes: [], focusedId: null });
+  void import("@/lib/query-client").then((m) => m.queryClient.clear());
+}
 
 export type AuthStatus = "unknown" | "authed" | "anon";
 
@@ -24,6 +33,7 @@ export const useAuth = create<AuthState>((set) => ({
   clear() {
     api.setCsrfToken("");
     set({ session: null, status: "anon" });
+    resetGridAndCache();
   },
   async signIn(username, password) {
     const info = await api.login(username, password);
@@ -36,6 +46,7 @@ export const useAuth = create<AuthState>((set) => ({
     } finally {
       api.setCsrfToken("");
       set({ session: null, status: "anon" });
+      resetGridAndCache();
     }
   },
   async bootstrap() {

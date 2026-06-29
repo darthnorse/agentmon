@@ -68,4 +68,17 @@ describe("api-client", () => {
     await expect(me()).rejects.toMatchObject({ status: 401, message: "invalid credentials" });
     expect((await me().catch((e) => e)) instanceof ApiError).toBe(true);
   });
+
+  it("throws ApiError (not SyntaxError) when the error body is non-JSON HTML (e.g. proxy 502)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<html>502 Bad Gateway</html>", { status: 502 })),
+    );
+    const err = await me().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(502);
+    // message must NOT be a SyntaxError blurb — it should be a plain string
+    expect(typeof (err as ApiError).message).toBe("string");
+    expect((err as ApiError).message).not.toMatch(/unexpected token/i);
+  });
 });

@@ -17,6 +17,7 @@ export function useTerminalSession(target: TerminalTarget) {
   const ctrlArmedRef = React.useRef(false);
   const [ctrlArmed, setCtrlArmed] = React.useState(false);
   const [connected, setConnected] = React.useState(false);
+  const [everConnected, setEverConnected] = React.useState(false);
 
   const send = React.useCallback((b: Uint8Array) => sockRef.current?.send(b), []);
 
@@ -40,6 +41,7 @@ export function useTerminalSession(target: TerminalTarget) {
       onData: (b) => xtermRef.current?.write(b),
       onOpen: () => {
         setConnected(true);
+        setEverConnected(true);
         xtermRef.current?.reset();           // fresh paint; snapshot arrives next as binary
         const size = xtermRef.current?.fit();
         if (size) sock.resize(size.cols, size.rows);
@@ -88,5 +90,5 @@ export function useTerminalSession(target: TerminalTarget) {
     },
   }), [ctrlArmed, send]);
 
-  return { xtermRef, controller, connected, handleData, handleResize };
+  return { xtermRef, controller, connected, everConnected, handleData, handleResize };
 }

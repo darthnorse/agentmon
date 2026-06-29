@@ -28,12 +28,9 @@ export const usePanes = create<PanesState>((set, get) => ({
   openPane(p) {
     const id = idOf(p);
     const existing = get().panes.find((x) => x.id === id);
-    if (existing) {
-      set({ focusedId: id }); // already open → just focus/expand
-      return { ok: true };
-    }
+    if (existing) return { ok: true }; // already open → no-op, do NOT change focusedId
     if (get().panes.length >= GRID_TILE_CAP) return { ok: false, reason: "cap" };
-    set((s) => ({ panes: [...s.panes, { ...p, id }], focusedId: id }));
+    set((s) => ({ panes: [...s.panes, { ...p, id }] })); // grid-first: leave focusedId as-is
     return { ok: true };
   },
   closePane(id) {

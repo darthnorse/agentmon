@@ -28,9 +28,15 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   const res = await fetch(BASE + path, init);
   const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    data = undefined; // non-JSON body (e.g. proxy HTML 502) — let the error path use statusText
+  }
   if (!res.ok) {
-    const msg = (data && typeof data.error === "string" && data.error) || res.statusText || "request failed";
+    const errData = data as Record<string, unknown> | undefined;
+    const msg = (errData && typeof errData.error === "string" && errData.error) || res.statusText || "request failed";
     throw new ApiError(res.status, msg);
   }
   return data as T;

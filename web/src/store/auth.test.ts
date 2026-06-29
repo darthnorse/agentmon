@@ -8,6 +8,7 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 import { useAuth } from "@/store/auth";
+import { usePanes } from "@/store/panes";
 import * as api from "@/lib/api-client";
 
 const info = { principalId: "p", username: "u", displayName: "U", csrfToken: "tok" };
@@ -45,5 +46,25 @@ describe("auth store", () => {
     await useAuth.getState().signOut();
     expect(useAuth.getState().status).toBe("anon");
     expect(api.setCsrfToken).toHaveBeenLastCalledWith("");
+  });
+
+  it("clear resets the panes grid", () => {
+    usePanes.setState({
+      panes: [{ id: "s:default:a:%0", serverId: "s", paneId: "%0", target: "default", session: "a", serverName: "h" }],
+      focusedId: "s:default:a:%0",
+    });
+    useAuth.getState().clear();
+    expect(usePanes.getState().panes).toHaveLength(0);
+    expect(usePanes.getState().focusedId).toBeNull();
+  });
+
+  it("signOut resets the panes grid", async () => {
+    (api.logout as any).mockResolvedValue(undefined);
+    usePanes.setState({
+      panes: [{ id: "s:default:a:%0", serverId: "s", paneId: "%0", target: "default", session: "a", serverName: "h" }],
+      focusedId: null,
+    });
+    await useAuth.getState().signOut();
+    expect(usePanes.getState().panes).toHaveLength(0);
   });
 });

@@ -38,7 +38,16 @@ export function ShellRoute() {
         </Button>
       </header>
       <div className="min-h-0 flex-1">
-        {isDesktop ? (
+        {serversQ.isLoading ? (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Loading…
+          </div>
+        ) : serversQ.isError ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-sm">
+            <span className="text-destructive">Failed to load servers.</span>
+            <Button variant="outline" size="sm" onClick={() => serversQ.refetch()}>Retry</Button>
+          </div>
+        ) : isDesktop ? (
           <DesktopShell rows={rows} query={query} onQueryChange={setQuery} />
         ) : (
           <SessionList

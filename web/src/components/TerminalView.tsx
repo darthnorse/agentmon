@@ -12,13 +12,13 @@ export function TerminalView({
   showKeyBar?: boolean;
 }) {
   const targetObj = React.useMemo(() => ({ serverId, paneId, target }), [serverId, paneId, target]);
-  const { xtermRef, controller, connected, handleData, handleResize } = useTerminalSession(targetObj);
+  const { xtermRef, controller, connected, everConnected, handleData, handleResize } = useTerminalSession(targetObj);
 
   return (
     <div className="relative flex h-full w-full flex-col">
       {!connected && (
         <div className="absolute left-0 right-0 top-0 z-10 bg-destructive px-2 py-1 text-center text-xs font-semibold text-destructive-foreground">
-          disconnected — reconnecting…
+          {everConnected ? "disconnected — reconnecting…" : "connecting…"}
         </div>
       )}
       <div className="min-h-0 flex-1">
