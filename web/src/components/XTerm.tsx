@@ -17,8 +17,8 @@ export interface XTermHandle {
 
 export const XTerm = React.forwardRef<
   XTermHandle,
-  { onData(d: string): void; onResize(cols: number, rows: number): void }
->(function XTerm({ onData, onResize }, ref) {
+  { onData(d: string): void; onResize(cols: number, rows: number): void; fontSize?: number }
+>(function XTerm({ onData, onResize, fontSize = 13 }, ref) {
   const hostRef = React.useRef<HTMLDivElement>(null);
   const termRef = React.useRef<Terminal | null>(null);
   const fitRef = React.useRef<FitAddon | null>(null);
@@ -47,7 +47,7 @@ export const XTerm = React.forwardRef<
   React.useEffect(() => {
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize,
       scrollback: 5000,
       fontFamily: "Menlo, Consolas, monospace",
       theme: { background: "#111418", foreground: "#cdd6e0" },

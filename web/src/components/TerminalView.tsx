@@ -4,12 +4,13 @@ import { MobileKeyBar } from "@/components/MobileKeyBar";
 import { useTerminalSession } from "@/hooks/useTerminalSession";
 
 export function TerminalView({
-  serverId, paneId, target, showKeyBar = false,
+  serverId, paneId, target, showKeyBar = false, fontSize,
 }: {
   serverId: string;
   paneId: string;
   target: string;
   showKeyBar?: boolean;
+  fontSize?: number;
 }) {
   const targetObj = React.useMemo(() => ({ serverId, paneId, target }), [serverId, paneId, target]);
   const { xtermRef, controller, connected, everConnected, handleData, handleResize } = useTerminalSession(targetObj);
@@ -22,7 +23,7 @@ export function TerminalView({
         </div>
       )}
       <div className="min-h-0 flex-1">
-        <XTerm ref={xtermRef} onData={handleData} onResize={handleResize} />
+        <XTerm ref={xtermRef} onData={handleData} onResize={handleResize} fontSize={fontSize} />
       </div>
       {showKeyBar && <MobileKeyBar controller={controller} />}
     </div>
