@@ -277,8 +277,10 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 
 	p.proj.ReplaceServer(id, views)
 
-	for _, c := range toPublish {
-		p.bcast.Publish(c)
+	if p.bcast != nil {
+		for _, c := range toPublish {
+			p.bcast.Publish(c)
+		}
 	}
 }
 
@@ -366,8 +368,10 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 
 	p.proj.ReplaceServer(srv.ID, views)
 
-	for _, c := range toPublish {
-		p.bcast.Publish(c)
+	if p.bcast != nil {
+		for _, c := range toPublish {
+			p.bcast.Publish(c)
+		}
 	}
 }
 

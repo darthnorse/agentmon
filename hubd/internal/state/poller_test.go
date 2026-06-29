@@ -416,13 +416,10 @@ func TestPollerBackoffDoublesAndResets(t *testing.T) {
 	}
 }
 
-// TestPollerPublishesOnChange: first tick of a new session publishes a Change;
-// an identical second tick (no new event, no global change) publishes nothing.
-func TestPollerPublishesOnChange(t *testing.T) {
-	bcast := NewBroadcaster()
-	_, ch, cancel := bcast.Subscribe()
-	defer cancel()
-
+// newBroadcastFixture builds a poller wired to the given broadcaster, with a
+// single session ("api") whose pane+session carry the target label so tests can
+// assert Change.Target is propagated (not just defaulted to "").
+func newBroadcastFixture(bcast *Broadcaster, label string) (*Poller, *fakeAgent, *fakeStore, *Projection) {
 	lister := &fakeLister{
 		servers: []registry.ServerSummary{{ID: "s"}},
 		get:     map[string]db.Server{"s": {ID: "s", URL: "http://x", Bearer: "b"}},
@@ -430,7 +427,7 @@ func TestPollerPublishesOnChange(t *testing.T) {
 	agent := &fakeAgent{
 		state: map[string]shared.AgentState{
 			"s": {Panes: []shared.PaneState{{
-				Target:        "",
+				Target:        label,
 				Pane:          "%0",
 				State:         shared.StateDone,
 				TransitionSeq: 1,
@@ -439,20 +436,31 @@ func TestPollerPublishesOnChange(t *testing.T) {
 			}}},
 		},
 		sessions: map[string][]shared.Session{
-			"s": {{Name: "api", Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}},
+			"s": {{Name: "api", Target: label, Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}},
 		},
 	}
 	store := &fakeStore{}
 	proj := NewProjection()
 	clk := time.Unix(100, 0)
 	p := NewPoller(lister, agent, store, proj, time.Second, func() time.Time { return clk }, bcast)
+	return p, agent, store, proj
+}
+
+// TestPollerPublishesOnChange: first tick of a new session publishes a Change;
+// an identical second tick (no new event, no global change) publishes nothing.
+func TestPollerPublishesOnChange(t *testing.T) {
+	const label = "default"
+	bcast := NewBroadcaster()
+	_, ch, cancel := bcast.Subscribe()
+	defer cancel()
+	p, _, _, _ := newBroadcastFixture(bcast, label)
 
 	// Tick 1: session first seen → global changes (none→done) → must publish.
 	p.Tick(context.Background())
 
 	select {
 	case c := <-ch:
-		if c.ServerID != "s" || c.Session != "api" || c.Global != shared.StateDone {
+		if c.ServerID != "s" || c.Target != label || c.Session != "api" || c.Global != shared.StateDone {
 			t.Fatalf("tick 1: unexpected Change: %+v", c)
 		}
 	default:
@@ -467,5 +475,40 @@ func TestPollerPublishesOnChange(t *testing.T) {
 		t.Fatalf("tick 2: unexpected Change on unchanged tick: %+v", c)
 	default:
 		// correct: nothing published
+	}
+}
+
+// TestPollerPublishesDoneReAlert locks the done→done re-alert publish path: a
+// session that stays `done` but lands a NEW finished turn (DoneSeq bumps, so an
+// event is written) must publish a Change on that tick — exercising the
+// committedSessions arm of the publish condition, not just the first-seen arm.
+func TestPollerPublishesDoneReAlert(t *testing.T) {
+	const label = "default"
+	bcast := NewBroadcaster()
+	_, ch, cancel := bcast.Subscribe()
+	defer cancel()
+	p, fa, _, _ := newBroadcastFixture(bcast, label)
+
+	// Tick 1: first-seen done → publishes; drain it.
+	p.Tick(context.Background())
+	select {
+	case <-ch:
+	default:
+		t.Fatal("tick 1: expected first-seen Change, got none")
+	}
+
+	// Tick 2: still done, but a NEW finished turn lands (DoneSeq 1→2) so commit
+	// writes an event. Global is unchanged (done) — only the committedSessions arm
+	// can fire here.
+	pollerSetDoneSeq(fa, "s", "%0", 2)
+	p.Tick(context.Background())
+
+	select {
+	case c := <-ch:
+		if c.ServerID != "s" || c.Target != label || c.Session != "api" || c.Global != shared.StateDone {
+			t.Fatalf("tick 2 re-alert: unexpected Change: %+v", c)
+		}
+	default:
+		t.Fatal("tick 2 re-alert: expected a Change on done→done re-alert, got none")
 	}
 }
