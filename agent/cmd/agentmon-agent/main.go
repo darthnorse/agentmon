@@ -5,11 +5,13 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 
 	"agentmon/agent/internal/api"
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/directive"
+	"agentmon/agent/internal/hooks"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
 	"agentmon/shared"
@@ -18,6 +20,21 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "hooks":
+			if err := hooksMain(os.Args[2:], os.Stdout); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case "hook-test":
+			if err := hookTestMain(os.Args[2:], os.Stdout); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+	}
+
 	cfgPath := flag.String("config", "/etc/agentmon/agent.toml", "path to agent.toml")
 	flag.Parse()
 
@@ -54,6 +71,16 @@ func main() {
 		Tune: tmux.TuneSession,
 	}
 	mux.Handle("GET /panes/{paneId}/io", api.RequireBearer(cfg.HubToken, paneIO.Handler()))
+
+	if cfg.HookToken != "" {
+		if cfg.HookTokenFile != "" {
+			if err := hooks.WriteTokenFile(cfg.HookTokenFile, cfg.HookToken); err != nil {
+				log.Fatalf("hook token file: %v", err)
+			}
+		}
+		mux.Handle("POST /hook", hooks.RequireHookAuth(cfg.HookToken, hooks.HookHandler(cfg, machine, nil)))
+		log.Printf("hook intake enabled at POST /hook")
+	}
 
 	log.Printf("agentmon-agent %s listening on %s (server %s)", version, cfg.Listen, cfg.ServerID)
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
