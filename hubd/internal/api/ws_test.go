@@ -20,6 +20,7 @@ import (
 	"agentmon/hubd/internal/db"
 	hubdirective "agentmon/hubd/internal/directive"
 	"agentmon/hubd/internal/registry"
+	"agentmon/hubd/internal/state"
 	"agentmon/shared"
 )
 
@@ -462,4 +463,134 @@ func TestRelayRaceUnderConcurrentTraffic(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	wg.Wait()
+}
+
+// TestRelayStateFrameDeliveredAndInterleaved verifies the M7 state-frame injection:
+//  1. A {t:"state"} JSON text frame is pushed to the browser when the broadcaster
+//     publishes a Change for the relay's session (TDD: RED before the refactor, GREEN after).
+//  2. Binary terminal frames still pass through after a state frame.
+//  3. Changes for other servers/sessions are filtered and do not reach the browser.
+//
+// The fake agent serves both the WS pane endpoint and GET /sessions so that the
+// handler can resolve pane %3 → session "test-session" and subscribe to the broadcaster.
+func TestRelayStateFrameDeliveredAndInterleaved(t *testing.T) {
+	upFake := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	rec := &dialRecord{}
+
+	// WS relay endpoint — same behaviour as fakeAgentWS.
+	mux.HandleFunc("GET /panes/{paneId}/io", func(w http.ResponseWriter, r *http.Request) {
+		rec.mu.Lock()
+		rec.paneID = r.PathValue("paneId")
+		rec.mu.Unlock()
+		c, err := upFake.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_ = c.WriteMessage(websocket.BinaryMessage, []byte("SNAP"))
+		for {
+			mt, data, err := c.ReadMessage()
+			if err != nil {
+				break
+			}
+			rec.append(data)
+			_ = c.WriteMessage(mt, data) // echo
+		}
+	})
+
+	// Sessions endpoint — returns session "test-session" containing pane %3.
+	mux.HandleFunc("GET /sessions", func(w http.ResponseWriter, r *http.Request) {
+		sess := shared.SessionList{Sessions: []shared.Session{{
+			Name:   "test-session",
+			Target: "default",
+			Windows: []shared.Window{{
+				ID: "1", Index: "0", Name: "win",
+				Panes: []shared.Pane{{ID: "%3"}},
+			}},
+		}}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sess)
+	})
+
+	agent := httptest.NewServer(mux)
+	defer agent.Close()
+
+	bcast := state.NewBroadcaster()
+	d := relayDeps(agent.URL, "bearer-xyz", "sk-123", &recSink{})
+	d.Bcast = bcast
+	// d.Seen is nil → no seen row → SeenProject returns global state unchanged.
+
+	hub := relayServer(d, authz.Principal{ID: "u1"})
+	defer hub.Close()
+
+	c, _, err := dialBrowser(t, hub, "/api/v1/servers/aigallery/panes/%253/io?target=default", testOrigin)
+	if err != nil {
+		t.Fatalf("browser dial: %v", err)
+	}
+	defer c.Close()
+	c.SetReadLimit(1 << 20)
+
+	// 1) Read SNAP — confirms the relay is fully up and the browser-writer goroutine
+	//    (G3) has completed one iteration of its loop (SNAP: agent→G2→agentFrames→G3→browser).
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mt, data, err := c.ReadMessage()
+	if err != nil || mt != websocket.BinaryMessage || string(data) != "SNAP" {
+		t.Fatalf("snapshot: mt=%d data=%q err=%v", mt, data, err)
+	}
+
+	// 2) Publish a state change for the relay's session.  The subscription channel
+	//    is buffered (cap 64), so this is safe even if G3 is momentarily between
+	//    loop iterations.
+	bcast.Publish(state.Change{
+		ServerID:         "aigallery",
+		Target:           "default",
+		Session:          "test-session",
+		Global:           shared.StateDone,
+		LatestReceivedAt: "2024-01-01 00:00:00.000",
+	})
+
+	// 3) G3 must deliver a JSON text frame for the state change.
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mt, data, err = c.ReadMessage()
+	if err != nil {
+		t.Fatalf("read state frame: %v", err)
+	}
+	if mt != websocket.TextMessage {
+		t.Fatalf("state frame: want TextMessage (type 1), got %d; data=%q", mt, data)
+	}
+	var sf wsStateFrame
+	if err := json.Unmarshal(data, &sf); err != nil {
+		t.Fatalf("unmarshal state frame %q: %v", data, err)
+	}
+	// d.Seen is nil → no seen row → SeenProject passes StateDone through unchanged.
+	if sf.T != "state" || sf.State != shared.StateDone || sf.Session != "test-session" {
+		t.Fatalf("state frame mismatch: got %+v, want {t:state state:done session:test-session}", sf)
+	}
+
+	// 4) Binary terminal data still passes through after a state frame.
+	if err := c.WriteMessage(websocket.BinaryMessage, []byte("after-state")); err != nil {
+		t.Fatalf("write after-state: %v", err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mt, data, err = c.ReadMessage()
+	if err != nil || mt != websocket.BinaryMessage || string(data) != "after-state" {
+		t.Fatalf("binary echo after state frame: mt=%d data=%q err=%v", mt, data, err)
+	}
+
+	// 5) Changes for other sessions/servers must be filtered — not forwarded.
+	//    Publish two noise changes, then confirm the relay is still alive with
+	//    a round-trip binary frame (which would appear between noise changes if
+	//    any leaked through).
+	bcast.Publish(state.Change{ServerID: "other", Target: "default", Session: "other-session", Global: shared.StateWorking})
+	bcast.Publish(state.Change{ServerID: "aigallery", Target: "default", Session: "other-session", Global: shared.StateIdle})
+
+	if err := c.WriteMessage(websocket.BinaryMessage, []byte("still-alive")); err != nil {
+		t.Fatalf("write still-alive: %v", err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mt, data, err = c.ReadMessage()
+	if err != nil || mt != websocket.BinaryMessage || string(data) != "still-alive" {
+		t.Fatalf("still-alive echo: mt=%d data=%q err=%v", mt, data, err)
+	}
 }
