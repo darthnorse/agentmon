@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"agentmon/agent/internal/config"
+	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
 	"agentmon/shared"
 )
@@ -17,7 +18,9 @@ type Discoverer func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Sess
 
 // SessionsHandler serves GET /sessions?target=<label>. Target resolves via config
 // (empty → default); discovery runs through the injected Discoverer.
-func SessionsHandler(cfg config.Config, discover Discoverer) http.HandlerFunc {
+// m is the state machine used to stamp each session's rolled-up state;
+// a nil machine leaves every session with StateUnknown (hooks disabled).
+func SessionsHandler(cfg config.Config, discover Discoverer, m *state.Machine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		t, ok := cfg.ResolveTarget(r.URL.Query().Get("target"))
 		if !ok {
@@ -37,8 +40,27 @@ func SessionsHandler(cfg config.Config, discover Discoverer) http.HandlerFunc {
 		if sessions == nil {
 			sessions = []shared.Session{}
 		}
+		stampState(m, t.Label, sessions)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(shared.SessionList{Sessions: sessions})
+	}
+}
+
+// stampState fills Session.State from the machine's per-pane states (rolled up).
+// A nil machine (hooks disabled) leaves every session StateUnknown.
+func stampState(m *state.Machine, target string, sessions []shared.Session) {
+	for i := range sessions {
+		if m == nil {
+			sessions[i].State = shared.StateUnknown
+			continue
+		}
+		var panes []string
+		for _, win := range sessions[i].Windows {
+			for _, p := range win.Panes {
+				panes = append(panes, p.ID)
+			}
+		}
+		sessions[i].State = m.Rollup(target, panes)
 	}
 }
 

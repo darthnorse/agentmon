@@ -10,6 +10,7 @@ import (
 	"agentmon/agent/internal/api"
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/directive"
+	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
 	"agentmon/shared"
 )
@@ -35,10 +36,12 @@ func main() {
 		return tmux.Discover(ctx, tmux.ExecRunner, opts)
 	}
 
+	machine := state.New(nil)
+
 	_, tmuxErr := exec.LookPath("tmux")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.HealthHandler(cfg.ServerID, version, tmuxErr == nil))
-	mux.Handle("GET /sessions", api.RequireBearer(cfg.HubToken, api.SessionsHandler(cfg, discover)))
+	mux.Handle("GET /sessions", api.RequireBearer(cfg.HubToken, api.SessionsHandler(cfg, discover, machine)))
 
 	paneIO := &api.PaneIO{
 		Cfg:      cfg,
