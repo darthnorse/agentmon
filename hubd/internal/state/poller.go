@@ -300,8 +300,9 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 		for _, v := range views {
 			prior, hasPrior := p.proj.Session(v.ServerID, v.Target, v.Session)
 			if !hasPrior || prior.Global != v.Global || committedSessions[v.Session] {
-				if _, reseeded := reseedTS[v.Session]; reseeded {
-					continue // hub restart: no real change, suppress publish
+				if _, reseeded := reseedTS[v.Session]; reseeded && !committedSessions[v.Session] {
+					continue // hub restart with no real change: suppress publish (but a
+					// genuine transition on any pane of the session still broadcasts)
 				}
 				toPublish = append(toPublish, Change{
 					ServerID:         v.ServerID,
