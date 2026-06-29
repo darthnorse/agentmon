@@ -84,10 +84,21 @@ func HookHandler(cfg config.Config, m *state.Machine, now func() time.Time) http
 			Name:             body.HookEventName,
 			NotificationKind: body.NotificationType,
 			ClaudeSessionID:  body.SessionID,
+			Epoch:            epochFromTmux(r.Header.Get("X-AgentMon-Tmux")),
 			At:               now(),
 		})
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// epochFromTmux extracts the tmux server pid (field 2 of $TMUX
+// "<path>,<pid>,<idx>"). "" when absent/malformed — epoch is best-effort.
+func epochFromTmux(tmuxEnv string) string {
+	parts := strings.SplitN(tmuxEnv, ",", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 // socketFromTmux extracts the socket name from $TMUX ("<path>,<pid>,<idx>"): the
