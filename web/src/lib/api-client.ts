@@ -1,4 +1,4 @@
-import type { ServerSummary, SessionInfo, Session } from "@/lib/contracts";
+import type { ServerSummary, SessionInfo, Session, SeenRequest } from "@/lib/contracts";
 
 const BASE = "/api/v1";
 
@@ -57,3 +57,5 @@ export const listSessions = (serverId: string, target?: string) =>
     `/servers/${encodeURIComponent(serverId)}/sessions` +
       (target ? `?target=${encodeURIComponent(target)}` : ""),
   );
+
+export const postSeen = (req: SeenRequest) => request<void>("POST", "/seen", req);
