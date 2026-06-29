@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -238,5 +239,100 @@ func TestServerSessionsPrePollFallback(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].State != shared.StateWorking {
 		t.Fatalf("fallback: want state=%q, got %+v", shared.StateWorking, got)
+	}
+}
+
+// TestServerSessionsSeenProjection_DonePlusSeen_YieldsIdle: a session with
+// projection Global=done and a seen row (LastFocusedAt >= LatestReceivedAt) for
+// the requesting principal must render state=idle (B3 seen projection).
+func TestServerSessionsSeenProjection_DonePlusSeen_YieldsIdle(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(401)
+			return
+		}
+		w.Write([]byte(`{"sessions":[{"name":"api","server":"s","target":"","state":"unknown","cwd":"/","command":"claude","windows":[]}]}`))
+	}))
+	defer ts.Close()
+
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{
+		ServerID:         "s",
+		Target:           "",
+		Session:          "api",
+		Global:           shared.StateDone,
+		LatestReceivedAt: "2026-01-01T10:00:00.000",
+	})
+
+	seenStore := &fakeSeenStore{}
+	_ = seenStore.UpsertSeen(context.Background(), db.PrincipalSeen{
+		PrincipalID:   "u1",
+		ServerID:      "s",
+		TargetID:      "",
+		Session:       "api",
+		LastFocusedAt: "2026-01-01T10:00:01.000", // after LatestReceivedAt → done→idle
+	})
+
+	d := depsWith(db.Server{ID: "s", URL: ts.URL, Bearer: "tok", Status: "active"})
+	d.Proj = proj
+	d.Seen = seenStore
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s/sessions", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerSessionsHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got []shared.Session
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].State != shared.StateIdle {
+		t.Fatalf("seen projection: want state=%q, got %+v", shared.StateIdle, got)
+	}
+}
+
+// TestServerSessionsSeenProjection_DoneNoSeen_YieldsDone: a session with
+// projection Global=done and NO seen row for the requesting principal must
+// render state=done (pass-through — no seen projection applied).
+func TestServerSessionsSeenProjection_DoneNoSeen_YieldsDone(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(401)
+			return
+		}
+		w.Write([]byte(`{"sessions":[{"name":"api","server":"s","target":"","state":"unknown","cwd":"/","command":"claude","windows":[]}]}`))
+	}))
+	defer ts.Close()
+
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{
+		ServerID:         "s",
+		Target:           "",
+		Session:          "api",
+		Global:           shared.StateDone,
+		LatestReceivedAt: "2026-01-01T10:00:00.000",
+	})
+
+	d := depsWith(db.Server{ID: "s", URL: ts.URL, Bearer: "tok", Status: "active"})
+	d.Proj = proj
+	d.Seen = &fakeSeenStore{} // empty — no seen row
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s/sessions", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerSessionsHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got []shared.Session
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].State != shared.StateDone {
+		t.Fatalf("no-seen passthrough: want state=%q, got %+v", shared.StateDone, got)
 	}
 }

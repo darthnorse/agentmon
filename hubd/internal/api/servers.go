@@ -59,11 +59,12 @@ func (d Deps) authorizeOr403(w http.ResponseWriter, r *http.Request, action auth
 	return p, true
 }
 
-// serverRollup returns the §9.2 rollup of a server's session states from the
-// projection (empty string when the projection is nil or has no sessions yet,
-// so json:"state,omitempty" suppresses the field rather than emitting a
-// misleading "unknown").
-func (d Deps) serverRollup(serverID string) shared.State {
+// serverRollup returns the §9.2 rollup of a server's per-principal
+// seen-projected session states from the projection (empty string when the
+// projection is nil or has no sessions yet, so json:"state,omitempty" suppresses
+// the field rather than emitting a misleading "unknown"). GetSeen errors are
+// non-fatal: treated as "no seen row" so the global state passes through.
+func (d Deps) serverRollup(ctx context.Context, principalID, serverID string) shared.State {
 	if d.Proj == nil {
 		return ""
 	}
@@ -73,7 +74,14 @@ func (d Deps) serverRollup(serverID string) shared.State {
 	}
 	states := make([]shared.State, 0, len(views))
 	for _, v := range views {
-		states = append(states, v.Global)
+		var (
+			ps  db.PrincipalSeen
+			has bool
+		)
+		if d.Seen != nil {
+			ps, has, _ = d.Seen.GetSeen(ctx, principalID, serverID, v.Target, v.Session)
+		}
+		states = append(states, state.SeenProject(v.Global, v.LatestReceivedAt, ps, has))
 	}
 	return shared.RollUp(states...)
 }
@@ -82,7 +90,8 @@ func (d Deps) serverRollup(serverID string) shared.State {
 // then return the full list of server summaries as JSON.
 func (d Deps) ServersHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*"); !ok {
+		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*")
+		if !ok {
 			return
 		}
 		list, err := d.Reg.List(r.Context())
@@ -91,7 +100,7 @@ func (d Deps) ServersHandler() http.HandlerFunc {
 			return
 		}
 		for i := range list {
-			list[i].State = d.serverRollup(list[i].ID)
+			list[i].State = d.serverRollup(r.Context(), p.ID, list[i].ID)
 		}
 		writeJSON(w, http.StatusOK, list)
 	}
@@ -102,7 +111,8 @@ func (d Deps) ServersHandler() http.HandlerFunc {
 func (d Deps) ServerHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:"+id); !ok {
+		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:"+id)
+		if !ok {
 			return
 		}
 		srv, ok, err := d.Reg.Get(r.Context(), id)
@@ -122,7 +132,7 @@ func (d Deps) ServerHandler() http.HandlerFunc {
 			Labels:  registry.LabelsOrEmpty(srv.Labels),
 			Enabled: true,
 			Healthy: d.Agent.Health(ctx, srv),
-			State:   d.serverRollup(srv.ID),
+			State:   d.serverRollup(ctx, p.ID, srv.ID),
 		})
 	}
 }

@@ -27,6 +27,45 @@ func withPrincipal(r *http.Request, p authz.Principal) *http.Request {
 	return r.WithContext(authn.ContextWithPrincipal(r.Context(), p))
 }
 
+// fakeSeenStore is an in-memory SeenStore for unit tests.
+type fakeSeenStore struct {
+	rows map[string]db.PrincipalSeen
+}
+
+func seenKey(principalID, serverID, target, session string) string {
+	return principalID + "|" + serverID + "|" + target + "|" + session
+}
+
+func (f *fakeSeenStore) UpsertSeen(_ context.Context, s db.PrincipalSeen) error {
+	if f.rows == nil {
+		f.rows = map[string]db.PrincipalSeen{}
+	}
+	f.rows[seenKey(s.PrincipalID, s.ServerID, s.TargetID, s.Session)] = s
+	return nil
+}
+
+func (f *fakeSeenStore) GetSeen(_ context.Context, principalID, serverID, target, session string) (db.PrincipalSeen, bool, error) {
+	if f.rows == nil {
+		return db.PrincipalSeen{}, false, nil
+	}
+	s, ok := f.rows[seenKey(principalID, serverID, target, session)]
+	return s, ok, nil
+}
+
+func (f *fakeSeenStore) ListSeenForPrincipal(_ context.Context, principalID string) ([]db.PrincipalSeen, error) {
+	var out []db.PrincipalSeen
+	for _, s := range f.rows {
+		if s.PrincipalID == principalID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeSeenStore) LatestSessionEvent(_ context.Context, _, _, _ string) (db.StateEvent, bool, error) {
+	return db.StateEvent{}, false, nil
+}
+
 func testDeps(reg *registry.Registry) Deps {
 	return Deps{Reg: reg, Agent: registry.NewClient(time.Second),
 		Audit: audit.NewRecorder(nopSink{}), HealthTimeout: time.Second}
@@ -96,7 +135,7 @@ func TestServerRollupEmptyNonNilProjectionNoUnknown(t *testing.T) {
 	d := testDeps(registry.New(fakeStore{}))
 	d.Proj = state.NewProjection() // non-nil but empty
 
-	got := d.serverRollup("any-server")
+	got := d.serverRollup(context.Background(), "", "any-server")
 	if got != "" {
 		t.Fatalf("empty projection must return \"\", got %q (json would emit \"state\":%q)", got, got)
 	}
@@ -163,5 +202,120 @@ func TestServerDetailHasRollupState(t *testing.T) {
 	}
 	if got.State != shared.StateBlocked {
 		t.Fatalf("rollup: want state=%q, got %q", shared.StateBlocked, got.State)
+	}
+}
+
+// TestServerRollupSeenProjection_SeenPrincipalGetsIdle: a server whose only
+// session has projection Global=done, when the requesting principal has a seen
+// row (LastFocusedAt >= LatestReceivedAt), the GET /servers/{id} state reads idle.
+// A principal with no seen row reads done (B3 per-principal seen projection).
+func TestServerRollupSeenProjection_SeenPrincipalGetsIdle(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK) // minimal agent stub for health check
+	}))
+	defer ts.Close()
+
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{
+		ServerID:         "s",
+		Target:           "",
+		Session:          "api",
+		Global:           shared.StateDone,
+		LatestReceivedAt: "2026-01-01T10:00:00.000",
+	})
+
+	seenStore := &fakeSeenStore{}
+	_ = seenStore.UpsertSeen(context.Background(), db.PrincipalSeen{
+		PrincipalID:   "u1",
+		ServerID:      "s",
+		TargetID:      "",
+		Session:       "api",
+		LastFocusedAt: "2026-01-01T10:00:01.000", // after LatestReceivedAt → masks done→idle
+	})
+
+	reg := registry.New(fakeStore{servers: map[string]db.Server{
+		"s": {ID: "s", Name: "S", URL: ts.URL, Bearer: "tok", Status: "active"},
+	}})
+	d := testDeps(reg)
+	d.Proj = proj
+	d.Seen = seenStore
+
+	// principal u1 has seen the session → rollup must be idle
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got registry.ServerDetail
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.State != shared.StateIdle {
+		t.Fatalf("seen principal: want state=%q, got %q", shared.StateIdle, got.State)
+	}
+
+	// principal u2 has NOT seen the session → rollup must still be done
+	r2 := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s", nil), authz.Principal{ID: "u2"})
+	r2.SetPathValue("id", "s")
+	w2 := httptest.NewRecorder()
+	d.ServerHandler()(w2, r2)
+
+	if w2.Code != 200 {
+		t.Fatalf("code %d body %s", w2.Code, w2.Body)
+	}
+	var got2 registry.ServerDetail
+	if err := json.NewDecoder(w2.Body).Decode(&got2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got2.State != shared.StateDone {
+		t.Fatalf("unseen principal: want state=%q, got %q", shared.StateDone, got2.State)
+	}
+}
+
+// TestServersListSeenProjection: GET /servers list reflects per-principal seen
+// projection — the State field in the list entry is idle for a principal who
+// has seen the only done session.
+func TestServersListSeenProjection(t *testing.T) {
+	proj := state.NewProjection()
+	proj.Set(state.SessionView{
+		ServerID:         "s",
+		Target:           "",
+		Session:          "api",
+		Global:           shared.StateDone,
+		LatestReceivedAt: "2026-01-01T10:00:00.000",
+	})
+
+	seenStore := &fakeSeenStore{}
+	_ = seenStore.UpsertSeen(context.Background(), db.PrincipalSeen{
+		PrincipalID:   "u1",
+		ServerID:      "s",
+		TargetID:      "",
+		Session:       "api",
+		LastFocusedAt: "2026-01-01T10:00:01.000",
+	})
+
+	reg := registry.New(fakeStore{servers: map[string]db.Server{
+		"s": {ID: "s", Name: "S", URL: "http://x", Status: "active"},
+	}})
+	d := testDeps(reg)
+	d.Proj = proj
+	d.Seen = seenStore
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers", nil), authz.Principal{ID: "u1"})
+	w := httptest.NewRecorder()
+	d.ServersHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got []registry.ServerSummary
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].State != shared.StateIdle {
+		t.Fatalf("seen list projection: want state=%q, got %+v", shared.StateIdle, got)
 	}
 }
