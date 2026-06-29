@@ -61,15 +61,23 @@ func (b *Broadcaster) Subscribe() (id uint64, ch <-chan Change, cancel func()) {
 
 // Publish fans c out to every subscriber without blocking.
 //
-// Drop-oldest semantics: if a subscriber's buffer is full we drain the oldest
-// queued item and enqueue c so the freshest state always wins.  Both
-// operations are guaranteed non-blocking under the lock:
-//   - <-ch succeeds because len(ch)==cap(ch) (the non-blocking send just failed)
-//   - ch<-c succeeds because we just freed exactly one slot
+// Drop-oldest semantics: if a subscriber's buffer is full we evict the oldest
+// queued item and enqueue c so the freshest state always wins.
 //
-// No other goroutine can send to or close any ch while b.mu is held:
-// Publish itself holds the lock, and cancel() also acquires b.mu before
-// closing/deleting.  This rules out send-on-closed-channel panics and races.
+// Both the eviction and the send are non-blocking. The subtle part is WHY the
+// send can't block. We hold b.mu, and Publish is the ONLY sender (close also
+// happens under b.mu in cancel). Consumers receive WITHOUT the lock, so they
+// can only REMOVE items between our statements — never add. Therefore:
+//   - The eviction MUST be non-blocking: a consumer may have drained the buffer
+//     since the failed send, so a plain `<-ch` could block forever (deadlock:
+//     Publish stuck holding the lock, no one can ever send again). We use a
+//     select/default so it removes at most one item and never waits.
+//   - After the non-blocking eviction the buffer holds <= cap-1 items, and
+//     because we are the sole sender and consumers only remove, it stays
+//     <= cap-1 until our send. So `ch <- c` is guaranteed not to block.
+//
+// No other goroutine can send to or close any ch while b.mu is held, which also
+// rules out send-on-closed-channel panics.
 //
 // Subscribers that fall behind see only the latest cap(ch) changes; a
 // subsequent SSE or WS full-state snapshot reconciles any gaps.
@@ -81,9 +89,13 @@ func (b *Broadcaster) Publish(c Change) {
 		select {
 		case ch <- c:
 		default:
-			// Buffer full: evict oldest, enqueue newest.
-			<-ch    // non-blocking: buffer was full, so at least one item is present
-			ch <- c // non-blocking: we just freed one slot; no other sender under lock
+			// Buffer full: evict oldest (non-blocking — a racing consumer may
+			// have already drained it), then enqueue newest.
+			select {
+			case <-ch:
+			default:
+			}
+			ch <- c // non-blocking: sole sender under lock + consumer-only-removes ⇒ room exists
 		}
 	}
 }
