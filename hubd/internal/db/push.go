@@ -50,11 +50,23 @@ func (d *DB) ListSubscriptionsForPrincipal(ctx context.Context, principalID stri
 	return out, rows.Err()
 }
 
-// DeleteSubscription removes the subscription with the given endpoint. Deleting
-// an absent endpoint is a no-op (no error).
+// DeleteSubscription removes the subscription with the given endpoint regardless
+// of owner. This is the system-initiated prune used by the push dispatcher when
+// the push service reports an endpoint expired (404/410). Deleting an absent
+// endpoint is a no-op (no error).
 func (d *DB) DeleteSubscription(ctx context.Context, endpoint string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`DELETE FROM push_subscriptions WHERE endpoint=?`, endpoint)
+	return err
+}
+
+// DeleteSubscriptionForPrincipal removes the principal's OWN subscription with
+// the given endpoint. This is the user-initiated unsubscribe; scoping by
+// principal_id stops a principal removing another principal's subscription by
+// its (capability-URL) endpoint. Deleting an absent/foreign endpoint is a no-op.
+func (d *DB) DeleteSubscriptionForPrincipal(ctx context.Context, principalID, endpoint string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`DELETE FROM push_subscriptions WHERE principal_id=? AND endpoint=?`, principalID, endpoint)
 	return err
 }
 

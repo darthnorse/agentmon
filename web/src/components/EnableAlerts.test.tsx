@@ -33,7 +33,7 @@ describe("EnableAlerts", () => {
     (push.pushSupported as any).mockReturnValue(true);
     (push.enablePush as any).mockResolvedValue(true);
     const fakeReg = {} as ServiceWorkerRegistration;
-    (navigator as any).serviceWorker = { ready: Promise.resolve(fakeReg) };
+    (navigator as any).serviceWorker = { getRegistration: () => Promise.resolve(fakeReg) };
 
     render(<EnableAlerts />);
     await userEvent.click(screen.getByRole("button", { name: /enable alerts/i }));
@@ -47,12 +47,28 @@ describe("EnableAlerts", () => {
   it("reflects a denied/failed enrolment without throwing", async () => {
     (push.pushSupported as any).mockReturnValue(true);
     (push.enablePush as any).mockResolvedValue(false);
-    (navigator as any).serviceWorker = { ready: Promise.resolve({} as ServiceWorkerRegistration) };
+    (navigator as any).serviceWorker = { getRegistration: () => Promise.resolve({} as ServiceWorkerRegistration) };
 
     render(<EnableAlerts />);
     await userEvent.click(screen.getByRole("button", { name: /enable alerts/i }));
 
     await waitFor(() => expect(push.enablePush).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText(/blocked/i)).toBeInTheDocument());
+  });
+
+  it("does not hang and shows blocked when no service worker is registered", async () => {
+    (push.pushSupported as any).mockReturnValue(true);
+    // `.ready` would never resolve here; the component must use getRegistration(),
+    // which resolves to undefined → blocked, never enablePush, never a hang.
+    (navigator as any).serviceWorker = {
+      ready: new Promise(() => {}),
+      getRegistration: () => Promise.resolve(undefined),
+    };
+
+    render(<EnableAlerts />);
+    await userEvent.click(screen.getByRole("button", { name: /enable alerts/i }));
+
+    await waitFor(() => expect(screen.getByText(/blocked/i)).toBeInTheDocument());
+    expect(push.enablePush).not.toHaveBeenCalled();
   });
 });

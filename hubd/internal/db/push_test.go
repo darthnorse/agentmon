@@ -143,6 +143,38 @@ func TestPushDeleteSubscription(t *testing.T) {
 	}
 }
 
+// TestPushDeleteSubscriptionForPrincipal: the user-scoped delete only removes the
+// caller's own subscription — a principal cannot delete another's by endpoint.
+func TestPushDeleteSubscriptionForPrincipal(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	mine := PushSubscription{PrincipalID: "u1", Endpoint: "https://push.example/mine", P256dh: "k", Auth: "a", CreatedAt: "2026-06-29 10:00:00.000"}
+	theirs := PushSubscription{PrincipalID: "u2", Endpoint: "https://push.example/theirs", P256dh: "k", Auth: "a", CreatedAt: "2026-06-29 10:00:00.000"}
+	if err := d.UpsertSubscription(ctx, mine); err != nil {
+		t.Fatalf("upsert mine: %v", err)
+	}
+	if err := d.UpsertSubscription(ctx, theirs); err != nil {
+		t.Fatalf("upsert theirs: %v", err)
+	}
+
+	// u1 tries to delete u2's endpoint → must NOT delete it.
+	if err := d.DeleteSubscriptionForPrincipal(ctx, "u1", theirs.Endpoint); err != nil {
+		t.Fatalf("DeleteSubscriptionForPrincipal: %v", err)
+	}
+	if got, _ := d.ListSubscriptionsForPrincipal(ctx, "u2"); len(got) != 1 {
+		t.Fatalf("u1 deleted u2's subscription across principals: %+v", got)
+	}
+
+	// u1 deletes its own → removed.
+	if err := d.DeleteSubscriptionForPrincipal(ctx, "u1", mine.Endpoint); err != nil {
+		t.Fatalf("DeleteSubscriptionForPrincipal(own): %v", err)
+	}
+	if got, _ := d.ListSubscriptionsForPrincipal(ctx, "u1"); len(got) != 0 {
+		t.Fatalf("u1 own subscription not deleted: %+v", got)
+	}
+}
+
 func TestPushPrincipalIDsWithSubscriptions(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()

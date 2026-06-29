@@ -34,9 +34,7 @@ type SeenStore interface {
 // (M9 T2) and the push dispatcher (M9 T4).
 type PushStore interface {
 	UpsertSubscription(ctx context.Context, s db.PushSubscription) error
-	DeleteSubscription(ctx context.Context, endpoint string) error
-	ListSubscriptionsForPrincipal(ctx context.Context, principalID string) ([]db.PushSubscription, error)
-	PrincipalIDsWithSubscriptions(ctx context.Context) ([]string, error)
+	DeleteSubscriptionForPrincipal(ctx context.Context, principalID, endpoint string) error
 }
 
 // Deps holds the shared dependencies for all API handlers.

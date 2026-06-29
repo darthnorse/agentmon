@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"agentmon/hubd/internal/authz"
@@ -28,6 +29,12 @@ type unsubscribeRequest struct {
 // key (non-secret) so the client can call pushManager.subscribe.
 func (d Deps) VapidHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Route through authorize() like every other endpoint (the design's
+		// "authorize() on every endpoint" invariant), even though the public key
+		// itself is non-secret.
+		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*"); !ok {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"publicKey": d.VAPIDPublic})
 	}
 }
@@ -43,6 +50,14 @@ func (d Deps) SubscribeHandler() http.HandlerFunc {
 		}
 		if req.Endpoint == "" || req.Keys.P256dh == "" || req.Keys.Auth == "" {
 			writeJSONError(w, http.StatusBadRequest, "endpoint and keys required")
+			return
+		}
+		// Reject non-https endpoints: real Web-Push services are always https, and
+		// this blocks an authenticated principal from registering an internal/loopback
+		// URL the dispatcher would then POST to on every blocked event (SSRF defense,
+		// matters once multi-user lands).
+		if !strings.HasPrefix(req.Endpoint, "https://") {
+			writeJSONError(w, http.StatusBadRequest, "endpoint must be https")
 			return
 		}
 		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*")
@@ -78,10 +93,13 @@ func (d Deps) UnsubscribeHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "endpoint required")
 			return
 		}
-		if _, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*"); !ok {
+		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*")
+		if !ok {
 			return
 		}
-		if err := d.Push.DeleteSubscription(r.Context(), req.Endpoint); err != nil {
+		// Scope the delete to the caller's own subscriptions — a principal must not
+		// be able to remove another principal's subscription by its endpoint.
+		if err := d.Push.DeleteSubscriptionForPrincipal(r.Context(), p.ID, req.Endpoint); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 
@@ -46,24 +47,34 @@ type pushMsg struct {
 	Ts      string `json:"ts"`
 }
 
-// blockedGate tracks the last broadcast state per session so the dispatcher
+// blockedGate remembers which sessions are CURRENTLY blocked so the dispatcher
 // pushes only on a true transition INTO blocked — mirroring the web client's
 // isAttentionTransition and the spec's one-push-per-blocked-episode rule. The
 // poller can re-publish a blocked Change (a multi-pane session, or an epoch/
 // committed re-emit) even when the session was already blocked; without this
-// gate that would double-notify. It is driven only from RunPushDispatcher's
-// single drain goroutine, so it needs no synchronization.
-type blockedGate struct{ last map[string]shared.State }
+// gate that would double-notify. It tracks only the set of blocked sessions
+// (not every session's last state), so it is bounded by the number of
+// concurrently-blocked sessions and self-prunes when a session leaves blocked.
+// It is driven only from RunPushDispatcher's single drain goroutine, so it needs
+// no synchronization.
+type blockedGate struct{ blocked map[string]bool }
 
-func newBlockedGate() *blockedGate { return &blockedGate{last: map[string]shared.State{}} }
+func newBlockedGate() *blockedGate { return &blockedGate{blocked: map[string]bool{}} }
 
-// fresh records c's state and reports whether c is a NEW entry into blocked
-// (i.e. the session was not already blocked).
+// fresh records c and reports whether it is a NEW entry into blocked (the session
+// was not already blocked). A non-blocked change forgets the session, so a later
+// re-block is fresh again (a re-alert).
 func (g *blockedGate) fresh(c Change) bool {
 	key := c.ServerID + "\x1f" + c.Target + "\x1f" + c.Session
-	prev := g.last[key]
-	g.last[key] = c.Global
-	return c.Global == shared.StateBlocked && prev != shared.StateBlocked
+	if c.Global == shared.StateBlocked {
+		if g.blocked[key] {
+			return false
+		}
+		g.blocked[key] = true
+		return true
+	}
+	delete(g.blocked, key)
+	return false
 }
 
 // RunPushDispatcher subscribes to the broadcaster and drives a Web-Push (Tier 3)
@@ -140,11 +151,16 @@ func dispatch(ctx context.Context, d DispatcherDeps, c Change) {
 // signs each request with the persisted VAPID keypair and the configured
 // subject (a mailto:/URL contact required by the protocol).
 func NewWebPushSender(keys db.VAPIDKeys, subject string) PushSender {
+	// Bound every send: webpush-go otherwise uses an http.Client with NO timeout,
+	// so a black-hole/slow push endpoint would pin the dispatch goroutine + socket
+	// until hub shutdown (the dispatch ctx is the long-lived process ctx).
+	client := &http.Client{Timeout: 10 * time.Second}
 	return func(ctx context.Context, sub db.PushSubscription, payload []byte) (int, error) {
 		resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
 			Endpoint: sub.Endpoint,
 			Keys:     webpush.Keys{P256dh: sub.P256dh, Auth: sub.Auth},
 		}, &webpush.Options{
+			HTTPClient:      client,
 			Subscriber:      subject,
 			TTL:             60,
 			VAPIDPublicKey:  keys.Public,

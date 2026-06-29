@@ -38,7 +38,7 @@ export default defineConfig({
         ],
       },
       injectManifest: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2,mp3}"],
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
       },
       devOptions: { enabled: false },
     }),

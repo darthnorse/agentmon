@@ -30,10 +30,12 @@ func (f *fakePushStore) UpsertSubscription(_ context.Context, s db.PushSubscript
 	return nil
 }
 
-func (f *fakePushStore) DeleteSubscription(_ context.Context, endpoint string) error {
+func (f *fakePushStore) DeleteSubscriptionForPrincipal(_ context.Context, principalID, endpoint string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.deletes = append(f.deletes, endpoint)
+	// Record "<principal> <endpoint>" so a test can assert the handler scoped the
+	// delete to the authenticated principal, not an attacker-supplied one.
+	f.deletes = append(f.deletes, principalID+" "+endpoint)
 	return nil
 }
 
@@ -188,6 +190,30 @@ func TestSubscribeEmptyEndpoint(t *testing.T) {
 	}
 }
 
+// TestSubscribeRejectsNonHttps: a non-https endpoint (SSRF vector) → 400, no upsert.
+func TestSubscribeRejectsNonHttps(t *testing.T) {
+	store := &fakePushStore{}
+	h, d := buildHubWithPush(t, store, "k")
+	defer d.Close()
+
+	cookie, csrf := login(t, h)
+
+	body := `{"endpoint":"http://169.254.169.254/latest/meta-data","keys":{"p256dh":"pp","auth":"aa"}}`
+	req := httptest.NewRequest("POST", "/api/v1/push/subscribe", strings.NewReader(body))
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrf)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-https endpoint must be 400, got %d body=%s", w.Code, w.Body)
+	}
+	if len(store.upserts) != 0 {
+		t.Fatalf("want 0 upserts for non-https endpoint, got %d", len(store.upserts))
+	}
+}
+
 // TestUnsubscribeDeletes: POST /push/unsubscribe with {endpoint} + CSRF → 204 and
 // the store records the delete.
 func TestUnsubscribeDeletes(t *testing.T) {
@@ -208,8 +234,9 @@ func TestUnsubscribeDeletes(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("want 204, got %d body=%s", w.Code, w.Body)
 	}
-	if len(store.deletes) != 1 || store.deletes[0] != "https://push.example/abc" {
-		t.Fatalf("delete not recorded: %+v", store.deletes)
+	// Scoped to the authenticated principal (u1), not an arbitrary endpoint owner.
+	if len(store.deletes) != 1 || store.deletes[0] != "u1 https://push.example/abc" {
+		t.Fatalf("delete not recorded with scoping principal: %+v", store.deletes)
 	}
 }
 

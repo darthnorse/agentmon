@@ -22,11 +22,20 @@ export function EnableAlerts() {
     audioCue.prime();
     setStatus("enabling");
     try {
-      const reg = await navigator.serviceWorker.ready;
+      // getRegistration(), NOT `.ready`: `.ready` never resolves when no worker is
+      // active (dev/test where registration is prod-gated, or a failed install),
+      // which would hang the button in "enabling" forever — same trap fixed in
+      // store/auth.ts. getRegistration() resolves promptly to the registration or
+      // undefined.
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) {
+        setStatus("blocked");
+        return;
+      }
       const ok = await enablePush(reg);
       setStatus(ok ? "enabled" : "blocked");
     } catch {
-      // enablePush is itself best-effort; this guards the serviceWorker.ready await.
+      // enablePush is itself best-effort; this guards the registration await too.
       setStatus("blocked");
     }
   }
