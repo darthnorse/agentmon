@@ -174,7 +174,7 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 		}
 	}
 
-	receivedAt := hubTS(p.now())
+	receivedAt := HubTS(p.now())
 
 	var toWrite []pendingEvent
 	// Panes present in the live tree for this server this tick.
@@ -214,7 +214,7 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 					Source:       "hook",
 					RawEvent:     string(raw),
 					DerivedState: string(pane.State),
-					EventTs:      hubTS(pane.LastChangeAt),
+					EventTs:      HubTS(pane.LastChangeAt),
 					ReceivedAt:   receivedAt,
 				},
 				key:  key,
@@ -263,7 +263,7 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 		return
 	}
 
-	receivedAt := hubTS(p.now())
+	receivedAt := HubTS(p.now())
 
 	var toWrite []pendingEvent
 	activeKeys := make(map[paneKey]struct{})

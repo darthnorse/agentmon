@@ -21,6 +21,14 @@ type AuditReader interface {
 	Recent(ctx context.Context, limit int) ([]db.AuditEntry, error)
 }
 
+// SeenStore is the persistence interface for principal_seen. *db.DB satisfies it.
+type SeenStore interface {
+	UpsertSeen(ctx context.Context, s db.PrincipalSeen) error
+	GetSeen(ctx context.Context, principalID, serverID, target, session string) (db.PrincipalSeen, bool, error)
+	ListSeenForPrincipal(ctx context.Context, principalID string) ([]db.PrincipalSeen, error)
+	LatestSessionEvent(ctx context.Context, serverID, target, session string) (db.StateEvent, bool, error)
+}
+
 // Deps holds the shared dependencies for all API handlers.
 type Deps struct {
 	Reg                 *registry.Registry
@@ -34,6 +42,7 @@ type Deps struct {
 	RelayPongWait       time.Duration    // M4 relay liveness; 0 → default (60s)
 	RelayPingPeriod     time.Duration    // M4 relay ping cadence; 0 → default (20s). Must be < RelayPongWait.
 	Proj                *state.Projection // M7: in-memory projection for server/session state rollup
+	Seen                SeenStore         // M7: principal_seen persistence
 }
 
 // authorizeOr403 resolves the principal from the request context, calls

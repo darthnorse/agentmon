@@ -93,6 +93,7 @@ func main() {
 			Minter:              directive.Minter{}, // defaults: time.Now, CSPRNG nonce, uuid requestId
 			ExternalOrigin:      cfg.ExternalOrigin,
 			Proj:                proj,
+			Seen:                database,
 		},
 		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,
