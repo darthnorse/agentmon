@@ -22,7 +22,7 @@ export function MobileTerminalRoute() {
         </div>
       </header>
       <div className="min-h-0 flex-1">
-        <TerminalView serverId={serverId} paneId={paneId} target={target} showKeyBar fontSize={11} />
+        <TerminalView serverId={serverId} paneId={paneId} target={target} showKeyBar fontSize={10} />
       </div>
     </div>
   );
