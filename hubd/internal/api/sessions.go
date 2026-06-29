@@ -10,13 +10,15 @@ import (
 
 // overlayState replaces each session's State with the hub projection's global
 // state when known; otherwise keeps the agent's inline state (pre-poll fallback).
+// The projection lookup is keyed on each session's own Target (the agent-reported
+// label), so it stays consistent with the poller and the future seen lookup.
 // (B3 extends this with the per-principal seen projection.)
-func (d Deps) overlayState(serverID, target string, sessions []shared.Session) {
+func (d Deps) overlayState(serverID string, sessions []shared.Session) {
 	if d.Proj == nil {
 		return
 	}
 	for i := range sessions {
-		if v, ok := d.Proj.Session(serverID, target, sessions[i].Name); ok {
+		if v, ok := d.Proj.Session(serverID, sessions[i].Target, sessions[i].Name); ok {
 			sessions[i].State = v.Global
 		}
 	}
@@ -44,7 +46,7 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 			return
 		}
 		_ = d.Reg.TouchLastSeen(r.Context(), id)
-		d.overlayState(id, "", sessions)
+		d.overlayState(id, sessions)
 		writeJSON(w, http.StatusOK, sessions)
 	}
 }
@@ -75,7 +77,7 @@ func (d Deps) SessionDetailHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusBadGateway, "agent unavailable")
 			return
 		}
-		d.overlayState(id, target, sessions)
+		d.overlayState(id, sessions)
 		for _, s := range sessions {
 			if s.Name == name {
 				writeJSON(w, http.StatusOK, s)

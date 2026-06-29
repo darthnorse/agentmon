@@ -135,6 +135,58 @@ func pollerForceStateErr(fa *fakeAgent, serverID string, err error) {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
+// TestPollerNormalPathUsesSessionTarget: when both the session and its panes
+// carry a non-empty Target label, the projection must be keyed on that label
+// (not "") and the written event's TargetID must match it.
+func TestPollerNormalPathUsesSessionTarget(t *testing.T) {
+	const label = "default"
+	lister := &fakeLister{
+		servers: []registry.ServerSummary{{ID: "s"}},
+		get:     map[string]db.Server{"s": {ID: "s", URL: "http://x", Bearer: "b"}},
+	}
+	agent := &fakeAgent{
+		state: map[string]shared.AgentState{
+			"s": {Panes: []shared.PaneState{{
+				Target:        label,
+				Pane:          "%0",
+				State:         shared.StateDone,
+				TransitionSeq: 1,
+				DoneSeq:       1,
+				Epoch:         "1",
+			}}},
+		},
+		sessions: map[string][]shared.Session{
+			"s": {{
+				Name:   "api",
+				Target: label,
+				Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}},
+			}},
+		},
+	}
+	store := &fakeStore{}
+	proj := NewProjection()
+	clk := time.Unix(100, 0)
+	p := NewPoller(lister, agent, store, proj, time.Second, func() time.Time { return clk })
+
+	p.Tick(context.Background())
+
+	// Projection must be stored under (server="s", target="default", session="api").
+	if v, ok := proj.Session("s", label, "api"); !ok || v.Global != shared.StateDone {
+		t.Fatalf("projection under target=%q: %+v ok=%v", label, v, ok)
+	}
+	// Must NOT be findable under the empty target.
+	if _, ok := proj.Session("s", "", "api"); ok {
+		t.Fatal("projection must NOT be stored under empty target")
+	}
+	// The written event's TargetID must match the session label.
+	if len(store.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(store.events))
+	}
+	if store.events[0].TargetID != label {
+		t.Fatalf("event TargetID=%q, want %q", store.events[0].TargetID, label)
+	}
+}
+
 func TestPollerIngestsFirstSeenEventAndProjects(t *testing.T) {
 	p, _, store, proj := newPollerFixture()
 	p.Tick(context.Background())

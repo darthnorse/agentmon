@@ -59,6 +59,9 @@ func (d Deps) serverRollup(serverID string) shared.State {
 		return ""
 	}
 	views := d.Proj.Server(serverID)
+	if len(views) == 0 {
+		return ""
+	}
 	states := make([]shared.State, 0, len(views))
 	for _, v := range views {
 		states = append(states, v.Global)

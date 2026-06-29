@@ -162,7 +162,11 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 		return
 	}
 	paneToSession := make(map[string]string, len(sessions)*4)
+	// sessionTarget maps session name → agent-reported Target label.  This is
+	// the canonical external key used by the projection and state events.
+	sessionTarget := make(map[string]string, len(sessions))
 	for _, sess := range sessions {
+		sessionTarget[sess.Name] = sess.Target
 		for _, win := range sess.Windows {
 			for _, pane := range win.Panes {
 				paneToSession[pane.ID] = sess.Name
@@ -204,7 +208,7 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 				evt: db.StateEvent{
 					ID:           uuid.New().String(),
 					ServerID:     id,
-					TargetID:     pane.Target,
+					TargetID:     sessionTarget[sessName], // agent-reported session label
 					Session:      sessName,
 					Pane:         pane.Pane,
 					Source:       "hook",
@@ -238,12 +242,13 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 	// Build and replace projection views for this server.
 	views := make([]SessionView, 0, len(sessionStates))
 	for sessName, states := range sessionStates {
+		tgt := sessionTarget[sessName]
 		views = append(views, SessionView{
 			ServerID:         id,
-			Target:           "",
+			Target:           tgt,
 			Session:          sessName,
 			Global:           shared.RollUp(states...),
-			LatestReceivedAt: p.latestReceivedAt(id, "", sessName, committedSessions[sessName], receivedAt),
+			LatestReceivedAt: p.latestReceivedAt(id, tgt, sessName, committedSessions[sessName], receivedAt),
 		})
 	}
 	p.proj.ReplaceServer(id, views)

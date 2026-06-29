@@ -170,6 +170,44 @@ func TestServerSessionsOverlaysProjectionState(t *testing.T) {
 	}
 }
 
+// TestServerSessionsOverlaysProjectionStateBySessionTarget: when the projection holds
+// a session keyed under a non-empty target label (the agent-reported session Target),
+// the overlay must match on that label — not on a hardcoded "".
+func TestServerSessionsOverlaysProjectionStateBySessionTarget(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(401)
+			return
+		}
+		// agent reports session with target="default" and state=unknown (pre-poll inline)
+		w.Write([]byte(`{"sessions":[{"name":"api","server":"s","target":"default","state":"unknown","cwd":"/","command":"claude","windows":[]}]}`))
+	}))
+	defer ts.Close()
+
+	proj := state.NewProjection()
+	// Store under the non-empty target matching what the agent returns.
+	proj.Set(state.SessionView{ServerID: "s", Target: "default", Session: "api", Global: shared.StateWorking})
+
+	d := depsWith(db.Server{ID: "s", URL: ts.URL, Bearer: "tok", Status: "active"})
+	d.Proj = proj
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/s/sessions", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "s")
+	w := httptest.NewRecorder()
+	d.ServerSessionsHandler()(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got []shared.Session
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].State != shared.StateWorking {
+		t.Fatalf("overlay by session target: want state=%q, got %+v", shared.StateWorking, got)
+	}
+}
+
 // TestServerSessionsPrePollFallback: when the projection has no entry for a session
 // the agent's inline state is kept unchanged (pre-poll fallback).
 func TestServerSessionsPrePollFallback(t *testing.T) {

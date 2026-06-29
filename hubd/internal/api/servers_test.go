@@ -88,6 +88,48 @@ func TestServerHandlerUnknownIDIs404(t *testing.T) {
 	}
 }
 
+// TestServerRollupEmptyNonNilProjectionNoUnknown: when the projection is non-nil
+// but has no sessions for the server yet (normal at hub start, before first poll),
+// serverRollup must return "" so the json:"state,omitempty" tag suppresses the field
+// entirely — not "unknown".
+func TestServerRollupEmptyNonNilProjectionNoUnknown(t *testing.T) {
+	d := testDeps(registry.New(fakeStore{}))
+	d.Proj = state.NewProjection() // non-nil but empty
+
+	got := d.serverRollup("any-server")
+	if got != "" {
+		t.Fatalf("empty projection must return \"\", got %q (json would emit \"state\":%q)", got, got)
+	}
+}
+
+// TestServerRollupEmptyNonNilProjectionNoUnknown_ViaAPI: same assertion via the
+// full GET /servers handler so the json:"state,omitempty" suppression is verified
+// end-to-end in the JSON payload.
+func TestServerRollupEmptyNonNilProjectionNoUnknown_ViaAPI(t *testing.T) {
+	reg := registry.New(fakeStore{servers: map[string]db.Server{
+		"s": {ID: "s", Name: "S", URL: "http://x", Status: "active"},
+	}})
+	d := testDeps(reg)
+	d.Proj = state.NewProjection() // non-nil but empty
+
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers", nil), authz.Principal{ID: "u1"})
+	w := httptest.NewRecorder()
+	d.ServersHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("code %d", w.Code)
+	}
+	var got []registry.ServerSummary
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(got))
+	}
+	if got[0].State != "" {
+		t.Fatalf("State must be empty (omitted), got %q", got[0].State)
+	}
+}
+
 // TestServerDetailHasRollupState: GET /servers/{id} includes a State field rolled
 // up from the projection's sessions. With done+blocked the rollup must be blocked.
 func TestServerDetailHasRollupState(t *testing.T) {
