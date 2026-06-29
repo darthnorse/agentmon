@@ -53,7 +53,7 @@ export class TerminalSocket {
   private readonly url: string;
 
   constructor(
-    private readonly target: TerminalTarget,
+    target: TerminalTarget,
     private readonly handlers: TerminalSocketHandlers,
     deps: TerminalSocketDeps = {},
   ) {
@@ -71,7 +71,7 @@ export class TerminalSocket {
   }
 
   open(): void {
-    if (this.disposed) return;
+    if (this.disposed || this.ws !== null) return;
     const ws = new this.WS(this.url);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
@@ -112,6 +112,7 @@ export class TerminalSocket {
     }
     if (this.ws) {
       this.ws.onclose = null; // suppress reconnect on our own close
+      this.ws.onopen = null;  // suppress stale open handler if racing
       this.ws.close();
       this.ws = null;
     }

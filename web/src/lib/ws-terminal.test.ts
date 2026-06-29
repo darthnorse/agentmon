@@ -91,9 +91,22 @@ describe("TerminalSocket", () => {
     const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
     sock.open();
     FakeWS.instances[0].fireOpen();
+    const ws = FakeWS.instances[0]; // capture before dispose nulls this.ws
     sock.dispose();
+    // D2: both handlers cleared so no stale callbacks fire after dispose
+    expect(ws.onclose).toBeNull();
+    expect(ws.onopen).toBeNull();
     vi.advanceTimersByTime(20000);
     expect(FakeWS.instances.length).toBe(1);
+  });
+
+  it("open() does not replace a live socket", () => {
+    const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open(); // creates first socket (CONNECTING, readyState=0)
+    expect(FakeWS.instances.length).toBe(1);
+    sock.open(); // second call — ws !== null, must be a no-op
+    expect(FakeWS.instances.length).toBe(1);
+    sock.dispose();
   });
 
   it("visibility while CONNECTING does not open a second socket", () => {

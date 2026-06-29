@@ -67,4 +67,16 @@ describe("auth store", () => {
     await useAuth.getState().signOut();
     expect(usePanes.getState().panes).toHaveLength(0);
   });
+
+  it("signOut resolves and clears even when logout() rejects", async () => {
+    (api.logout as any).mockRejectedValue(new Error("network down"));
+    useAuth.getState().setSession(info);
+    expect(useAuth.getState().status).toBe("authed");
+    // must NOT reject — signOut swallows the logout error
+    await expect(useAuth.getState().signOut()).resolves.toBeUndefined();
+    // and must still clear locally
+    expect(useAuth.getState().status).toBe("anon");
+    expect(useAuth.getState().session).toBeNull();
+    expect(api.setCsrfToken).toHaveBeenLastCalledWith("");
+  });
 });

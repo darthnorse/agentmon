@@ -56,12 +56,15 @@ export const XTerm = React.forwardRef<
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     // WebGL is optional; load lazily with a fallback to the default renderer.
+    // Guard on termRef.current: the component may unmount before the dynamic
+    // import resolves, in which case `term` is already disposed.
     void import("@xterm/addon-webgl")
       .then(({ WebglAddon }) => {
+        if (!termRef.current) return; // disposed before import resolved
         try {
           const addon = new WebglAddon();
           addon.onContextLoss(() => addon.dispose());
-          term.loadAddon(addon);
+          termRef.current.loadAddon(addon);
         } catch { /* fall back to the default renderer */ }
       })
       .catch(() => {});

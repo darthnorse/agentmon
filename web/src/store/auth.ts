@@ -23,7 +23,7 @@ interface AuthState {
   bootstrap(): Promise<void>;
 }
 
-export const useAuth = create<AuthState>((set) => ({
+export const useAuth = create<AuthState>((set, get) => ({
   session: null,
   status: "unknown",
   setSession(s) {
@@ -37,24 +37,18 @@ export const useAuth = create<AuthState>((set) => ({
   },
   async signIn(username, password) {
     const info = await api.login(username, password);
-    api.setCsrfToken(info.csrfToken);
-    set({ session: info, status: "authed" });
+    get().setSession(info);
   },
   async signOut() {
-    try {
-      await api.logout();
-    } finally {
-      api.setCsrfToken("");
-      set({ session: null, status: "anon" });
-      resetGridAndCache();
-    }
+    try { await api.logout(); } catch { /* best-effort; clear locally regardless */ }
+    finally { get().clear(); }
   },
   async bootstrap() {
     try {
       const info = await api.me();
-      api.setCsrfToken(info.csrfToken);
-      set({ session: info, status: "authed" });
+      get().setSession(info);
     } catch {
+      // bootstrap catch does not call resetGridAndCache (no grid to clear on startup)
       api.setCsrfToken("");
       set({ session: null, status: "anon" });
     }

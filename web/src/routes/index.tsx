@@ -33,7 +33,7 @@ export function ShellRoute() {
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <span className="font-semibold">AgentMon</span>
-        <Button variant="ghost" size="sm" onClick={() => signOut().then(() => navigate({ to: "/login" }))}>
+        <Button variant="ghost" size="sm" onClick={() => signOut().finally(() => navigate({ to: "/login" }))}>
           Sign out
         </Button>
       </header>
