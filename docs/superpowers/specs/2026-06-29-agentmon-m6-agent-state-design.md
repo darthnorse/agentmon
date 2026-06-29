@@ -188,6 +188,17 @@ On `SessionEnd` the machine **deletes** the pane's entry rather than storing an 
 (bounds memory for a long-lived agent serving many short-lived panes); `Apply` still returns
 `(StateUnknown, prior != StateUnknown)` and `Rollup`/`Pane` treat the pane as never-seen → `unknown`.
 
+> **Known staleness limitation (multi-review, deferred to M7).** The map is keyed by `(target, pane)`
+> only. Two residual cases are NOT handled in M6: (a) a pane whose Claude is *killed* without a clean
+> `SessionEnd` leaves a lingering entry until the agent restarts; (b) after a tmux **server** restart,
+> pane ids restart from `%0`, so a stale entry could roll up onto a new pane with the same id until its
+> next hook (a `SessionStart`/`UserPromptSubmit` corrects a real Claude pane immediately). A
+> prune-on-`/sessions`-stamp was considered but deliberately **not** added in M6: pruning against the
+> live pane set introduces a TOCTOU race that could drop a *fresh* `blocked` whose hook lands between
+> discovery and prune — unacceptable for the headline signal. This belongs in M7, which owns
+> aggregation and already polls the live set: it can prune/epoch durably (e.g. key on a tmux
+> server-pid epoch, available in `$TMUX`) without racing the intake.
+
 `Apply` records every event (updates `LastEvent`/`UpdatedAt`) even when the state is preserved, so
 "last activity" is current. `changed` is true only when the derived `State` differs from the prior
 pane state. A first-ever event for a pane counts as changed (prior = implicit `unknown`).
