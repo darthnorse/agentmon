@@ -163,7 +163,9 @@ AgentMon v1 is not complete unless the following work:
    arrows, paste, and orientation changes.
 7. Put the phone to sleep or switch apps, then reconnect without killing the underlying session.
 8. Confirm that a browser never receives an agent token.
-9. Confirm that a locked (read-only) terminal can read output but cannot send input.
+9. ~~Confirm that a locked (read-only) terminal can read output but cannot send input.~~
+   **[DESCOPED — Phase-4 owner decision, 2026-06-29: the read/write input lock is dropped from v1;
+   terminals are always `rw`. See §6.3/§7.5/§11.8 amendments.]**
 10. Confirm that every terminal open/session create action is audited.
 11. Confirm that all REST and WebSocket access passes through the same `authorize()` function.
 12. While full-screen in one session on mobile, be alerted (visibly/audibly) when a *different*
@@ -456,6 +458,10 @@ Behavior:
 
 ### 6.3 Mobile safety defaults
 
+**[Phase-4 amendment, owner decision 2026-06-29: the read/write input lock is DESCOPED from v1 —
+terminals are always `rw`. The read-only-until-unlock posture, the `Lock` key-bar button, and
+auto-lock-on-leave below no longer apply. Multiline-paste confirmation is unaffected and stays.]**
+
 Remote shell access from a phone is risky. Mobile must default to safe interaction:
 
 - Terminal opens read-only visually until the user taps an explicit input area or unlock button.
@@ -678,6 +684,11 @@ In v1 a single user holds all of these; the namespace exists so a future role sy
 action names to bind to.
 
 ### 7.5 Read/write is the input lock, not a role
+
+**[Phase-4 amendment, owner decision 2026-06-29: the input lock is DESCOPED from v1 — terminals are
+always `rw` and the hub always mints `rw` (its current behavior). The mechanism below remains
+accurately described and is the seam a future `viewer` role would reuse, but no `ro` path ships in
+v1. The agent's mechanical `ro|rw` enforcement is retained (defense in depth, already built).]**
 
 There are no roles in v1. The only read-vs-write distinction is the **input lock** (§6) — a
 per-session safety mode the single user toggles, not a per-principal permission. The mechanism is
@@ -1088,6 +1099,10 @@ Rules:
   workflow); if it ever happens, the latest active client wins and the other reflows.
 
 ### 11.8 Read-only enforcement
+
+**[Phase-4 amendment, owner decision 2026-06-29: no `ro` path ships in v1 (always `rw`). Layers 1–2
+(hub) are not exercised since the hub always authorizes/mints `rw`; layers 3–4 (agent mechanical
+`ro|rw`) remain implemented as built. Kept as the documented seam for a future role system.]**
 
 Read-only is enforced at multiple layers:
 
