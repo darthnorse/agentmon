@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -21,23 +22,33 @@ var events = []string{
 	"Notification", "PermissionRequest", "Stop", "SubagentStop", "SessionEnd",
 }
 
+// shellSingleQuote wraps s in single quotes for safe shell interpolation.
+// Embedded single quotes are escaped as '\''.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // Command builds the shell command Claude runs for each hook event. It pipes the
 // event JSON (stdin) to the agent and carries pane/socket correlation in headers.
 // curl failures are swallowed (|| true) so a hook never fails Claude's turn.
+// The hook token and token-file path are shell-single-quoted to prevent injection
+// from values containing shell metacharacters (spaces, quotes, $, backticks, etc.).
 func Command(cfg config.Config) (string, error) {
 	_, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
 		return "", fmt.Errorf("parse listen %q: %w", cfg.Listen, err)
 	}
-	tokenExpr := cfg.HookToken
+	var authHeader string
 	if cfg.HookTokenFile != "" {
-		tokenExpr = "$(cat " + cfg.HookTokenFile + ")"
+		// Token read at hook-fire time; single-quote the path inside $( ).
+		authHeader = `-H "Authorization: Bearer $(cat ` + shellSingleQuote(cfg.HookTokenFile) + `)"`
+	} else {
+		// Adjacent single-quoted words concatenate in sh: 'Authorization: Bearer ''tok'
+		authHeader = `-H 'Authorization: Bearer '` + shellSingleQuote(cfg.HookToken)
 	}
-	return fmt.Sprintf(
-		`curl -sS -m 2 -H "Authorization: Bearer %s" `+
-			`-H "X-AgentMon-Pane: $TMUX_PANE" -H "X-AgentMon-Tmux: $TMUX" `+
-			`--data-binary @- http://127.0.0.1:%s/hook >/dev/null 2>&1 || true  # %s`,
-		tokenExpr, port, Marker), nil
+	return `curl -sS -m 2 ` + authHeader + ` ` +
+		`-H "X-AgentMon-Pane: $TMUX_PANE" -H "X-AgentMon-Tmux: $TMUX" ` +
+		`--data-binary @- http://127.0.0.1:` + port + `/hook >/dev/null 2>&1 || true  # ` + Marker, nil
 }
 
 func group(cmd string) map[string]any {
@@ -143,21 +154,21 @@ func isAgentmonGroup(g any) bool {
 func InstallWarnings(cfg config.Config) []string {
 	var warnings []string
 
-	// (a) Non-loopback listen host: hooks always POST to 127.0.0.1:<port>.
+	// (a) Warn unless the listen host is exactly 127.0.0.1 or a wildcard
+	// (empty/""/0.0.0.0/::). ::1 (IPv6-only loopback) MUST warn because the
+	// installed hook always POSTs to 127.0.0.1 which is not reachable via ::1.
 	host, port, err := net.SplitHostPort(cfg.Listen)
 	if err == nil {
-		ip := net.ParseIP(host)
-		// Warn when host is a concrete address that is neither loopback nor wildcard.
-		concreteNonLoopback := false
+		warnListen := true
 		if host == "" {
-			// bare ":port" — wildcard, OK
-		} else if ip == nil {
-			// hostname (not an IP literal) — conservatively warn
-			concreteNonLoopback = true
-		} else if !ip.IsLoopback() && !ip.IsUnspecified() {
-			concreteNonLoopback = true
+			// bare ":port" — wildcard, reachable on all interfaces including loopback
+			warnListen = false
+		} else if ip := net.ParseIP(host); ip != nil {
+			if ip.IsUnspecified() || ip.Equal(net.ParseIP("127.0.0.1")) {
+				warnListen = false
+			}
 		}
-		if concreteNonLoopback {
+		if warnListen {
 			warnings = append(warnings, fmt.Sprintf(
 				"agent listen host %q is not loopback or a wildcard; hooks POST to 127.0.0.1:%s"+
 					" and will silently no-op unless the agent is reachable on loopback"+
@@ -185,7 +196,7 @@ func LoadSettings(path string) (map[string]any, error) {
 		}
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	if len(strings.TrimSpace(string(b))) == 0 {
+	if len(bytes.TrimSpace(b)) == 0 {
 		return map[string]any{}, nil
 	}
 	var m map[string]any
@@ -198,21 +209,30 @@ func LoadSettings(path string) (map[string]any, error) {
 	return m, nil
 }
 
-// SaveSettings writes a settings map as pretty JSON (0600).
+// SaveSettings writes a settings map as pretty JSON (0600). It explicitly
+// chmods after writing so a pre-existing file with loose permissions is tightened.
 func SaveSettings(path string, m map[string]any) error {
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o600)
+	if err := os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // WriteTokenFile writes token to path (0600), creating parent dirs (0700).
+// It explicitly chmods after writing so a pre-existing file with loose
+// permissions is tightened to 0600.
 func WriteTokenFile(path, token string) error {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(path, []byte(token), 0o600)
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }

@@ -78,7 +78,7 @@ func main() {
 				log.Fatalf("hook token file: %v", err)
 			}
 		}
-		mux.Handle("POST /hook", hooks.RequireHookAuth(cfg.HookToken, hooks.HookHandler(cfg, machine, nil)))
+		mux.Handle("POST /hook", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, hooks.HookHandler(cfg, machine, nil))))
 		log.Printf("hook intake enabled at POST /hook")
 	}
 

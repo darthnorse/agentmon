@@ -37,7 +37,7 @@ func post(t *testing.T, h http.Handler, remote, auth, pane, tmuxEnv, body string
 }
 
 func handler(m *state.Machine) http.Handler {
-	return RequireHookAuth("hooktok", HookHandler(testCfg(), m, nil))
+	return RequireLoopback(RequireHookAuth("hooktok", HookHandler(testCfg(), m, nil)))
 }
 
 func TestHookValidPermissionRequest(t *testing.T) {
@@ -111,5 +111,33 @@ func TestHookToleratesExtraFields(t *testing.T) {
 	}
 	if s, _ := m.Pane("default", "%3"); s != shared.StateWorking {
 		t.Fatalf("state %q, want working", s)
+	}
+}
+
+// TestHookLoopbackOracleRegression proves that non-loopback callers always get
+// 403 regardless of token value, closing the remote token-validity oracle where
+// a wrong token returned 401 but a correct token returned 403.
+func TestHookLoopbackOracleRegression(t *testing.T) {
+	m := state.New(nil)
+	h := handler(m)
+	body := `{"hook_event_name":"Stop"}`
+	hdr := "/tmp/tmux-0/default,1,0"
+
+	// Non-loopback with WRONG token — must be 403, not 401.
+	rr := post(t, h, "10.0.0.9:5000", "Bearer wrongtoken", "%3", hdr, body)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("non-loopback wrong token: got %d, want 403", rr.Code)
+	}
+
+	// Non-loopback with CORRECT token — must also be 403, not 204.
+	rr = post(t, h, "10.0.0.9:5000", "Bearer hooktok", "%3", hdr, body)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("non-loopback correct token: got %d, want 403", rr.Code)
+	}
+
+	// Loopback + bad token — must be 401 (auth layer is reachable on loopback).
+	rr = post(t, h, "127.0.0.1:5000", "Bearer wrongtoken", "%3", hdr, body)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("loopback bad token: got %d, want 401", rr.Code)
 	}
 }

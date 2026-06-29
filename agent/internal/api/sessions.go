@@ -50,10 +50,12 @@ func SessionsHandler(cfg config.Config, discover Discoverer, m *state.Machine) h
 // A nil machine (hooks disabled) leaves every session StateUnknown.
 func stampState(m *state.Machine, target string, sessions []shared.Session) {
 	for i := range sessions {
-		if m == nil {
-			sessions[i].State = shared.StateUnknown
-			continue
-		}
+		sessions[i].State = shared.StateUnknown
+	}
+	if m == nil {
+		return
+	}
+	for i := range sessions {
 		var panes []string
 		for _, win := range sessions[i].Windows {
 			for _, p := range win.Panes {

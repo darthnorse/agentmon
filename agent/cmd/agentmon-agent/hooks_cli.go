@@ -14,6 +14,13 @@ import (
 	"agentmon/agent/internal/hooks"
 )
 
+// printWarnings writes any InstallWarnings for cfg to stderr.
+func printWarnings(cfg config.Config) {
+	for _, w := range hooks.InstallWarnings(cfg) {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+}
+
 // hooksMain runs `agentmon-agent hooks <print|install|uninstall>`.
 func hooksMain(args []string, stdout io.Writer) error {
 	if len(args) < 1 {
@@ -33,9 +40,7 @@ func hooksMain(args []string, stdout io.Writer) error {
 	}
 	switch sub {
 	case "print":
-		for _, w := range hooks.InstallWarnings(cfg) {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-		}
+		printWarnings(cfg)
 		snip, err := hooks.Snippet(cfg)
 		if err != nil {
 			return err
@@ -44,9 +49,7 @@ func hooksMain(args []string, stdout io.Writer) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(snip)
 	case "install":
-		for _, w := range hooks.InstallWarnings(cfg) {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-		}
+		printWarnings(cfg)
 		if *settings == "" {
 			return fmt.Errorf("hooks install requires --settings <PATH>")
 		}
@@ -82,7 +85,7 @@ func hooksMain(args []string, stdout io.Writer) error {
 }
 
 // hookTestMain runs `agentmon-agent hook-test` — synthesizes a hook POST to the
-// local agent to verify the wiring end-to-end (design §10.3).
+// local agent to verify the wiring end-to-end.
 func hookTestMain(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("hook-test", flag.ContinueOnError)
 	fs.SetOutput(stdout)
@@ -105,7 +108,10 @@ func hookTestMain(args []string, stdout io.Writer) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 	body := fmt.Sprintf(`{"hook_event_name":%q,"notification_type":%q,"session_id":"hook-test"}`, *event, *kind)
-	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+port+"/hook", strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+port+"/hook", strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+cfg.HookToken)
 	req.Header.Set("X-AgentMon-Pane", *pane)
 	req.Header.Set("X-AgentMon-Tmux", os.Getenv("TMUX"))

@@ -33,8 +33,21 @@ func RequireHookAuth(token string, next http.Handler) http.Handler {
 	})
 }
 
-// hookBody is the tolerant subset read from Claude's hook event JSON. Unknown and
-// extra fields are ignored (forward-compat, design §18-Q3).
+// RequireLoopback rejects any request that did not originate from a loopback
+// address, returning 403. This runs before token auth so the token is never
+// inspected for non-loopback callers (prevents a remote token-validity oracle).
+func RequireLoopback(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopback(r.RemoteAddr) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hookBody is the tolerant subset read from Claude's hook event JSON.
+// Unknown/extra fields are ignored so newer Claude hook versions don't break older agents.
 type hookBody struct {
 	HookEventName    string `json:"hook_event_name"`
 	NotificationType string `json:"notification_type"`
@@ -44,16 +57,12 @@ type hookBody struct {
 // HookHandler applies a correlated hook to the state machine. It returns 204 on the
 // happy path AND on every soft failure (unknown socket, bad pane, missing $TMUX,
 // unparseable body) so a hook never breaks or stalls Claude. now defaults to
-// time.Now when nil. (Token auth and loopback are handled before/here respectively.)
+// time.Now when nil. Token auth and loopback are handled by middleware before this.
 func HookHandler(cfg config.Config, m *state.Machine, now func() time.Time) http.HandlerFunc {
 	if now == nil {
 		now = time.Now
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isLoopback(r.RemoteAddr) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
 		pane := r.Header.Get("X-AgentMon-Pane")
 		socket := socketFromTmux(r.Header.Get("X-AgentMon-Tmux"))
 		target, matched := matchTarget(cfg, socket)

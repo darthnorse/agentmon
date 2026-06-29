@@ -1,7 +1,7 @@
 package shared
 
 // State is an agent session/pane state. The agent emits only these five global
-// states; the per-principal done→idle "seen" projection (§9.3) is hub-side.
+// states; the per-principal done→idle "seen" projection is hub-side.
 type State string
 
 const (
@@ -12,12 +12,12 @@ const (
 	StateUnknown State = "unknown" // plain shell, or no hook signal yet
 )
 
-// statePriority orders states for rollup (§9.2): blocked > done > working > idle > unknown.
+// statePriority orders states for rollup: blocked > done > working > idle > unknown.
 var statePriority = map[State]int{
 	StateBlocked: 5, StateDone: 4, StateWorking: 3, StateIdle: 2, StateUnknown: 1,
 }
 
-// RollUp reduces pane states to one session/server state using §9.2 priority.
+// RollUp reduces pane states to one session/server state using the priority ordering.
 // Empty input or any unrecognized state contributes as StateUnknown.
 func RollUp(states ...State) State {
 	best, bestP := StateUnknown, statePriority[StateUnknown]

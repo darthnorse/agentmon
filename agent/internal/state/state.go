@@ -60,8 +60,6 @@ func derive(name, notificationKind string) (shared.State, bool) {
 		return shared.StateDone, true
 	case "Stop":
 		return shared.StateDone, true
-	case "SessionEnd":
-		return shared.StateUnknown, true
 	default: // SubagentStop and any unknown event preserve the prior state
 		return "", false
 	}
@@ -77,6 +75,8 @@ func (m *Machine) Apply(ev Event) (shared.State, bool) {
 		prior = shared.StateUnknown
 	}
 	if ev.Name == "SessionEnd" {
+		// Delete the pane entry and report the transition directly; derive() is
+		// not called for SessionEnd (the pane ceases to exist rather than changing state).
 		delete(m.panes, k)
 		return shared.StateUnknown, prior != shared.StateUnknown
 	}
@@ -103,7 +103,7 @@ func (m *Machine) Pane(target, pane string) (shared.State, bool) {
 	return ps.State, true
 }
 
-// Rollup reduces the known states of the given panes to one (§9.2). Panes with no
+// Rollup reduces the known states of the given panes to one. Panes with no
 // recorded state are excluded; no known panes → StateUnknown.
 func (m *Machine) Rollup(target string, panes []string) shared.State {
 	m.mu.Lock()

@@ -20,7 +20,8 @@ func TestCommandPortTokenFileAndEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"127.0.0.1:8377/hook", "$(cat /run/agentmon/hook-token)", "$TMUX_PANE", "$TMUX", Marker} {
+	// Path must be single-quoted inside the $( ) subshell.
+	for _, want := range []string{"127.0.0.1:8377/hook", "$(cat '/run/agentmon/hook-token')", "$TMUX_PANE", "$TMUX", Marker} {
 		if !strings.Contains(cmd, want) {
 			t.Fatalf("command missing %q: %s", want, cmd)
 		}
@@ -29,8 +30,35 @@ func TestCommandPortTokenFileAndEnv(t *testing.T) {
 
 func TestCommandLiteralTokenWhenNoFile(t *testing.T) {
 	cmd, _ := Command(installCfg())
-	if !strings.Contains(cmd, "Bearer tok") {
-		t.Fatalf("want literal token: %s", cmd)
+	// Token must be single-quoted, not interpolated raw.
+	if !strings.Contains(cmd, "'tok'") {
+		t.Fatalf("want single-quoted token: %s", cmd)
+	}
+}
+
+func TestCommandTokenWithSingleQuote(t *testing.T) {
+	c := installCfg()
+	c.HookToken = "ab'cd"
+	cmd, err := Command(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ab'cd must be escaped as 'ab'\''cd' (single-quote escape sequence).
+	if !strings.Contains(cmd, `'ab'\''cd'`) {
+		t.Fatalf("expected single-quote escape in command: %s", cmd)
+	}
+}
+
+func TestCommandTokenFileWithSpace(t *testing.T) {
+	c := installCfg()
+	c.HookTokenFile = "/tmp/my dir/tok"
+	cmd, err := Command(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Path with space must be single-quoted inside the $( ).
+	if !strings.Contains(cmd, "$(cat '/tmp/my dir/tok')") {
+		t.Fatalf("expected quoted path in command: %s", cmd)
 	}
 }
 
@@ -165,6 +193,22 @@ func TestInstallWarnings(t *testing.T) {
 			t.Fatalf("expected a literal-token warning, got: %v", warnings)
 		}
 	})
+
+	t.Run("ipv6_loopback_warns", func(t *testing.T) {
+		// ::1 is loopback but the hook posts to 127.0.0.1; binding ::1 only
+		// means hooks can't reach the agent — emit a listen warning.
+		cfg := config.Config{Listen: "[::1]:8377", HookToken: "tok", HookTokenFile: "/run/agentmon/hook-token"}
+		warnings := InstallWarnings(cfg)
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, "loopback") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("[::1] should produce a listen warning, got: %v", warnings)
+		}
+	})
 }
 
 func TestWriteTokenFilePerms(t *testing.T) {
@@ -180,5 +224,43 @@ func TestWriteTokenFilePerms(t *testing.T) {
 	fi, _ := os.Stat(p)
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("perm = %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestWriteTokenFileChmodPreExisting(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "hook-token")
+	// Pre-create with loose permissions.
+	if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteTokenFile(p, "newtoken"); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("perm after WriteTokenFile = %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestSaveSettingsChmodPreExisting(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "settings.json")
+	// Pre-create with loose permissions.
+	if err := os.WriteFile(p, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(p, map[string]any{"x": 1}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("perm after SaveSettings = %v, want 0600", fi.Mode().Perm())
 	}
 }
