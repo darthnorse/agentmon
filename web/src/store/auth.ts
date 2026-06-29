@@ -1,0 +1,56 @@
+import { create } from "zustand";
+import type { SessionInfo } from "@/lib/contracts";
+import * as api from "@/lib/api-client";
+import { usePanes } from "@/store/panes";
+
+/** Reset panes + query cache without a static import cycle.
+ *  query-client.ts imports auth.ts (for useAuth), so auth.ts must not
+ *  statically import query-client.ts — use a lazy dynamic import instead. */
+function resetGridAndCache() {
+  usePanes.setState({ panes: [], focusedId: null });
+  void import("@/lib/query-client").then((m) => m.queryClient.clear());
+}
+
+export type AuthStatus = "unknown" | "authed" | "anon";
+
+interface AuthState {
+  session: SessionInfo | null;
+  status: AuthStatus;
+  setSession(s: SessionInfo): void;
+  clear(): void;
+  signIn(username: string, password: string): Promise<void>;
+  signOut(): Promise<void>;
+  bootstrap(): Promise<void>;
+}
+
+export const useAuth = create<AuthState>((set, get) => ({
+  session: null,
+  status: "unknown",
+  setSession(s) {
+    api.setCsrfToken(s.csrfToken);
+    set({ session: s, status: "authed" });
+  },
+  clear() {
+    api.setCsrfToken("");
+    set({ session: null, status: "anon" });
+    resetGridAndCache();
+  },
+  async signIn(username, password) {
+    const info = await api.login(username, password);
+    get().setSession(info);
+  },
+  async signOut() {
+    try { await api.logout(); } catch { /* best-effort; clear locally regardless */ }
+    finally { get().clear(); }
+  },
+  async bootstrap() {
+    try {
+      const info = await api.me();
+      get().setSession(info);
+    } catch {
+      // bootstrap catch does not call resetGridAndCache (no grid to clear on startup)
+      api.setCsrfToken("");
+      set({ session: null, status: "anon" });
+    }
+  },
+}));
