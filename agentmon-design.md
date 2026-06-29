@@ -1318,9 +1318,9 @@ agentmon/
 │   │   └── store/                 # Zustand stores
 │   └── dist/                      # build output, embedded into hubd
 │
+├── docker-compose.yml             # hub service + volume (repo root → `docker compose up` needs no -f)
 ├── deploy/
 │   ├── Dockerfile                 # all-in-one hub image (see §16)
-│   ├── docker-compose.yml         # hub service + volume
 │   ├── agentmon-agent.service     # systemd unit for the per-server agent
 │   ├── install-agent.sh
 │   ├── claude-hooks.json

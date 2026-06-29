@@ -1,13 +1,12 @@
-# Pin the compose project name so `docker compose up -d --build` targets the same
-# container regardless of CWD or -p. Without this, the default project name is the
-# basename of this file's directory ("deploy"), which spawns a duplicate that
-# crash-loops on the already-bound host port.
+# Pin the compose project name so `docker compose up -d --build` always targets the
+# same container, regardless of the checkout directory name or CWD (without a pin the
+# project name defaults to this file's directory basename).
 name: agentmon
 
 services:
   agentmon-hub:
     build:
-      context: ..
+      context: .
       dockerfile: deploy/Dockerfile
     image: agentmon-hubd:dev
     restart: unless-stopped
@@ -23,9 +22,9 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
     volumes:
-      # config.yaml + the SQLite DB live here. First run (from this deploy/ dir):
-      #   mkdir -p data && cp hub.config.example.yaml data/config.yaml   (then edit it)
+      # config.yaml + the SQLite DB live in deploy/data. First run:
+      #   cp deploy/hub.config.example.yaml deploy/data/config.yaml   (then edit it)
       # Unraid: point this at /mnt/user/appdata/agentmon.
-      - ./data:/data
+      - ./deploy/data:/data
     # Enroll each box:  curl <external_origin>/install.sh | sudo bash
     # Then admit it:    docker compose exec agentmon-hub /agentmon-hubd server approve <hostname>
