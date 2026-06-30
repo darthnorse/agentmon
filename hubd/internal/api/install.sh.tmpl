@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 # AgentMon agent installer — served by the hub, templated with its own URL + checksums.
+# Re-running on a host that's already installed UPDATES the binary in place (keeps the
+# enrollment + config); a first run enrolls + installs the systemd unit.
 # Usage: curl <hub>/install.sh | sudo bash [-s -- --hostname=H --user=U --socket=S --dry-run]
 set -euo pipefail
 
@@ -25,6 +27,29 @@ done
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# download_and_verify fetches the agent binary for $ARCH into $TMP and checks its
+# sha256 against the templated expectation before anything is installed.
+download_and_verify() {
+  TMP="$(mktemp)"
+  trap 'rm -f "$TMP"' EXIT
+  echo "Downloading agent ($ARCH)..."
+  curl -fsSL "$HUB_URL/dl/agent-linux-$ARCH" -o "$TMP"
+  local got
+  got="$(sha256sum "$TMP" | cut -d' ' -f1)"
+  [ "$got" = "$SHA256_EXPECT" ] || die "checksum mismatch (got $got, want $SHA256_EXPECT)"
+}
+
+# smoke_test polls the agent's loopback health endpoint until it answers.
+smoke_test() {
+  echo "Smoke-testing the agent..."
+  local ok="0"
+  for _ in 1 2 3 4 5; do
+    if curl -fsS "http://127.0.0.1:$AGENT_PORT/healthz" >/dev/null 2>&1; then ok="1"; break; fi
+    sleep 1
+  done
+  [ "$ok" = "1" ] || die "agent did not become healthy; check: journalctl -u agentmon-agent"
+}
+
 command -v systemctl >/dev/null 2>&1 || die "systemd (systemctl) is required; this installer does not support non-systemd hosts"
 command -v curl >/dev/null 2>&1 || die "curl is required"
 
@@ -39,28 +64,57 @@ HOST="${HOSTNAME_OVERRIDE:-$(hostname -s)}"
 RUN_USER="${USER_OVERRIDE:-${SUDO_USER:-$(id -un)}}"
 SOCKET="${SOCKET_OVERRIDE:-}"
 
+# A prior install is recognised by its config + secret files; re-running then just
+# updates the binary (no re-enroll → no 409). To force a clean re-enroll instead,
+# remove /etc/agentmon first.
+INSTALLED="0"
+if [ -f /etc/agentmon/agent.toml ] && [ -f /etc/agentmon/hub_token ] && [ -f /etc/agentmon/signing_key ]; then
+  INSTALLED="1"
+fi
+
 echo "AgentMon installer:"
 echo "  hub:      $HUB_URL"
 echo "  hostname: $HOST"
 echo "  run-as:   $RUN_USER"
 echo "  arch:     $ARCH"
+if [ "$INSTALLED" = "1" ]; then
+  echo "  mode:     update (existing install — binary swap, config preserved)"
+else
+  echo "  mode:     fresh install (enroll + systemd unit)"
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
-  echo "[dry-run] would download $HUB_URL/dl/agent-linux-$ARCH (sha256 $SHA256_EXPECT)"
-  echo "[dry-run] would enroll at $HUB_URL/api/v1/enroll as '$HOST'"
-  echo "[dry-run] would write /etc/agentmon/agent.toml + secrets, install + start the systemd unit"
+  if [ "$INSTALLED" = "1" ]; then
+    echo "[dry-run] would update the binary from $HUB_URL/dl/agent-linux-$ARCH (sha256 $SHA256_EXPECT) and restart the service; enrollment + config preserved."
+  else
+    echo "[dry-run] would download $HUB_URL/dl/agent-linux-$ARCH (sha256 $SHA256_EXPECT)"
+    echo "[dry-run] would enroll at $HUB_URL/api/v1/enroll as '$HOST'"
+    echo "[dry-run] would write /etc/agentmon/agent.toml + secrets, install + start the systemd unit"
+  fi
   echo "[dry-run] no changes made."
   exit 0
 fi
 
 [ "$(id -u)" = "0" ] || die "must run as root (use sudo)"
 
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
-echo "Downloading agent ($ARCH)..."
-curl -fsSL "$HUB_URL/dl/agent-linux-$ARCH" -o "$TMP"
-GOT_SHA="$(sha256sum "$TMP" | cut -d' ' -f1)"
-[ "$GOT_SHA" = "$SHA256_EXPECT" ] || die "checksum mismatch (got $GOT_SHA, want $SHA256_EXPECT)"
+# ── Update path: existing install → swap the binary in place, keep everything else.
+if [ "$INSTALLED" = "1" ]; then
+  if [ -x /usr/local/bin/agentmon-agent ] && \
+     [ "$(sha256sum /usr/local/bin/agentmon-agent | cut -d' ' -f1)" = "$SHA256_EXPECT" ]; then
+    echo "✓ $HOST already up to date (sha256 $SHA256_EXPECT); nothing to do."
+    exit 0
+  fi
+  echo "Updating the agent binary in place (enrollment + config preserved)..."
+  download_and_verify
+  install -m 0755 "$TMP" /usr/local/bin/agentmon-agent
+  systemctl restart agentmon-agent
+  smoke_test
+  echo "✓ $HOST updated and restarted."
+  exit 0
+fi
+
+# ── Fresh install: enroll, write config + secrets + systemd unit, enable.
+download_and_verify
 install -m 0755 "$TMP" /usr/local/bin/agentmon-agent
 
 echo "Enrolling..."
@@ -115,12 +169,6 @@ EOF
 systemctl daemon-reload
 systemctl enable --now agentmon-agent
 
-echo "Smoke-testing the agent..."
-ok="0"
-for _ in 1 2 3 4 5; do
-  if curl -fsS "http://127.0.0.1:$AGENT_PORT/healthz" >/dev/null 2>&1; then ok="1"; break; fi
-  sleep 1
-done
-[ "$ok" = "1" ] || die "agent did not become healthy; check: journalctl -u agentmon-agent"
+smoke_test
 
 echo "✓ $HOST enrolled — pending approval. Run 'agentmon-hubd server approve $HOST' on the hub."

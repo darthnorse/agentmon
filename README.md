@@ -130,8 +130,10 @@ curl <external_origin>/install.sh | sudo bash
 ```
 
 It downloads the right binary (checksum-verified), enrolls with the hub, and installs + starts the
-`agentmon-agent` systemd unit. `--dry-run` shows exactly what it would do without changing anything. (Prefer
-a manual install? See `deploy/agent.example.toml` and `deploy/agentmon-agent.service`.)
+`agentmon-agent` systemd unit. `--dry-run` shows exactly what it would do without changing anything. The
+installer is **idempotent**: re-running it on a host that's already installed just swaps the binary in place
+and restarts (keeping its enrollment + config) — so the same command is also the [upgrade path](#updating).
+(Prefer a manual install? See `deploy/agent.example.toml` and `deploy/agentmon-agent.service`.)
 
 ### 5. Admit the agent
 
@@ -217,6 +219,22 @@ session_dirs = ["/home/dev/projects", "/srv/work"]
   PWA for push).
 - **Settings** (gear icon) — terminal theme + font size (desktop and mobile separately), and an optional
   "alert when a session finishes (done)" toggle.
+
+---
+
+## Updating
+
+There's no auto-update — agents keep running their current binary until you update them. Update the **hub
+first** (so it serves the new agent binary), then the agents.
+
+- **Hub:** `docker compose up -d --build` — rebuilds + recreates the container, re-embeds the latest agent
+  binaries, and re-bakes their checksums into the served `install.sh`.
+- **Agents:** re-run the same installer on each host. It detects the existing install and swaps the binary in
+  place — **no re-enroll, config + secrets preserved** — or reports "already up to date":
+  ```bash
+  curl <external_origin>/install.sh | sudo bash
+  ```
+  (To force a clean re-enroll instead — e.g. after wiping the hub — `rm -rf /etc/agentmon` first, then run it.)
 
 ---
 
