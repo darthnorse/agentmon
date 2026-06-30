@@ -80,7 +80,7 @@ charset rule both hub and agent import).
   non-empty command, resolve target (`cfg.ResolveTarget`), validate cwd against `cfg.SessionDirs` (default
   `$HOME`), `tmux.CreateSession`, return `{name}` (or 400/409). Registered `mux.Handle("POST /sessions",
   RequireBearer(cfg.HubToken, ...))` next to the GET.
-- `agent/internal/config/config.go`: add `SessionDirs []string \`yaml:"session_dirs"\``.
+- `agent/internal/config/config.go`: add `SessionDirs []string \`toml:"session_dirs"\`` (the agent config is TOML).
 
 **Hub — client** (`hubd/internal/registry/client.go`): `CreateSession(ctx, srv, target string, req
 shared.CreateSessionRequest) (shared.CreateSessionResponse, error)` — `POST srv.URL+"/sessions?target="`,

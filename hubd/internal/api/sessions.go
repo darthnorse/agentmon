@@ -76,19 +76,27 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		// Authorize FIRST — before reading/validating the body — so the decision is
+		// recorded (the deny path audits) ahead of any input handling, per §13.5.
+		p, ok := d.authorizeOr403(w, r, authz.SessionCreate, "server:"+id)
+		if !ok {
+			return
+		}
 		var req shared.CreateSessionRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "bad request")
 			return
 		}
-		// Validate the name at the browser boundary before doing any work; the
-		// agent re-validates at the exec boundary (defense in depth).
+		// Validate the name at the browser boundary; the agent re-validates at the
+		// exec boundary (defense in depth).
 		if err := shared.ValidateSessionName(req.Name); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		p, ok := d.authorizeOr403(w, r, authz.SessionCreate, "server:"+id)
-		if !ok {
+		// Reject custom commands early (the agent would too) so the user gets the
+		// specific reason without a round-trip — v1 sessions are shell-only.
+		if req.Command != "" {
+			writeJSONError(w, http.StatusBadRequest, "custom commands are not supported")
 			return
 		}
 		srv, found, err := d.Reg.Get(r.Context(), id)

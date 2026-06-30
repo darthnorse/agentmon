@@ -202,6 +202,17 @@ func TestServerCreateSessionMalformedBodyIs400(t *testing.T) {
 	}
 }
 
+// TestServerCreateSessionCommandRejectedIs400: a non-empty command is rejected at
+// the hub (shell-only v1) WITHOUT contacting the agent (its URL is unreachable).
+func TestServerCreateSessionCommandRejectedIs400(t *testing.T) {
+	d := depsWith(db.Server{ID: "server-a", URL: "http://127.0.0.1:0", Bearer: "tok-a", Status: "active"})
+	r, w := createReq(t, "server-a", "", `{"name":"ok","command":"rm -rf /"}`)
+	d.ServerCreateSessionHandler()(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-empty command must be 400, got %d body %s", w.Code, w.Body)
+	}
+}
+
 // TestServerCreateSessionExistsIs409: the agent's 409 (duplicate) maps to a hub 409.
 func TestServerCreateSessionExistsIs409(t *testing.T) {
 	ts := createFakeAgent(t, "tok-a", http.StatusConflict, "")
