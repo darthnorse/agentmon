@@ -195,3 +195,44 @@ func TestClientCreateSessionTransportError(t *testing.T) {
 		t.Fatal("transport failure must error")
 	}
 }
+
+func TestClientRenameSessionOK(t *testing.T) {
+	var gotMethod, gotPath, gotTarget, gotAuth string
+	var gotBody shared.RenameSessionRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotTarget = r.Method, r.URL.Path, r.URL.Query().Get("target")
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	if err := c.RenameSession(context.Background(), db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a"}, "host1", "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/sessions/rename" || gotTarget != "host1" || gotAuth != "Bearer tok-a" {
+		t.Fatalf("req: %s %s ?target=%s auth=%q", gotMethod, gotPath, gotTarget, gotAuth)
+	}
+	if gotBody.From != "old" || gotBody.To != "new" {
+		t.Fatalf("body = %+v", gotBody)
+	}
+}
+
+func TestClientRenameSessionErrorMapping(t *testing.T) {
+	cases := []struct {
+		status int
+		want   error
+	}{
+		{http.StatusBadRequest, ErrInvalidSession},
+		{http.StatusConflict, ErrSessionExists},
+		{http.StatusNotFound, ErrNoSession},
+	}
+	for _, tc := range cases {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status) }))
+		err := NewClient(2*time.Second).RenameSession(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, "", "old", "new")
+		ts.Close()
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("status %d → err %v, want %v", tc.status, err, tc.want)
+		}
+	}
+}

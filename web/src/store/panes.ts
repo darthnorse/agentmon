@@ -28,6 +28,9 @@ interface PanesState {
   closePane(id: string): void;
   focus(id: string): void;
   collapse(): void;
+  // Re-key an open pane after its session is renamed. Only `session` changes, so the
+  // terminal WS (keyed by paneId) survives — no reconnect. No-op if the pane isn't open.
+  renamePane(oldId: string, newSession: string): void;
 }
 
 export const usePanes = create<PanesState>((set, get) => ({
@@ -49,4 +52,15 @@ export const usePanes = create<PanesState>((set, get) => ({
   },
   focus(id) { set({ focusedId: id }); },
   collapse() { set({ focusedId: null }); },
+  renamePane(oldId, newSession) {
+    set((s) => {
+      const pane = s.panes.find((p) => p.id === oldId);
+      if (!pane) return s; // not open as a tile → nothing to re-key
+      const newId = paneKey(pane.serverId, pane.target, newSession, pane.paneId);
+      return {
+        panes: s.panes.map((p) => (p.id === oldId ? { ...p, session: newSession, id: newId } : p)),
+        focusedId: s.focusedId === oldId ? newId : s.focusedId,
+      };
+    });
+  },
 }));

@@ -78,6 +78,15 @@ type CreateSessionResponse struct {
 	Name string `json:"name"`
 }
 
+// RenameSessionRequest is the body of POST /sessions/rename (agent) and
+// POST /api/v1/servers/{id}/sessions/rename (hub). From is the current session
+// name (any existing tmux name); To is the new name, validated by
+// ValidateSessionName. The agent returns CreateSessionResponse{Name: To}.
+type RenameSessionRequest struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
 // sessionNameRe is the single name rule enforced at both the hub (browser
 // boundary) and the agent (exec boundary): 1–64 chars, must start with an
 // alphanumeric, then only A–Z a–z 0–9 _ -. This excludes '.' and ':' (tmux

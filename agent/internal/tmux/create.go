@@ -42,6 +42,39 @@ func isDuplicateSession(b []byte) bool {
 	return bytes.Contains(bytes.ToLower(b), []byte("duplicate session"))
 }
 
+// ErrNoSession is returned by RenameSession when the source session `from` does
+// not exist on the target socket. The REST handler maps it to HTTP 404.
+var ErrNoSession = errors.New("no such session")
+
+func isNoSession(b []byte) bool {
+	low := bytes.ToLower(b)
+	return bytes.Contains(low, []byte("can't find session")) ||
+		bytes.Contains(low, []byte("session not found")) ||
+		bytes.Contains(low, []byte("no such session"))
+}
+
+// RenameSession renames the existing tmux session `from` to `to` on the socket,
+// via the arg-array Runner (no shell — both names are positional args, never
+// interpolated). The caller MUST have validated `to` (shared.ValidateSessionName);
+// `from` is an existing tmux name passed as a positional -t arg. A target name
+// that already exists → ErrSessionExists (409); an unknown `from` → ErrNoSession (404).
+func RenameSession(ctx context.Context, run Runner, socket, from, to string) error {
+	out, err := run(ctx, with(socketArgs(socket), "rename-session", "-t", from, to)...)
+	if err != nil {
+		// ExecRunner folds stderr into the error string; a fake Runner may surface
+		// the message via either channel — check both.
+		errb := []byte(err.Error())
+		if isDuplicateSession(out) || isDuplicateSession(errb) {
+			return ErrSessionExists
+		}
+		if isNoSession(out) || isNoSession(errb) {
+			return ErrNoSession
+		}
+		return fmt.Errorf("tmux rename-session: %w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
 // ValidateCwd resolves and authorises a requested working directory against an
 // allow-list of roots (§13.6 directory policy). It returns the cleaned, symlink-
 // resolved absolute path on success, or an error describing the rejection.

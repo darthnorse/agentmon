@@ -48,6 +48,29 @@ describe("panes store", () => {
     expect(usePanes.getState().focusedId).toBeNull();
   });
 
+  it("renamePane re-keys the open pane (session+id) and focus follows", () => {
+    usePanes.getState().openPane(mk(0));
+    usePanes.getState().focus("s:default:sess0:%0");
+    usePanes.getState().renamePane("s:default:sess0:%0", "renamed");
+    const p = usePanes.getState().panes[0];
+    expect(p.session).toBe("renamed");
+    expect(p.id).toBe("s:default:renamed:%0"); // paneId (%0) preserved → the WS survives
+    expect(usePanes.getState().focusedId).toBe("s:default:renamed:%0"); // focus follows the re-key
+  });
+
+  it("renamePane leaves focus null when the renamed pane wasn't focused", () => {
+    usePanes.getState().openPane(mk(0));
+    usePanes.getState().renamePane("s:default:sess0:%0", "x");
+    expect(usePanes.getState().panes[0].id).toBe("s:default:x:%0");
+    expect(usePanes.getState().focusedId).toBeNull();
+  });
+
+  it("renamePane is a no-op for a pane that isn't open", () => {
+    usePanes.getState().openPane(mk(0));
+    usePanes.getState().renamePane("not:open:%9", "x");
+    expect(usePanes.getState().panes[0].id).toBe("s:default:sess0:%0"); // unchanged
+  });
+
   it("collapse clears focus but keeps panes", () => {
     usePanes.getState().openPane(mk(0));
     usePanes.getState().focus("s:default:sess0:%0");

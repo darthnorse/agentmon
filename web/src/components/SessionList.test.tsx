@@ -77,7 +77,9 @@ describe("SessionList sectioned inbox", () => {
     return Array.from(container.querySelectorAll("ul > li")).map((li) => {
       const el = li as HTMLElement;
       if (el.dataset.section) return `H:${el.textContent}`;
-      const name = el.querySelector(".font-medium")?.textContent;
+      // The name lives in the editor's inner span (the outer .font-medium also
+      // contains the ✎ rename button, so read the truncate child only).
+      const name = el.querySelector(".font-medium .truncate")?.textContent;
       return `R:${name ?? el.textContent}`;
     });
   }

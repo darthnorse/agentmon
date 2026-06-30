@@ -239,3 +239,68 @@ func TestCreateSessionIntegration(t *testing.T) {
 		t.Fatalf("duplicate err = %v, want ErrSessionExists", err)
 	}
 }
+
+func TestRenameSessionArgArray(t *testing.T) {
+	var got []string
+	run := recordRunner(nil, nil, &got)
+	if err := RenameSession(context.Background(), run, "mysock", "old", "new"); err != nil {
+		t.Fatalf("RenameSession: %v", err)
+	}
+	want := []string{"-L", "mysock", "rename-session", "-t", "old", "new"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestRenameSessionDuplicate(t *testing.T) {
+	var got []string
+	run := recordRunner([]byte("duplicate session: new"), errors.New("exit status 1"), &got)
+	if err := RenameSession(context.Background(), run, "s", "old", "new"); !errors.Is(err, ErrSessionExists) {
+		t.Fatalf("err = %v, want ErrSessionExists", err)
+	}
+}
+
+func TestRenameSessionNoSession(t *testing.T) {
+	var got []string
+	run := recordRunner([]byte("can't find session: old"), errors.New("exit status 1"), &got)
+	if err := RenameSession(context.Background(), run, "s", "old", "new"); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("err = %v, want ErrNoSession", err)
+	}
+}
+
+const renameItestSocket = "agentmon-rename-itest"
+
+func killRenameITestServer() { _ = exec.Command("tmux", "-L", renameItestSocket, "kill-server").Run() }
+
+func TestRenameSessionIntegration(t *testing.T) {
+	requireTmux(t)
+	killRenameITestServer()
+	t.Cleanup(killRenameITestServer)
+	dir := t.TempDir()
+
+	if err := CreateSession(context.Background(), ExecRunner, renameItestSocket, "before", dir); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	// Renaming an unknown source → ErrNoSession.
+	if err := RenameSession(context.Background(), ExecRunner, renameItestSocket, "ghost", "x"); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("rename(ghost) err = %v, want ErrNoSession", err)
+	}
+	// Happy path: before → after.
+	if err := RenameSession(context.Background(), ExecRunner, renameItestSocket, "before", "after"); err != nil {
+		t.Fatalf("RenameSession: %v", err)
+	}
+	out, err := exec.Command("tmux", "-L", renameItestSocket, "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		t.Fatalf("list-sessions: %v", err)
+	}
+	if string(trimNL(out)) != "after" {
+		t.Fatalf("sessions = %q, want only 'after'", out)
+	}
+	// Renaming onto an existing name → ErrSessionExists.
+	if err := CreateSession(context.Background(), ExecRunner, renameItestSocket, "taken", dir); err != nil {
+		t.Fatalf("CreateSession(taken): %v", err)
+	}
+	if err := RenameSession(context.Background(), ExecRunner, renameItestSocket, "after", "taken"); !errors.Is(err, ErrSessionExists) {
+		t.Fatalf("rename onto existing err = %v, want ErrSessionExists", err)
+	}
+}

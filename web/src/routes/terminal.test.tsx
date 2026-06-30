@@ -4,6 +4,12 @@ import { render, screen } from "@testing-library/react";
 vi.mock("@/components/TerminalView", () => ({
   TerminalView: (p: any) => <div data-testid="tv">{`${p.serverId}:${p.paneId}:${p.target}:${String(p.showKeyBar)}`}</div>,
 }));
+// Stub the rename editor — its query-client/panes deps are irrelevant to the route
+// test, and stubbing it keeps the minimal react-router mock from needing the
+// router's exports (the real editor → query-client → @/router).
+vi.mock("@/components/SessionNameEditor", () => ({
+  SessionNameEditor: (p: any) => <span>{p.name}</span>,
+}));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ serverId: "s1", paneId: "%0" }),
   useSearch: () => ({ target: "default", session: "demo-web" }),

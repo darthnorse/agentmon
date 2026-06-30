@@ -23,6 +23,8 @@ var ErrStateUnsupported = errors.New("agent does not support /state")
 var (
 	ErrInvalidSession = errors.New("invalid session request")
 	ErrSessionExists  = errors.New("session already exists")
+	// ErrNoSession maps an agent 404 from rename (the source session is gone).
+	ErrNoSession = errors.New("no such session")
 )
 
 func NewClient(timeout time.Duration) *Client {
@@ -92,6 +94,42 @@ func (c *Client) CreateSession(ctx context.Context, srv db.Server, target string
 		return shared.CreateSessionResponse{}, ErrSessionExists
 	default:
 		return shared.CreateSessionResponse{}, fmt.Errorf("agent %s create-session returned %d", srv.ID, resp.StatusCode)
+	}
+}
+
+// RenameSession renames session `from` to `to` on the agent's target. Maps the
+// agent's 400→ErrInvalidSession, 409→ErrSessionExists, 404→ErrNoSession.
+func (c *Client) RenameSession(ctx context.Context, srv db.Server, target, from, to string) error {
+	u := srv.URL + "/sessions/rename"
+	if target != "" {
+		u += "?target=" + url.QueryEscape(target)
+	}
+	body, err := json.Marshal(shared.RenameSessionRequest{From: from, To: to})
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+srv.Bearer)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("dial agent %s: %w", srv.ID, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
+		return nil
+	case http.StatusBadRequest:
+		return ErrInvalidSession
+	case http.StatusConflict:
+		return ErrSessionExists
+	case http.StatusNotFound:
+		return ErrNoSession
+	default:
+		return fmt.Errorf("agent %s rename-session returned %d", srv.ID, resp.StatusCode)
 	}
 }
 

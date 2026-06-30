@@ -25,6 +25,9 @@ export interface SeenRequest { serverId: string; target: string; sessionName: st
 // POST /api/v1/servers/{id}/sessions body (mirrors shared.CreateSessionRequest).
 // Custom commands are rejected in v1; `command` is reserved. The response is a full Session.
 export interface CreateSessionRequest { name: string; cwd?: string; command?: string; }
+// POST /api/v1/servers/{id}/sessions/rename body (mirrors shared.RenameSessionRequest).
+// `to` is validated by the same name rule as create. The response is the renamed Session.
+export interface RenameSessionRequest { from: string; to: string; }
 // POST /api/v1/push/subscribe body (mirrors the browser PushSubscription.toJSON shape
 // the hub's api.push decodes). The endpoint is the natural unique key (server PK).
 export interface PushSubscriptionJSON { endpoint: string; keys: { p256dh: string; auth: string }; }

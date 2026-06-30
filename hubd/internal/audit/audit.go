@@ -59,6 +59,15 @@ func (r *Recorder) SessionCreate(ctx context.Context, principalID, resource, ses
 		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
 }
 
+func (r *Recorder) SessionRename(ctx context.Context, principalID, resource, from, to, ip, ua string) {
+	meta, err := json.Marshal(map[string]string{"from": from, "to": to})
+	if err != nil {
+		meta = []byte("{}")
+	}
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "session.rename",
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
+}
+
 func (r *Recorder) ServerEnroll(ctx context.Context, id, hostname, ip string) {
 	r.write(ctx, db.AuditEntry{Action: "server.enroll",
 		Resource: "server:" + id, Result: "allow", IP: ip, Meta: hostname})

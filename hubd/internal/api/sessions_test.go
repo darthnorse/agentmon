@@ -745,3 +745,103 @@ func TestServerSessionsSeenProjection_GetSeenError_PassesThroughGlobal(t *testin
 		t.Fatalf("error passthrough: want state=%q, got %+v", shared.StateDone, got)
 	}
 }
+
+func renameReq(t *testing.T, id, target, body string) (*http.Request, *httptest.ResponseRecorder) {
+	t.Helper()
+	u := "/api/v1/servers/" + id + "/sessions/rename"
+	if target != "" {
+		u += "?target=" + target
+	}
+	r := withPrincipal(httptest.NewRequest("POST", u, strings.NewReader(body)), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", id)
+	return r, httptest.NewRecorder()
+}
+
+// TestServerRenameSessionSuccess: a valid rename calls the agent, re-lists, and
+// returns the renamed Session (201) with a session.rename audit row (from+to in meta).
+func TestServerRenameSessionSuccess(t *testing.T) {
+	ts := createFakeAgent(t, "tok-a", http.StatusOK, createListBody) // re-list returns "newproj"
+	defer ts.Close()
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a", Status: "active"})
+	sink := &captureSink{}
+	d.Audit = audit.NewRecorder(sink)
+
+	r, w := renameReq(t, "server-a", "default", `{"from":"old","to":"newproj"}`)
+	d.ServerRenameSessionHandler()(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	var got shared.Session
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "newproj" || len(got.Windows) != 1 || got.Windows[0].Panes[0].ID != "%9" {
+		t.Fatalf("renamed session missing pane id: %+v", got)
+	}
+	e, ok := sink.find("session.rename")
+	if !ok {
+		t.Fatal("no session.rename audit row")
+	}
+	if e.Resource != shared.SessionID("server-a", "default", "newproj") {
+		t.Fatalf("audit resource %q", e.Resource)
+	}
+	if !strings.Contains(e.Meta, "old") || !strings.Contains(e.Meta, "newproj") {
+		t.Fatalf("audit meta must carry from+to: %s", e.Meta)
+	}
+}
+
+func TestServerRenameSessionRejects(t *testing.T) {
+	// Each case maps an agent/hub condition to a status. fakeStatus<0 means "no agent
+	// reached" (a dead URL or an early-reject path).
+	cases := []struct {
+		name, id, body string
+		fakeStatus     int
+		want           int
+	}{
+		{"bad new name", "server-a", `{"from":"old","to":"-bad name"}`, -1, http.StatusBadRequest},
+		{"empty from", "server-a", `{"from":"","to":"newname"}`, -1, http.StatusBadRequest},
+		{"unknown server", "no-such", `{"from":"old","to":"newname"}`, -1, http.StatusNotFound},
+		{"agent duplicate", "server-a", `{"from":"old","to":"taken"}`, http.StatusConflict, http.StatusConflict},
+		{"agent no-session", "server-a", `{"from":"ghost","to":"newname"}`, http.StatusNotFound, http.StatusNotFound},
+		{"agent invalid", "server-a", `{"from":"old","to":"newname"}`, http.StatusBadRequest, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			url := "http://127.0.0.1:0" // unreachable for the early-reject cases
+			if c.fakeStatus >= 0 {
+				ts := createFakeAgent(t, "tok-a", c.fakeStatus, "")
+				defer ts.Close()
+				url = ts.URL
+			}
+			d := depsWith(db.Server{ID: "server-a", URL: url, Bearer: "tok-a", Status: "active"})
+			r, w := renameReq(t, c.id, "", c.body)
+			d.ServerRenameSessionHandler()(w, r)
+			if w.Code != c.want {
+				t.Fatalf("code %d, want %d (%s)", w.Code, c.want, w.Body)
+			}
+		})
+	}
+}
+
+// TestServerRenameSessionTransportErrorIs502: an unreachable agent → 502.
+func TestServerRenameSessionTransportErrorIs502(t *testing.T) {
+	d := depsWith(db.Server{ID: "server-a", URL: "http://127.0.0.1:0", Bearer: "tok-a", Status: "active"})
+	r, w := renameReq(t, "server-a", "", `{"from":"old","to":"newname"}`)
+	d.ServerRenameSessionHandler()(w, r)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("transport error must be 502, got %d", w.Code)
+	}
+}
+
+// TestServerRenameSessionDeniesEmptyPrincipal: no principal → 403 (authz chokepoint).
+func TestServerRenameSessionDeniesEmptyPrincipal(t *testing.T) {
+	d := depsWith(db.Server{ID: "server-a", URL: "http://x", Bearer: "tok-a", Status: "active"})
+	r := withPrincipal(httptest.NewRequest("POST", "/api/v1/servers/server-a/sessions/rename", strings.NewReader(`{"from":"old","to":"new"}`)), authz.Principal{})
+	r.SetPathValue("id", "server-a")
+	w := httptest.NewRecorder()
+	d.ServerRenameSessionHandler()(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("empty principal must be 403, got %d", w.Code)
+	}
+}
