@@ -22,6 +22,7 @@ const (
 	AuditRead     Action = "audit.read"
 	SessionCreate Action = "session.create"
 	SessionRename Action = "session.rename"
+	ServerAdmit   Action = "server.admit"
 )
 
 type Decision struct {

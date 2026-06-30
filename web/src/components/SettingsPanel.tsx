@@ -1,5 +1,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { EnableAlerts } from "@/components/EnableAlerts";
+import { pushSupported } from "@/lib/push";
 import { usePrefs } from "@/store/prefs";
 import { reloadApp } from "@/lib/pwa-update";
 import type { ThemeName } from "@/lib/terminal-themes";
@@ -16,7 +18,7 @@ const THEMES: ReadonlyArray<{ value: ThemeName; label: string }> = [
 
 // A small settings popover (gear button) bound to the persisted prefs store:
 // terminal font sizes (desktop + mobile), theme, and the done-alert toggle.
-export function SettingsPanel() {
+export function SettingsPanel({ onSignOut }: { onSignOut?: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [checking, setChecking] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
@@ -62,6 +64,12 @@ export function SettingsPanel() {
           aria-label="Settings"
           className="absolute right-0 z-50 mt-1 w-64 rounded-md border border-border bg-card p-3 text-sm shadow-md"
         >
+          {pushSupported() && (
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Attention alerts</span>
+              <EnableAlerts />
+            </div>
+          )}
           <FontStepper
             label="Desktop font"
             value={fontSizeDesktop}
@@ -109,6 +117,13 @@ export function SettingsPanel() {
               Reloads the app to the latest deployed version (installed PWAs have no pull-to-refresh).
             </p>
           </div>
+          {onSignOut && (
+            <div className="mt-3 border-t border-border pt-3">
+              <Button variant="ghost" size="sm" className="w-full" onClick={onSignOut}>
+                Sign out
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

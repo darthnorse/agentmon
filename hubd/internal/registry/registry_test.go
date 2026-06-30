@@ -45,6 +45,30 @@ func (f *fakeStore) TouchServerLastSeen(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeStore) SetServerStatus(_ context.Context, id, status string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	s, ok := f.servers[id]
+	if !ok {
+		return false, nil
+	}
+	s.Status = status
+	f.servers[id] = s
+	return true, nil
+}
+
+func (f *fakeStore) DeleteServer(_ context.Context, id string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	if _, ok := f.servers[id]; !ok {
+		return false, nil
+	}
+	delete(f.servers, id)
+	return true, nil
+}
+
 func TestListReturnsOnlyActive(t *testing.T) {
 	r := New(&fakeStore{servers: map[string]db.Server{
 		"a": {ID: "a", Name: "A", Status: "active", Labels: []string{"prod"}},
@@ -84,5 +108,72 @@ func TestGetActiveOnly(t *testing.T) {
 	}
 	if _, ok, _ := r.Get(context.Background(), "missing"); ok {
 		t.Fatal("missing server must not be found")
+	}
+}
+
+func TestListPendingReturnsOnlyPendingNoSecrets(t *testing.T) {
+	r := New(&fakeStore{servers: map[string]db.Server{
+		"a": {ID: "a", Status: "active"},
+		"p": {ID: "p", Hostname: "web-01", URL: "http://10.0.0.5:8377", Status: "pending", OS: "linux", Arch: "amd64", Bearer: "secret", SigningKey: "secret"},
+	}})
+	list, err := r.ListPending(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != "p" || list[0].Hostname != "web-01" || list[0].URL != "http://10.0.0.5:8377" || list[0].Arch != "amd64" {
+		t.Fatalf("pending list: %+v", list)
+	}
+	// PendingServer is a secrets-free projection — there is no field to leak Bearer.
+}
+
+func TestApproveOnlyPending(t *testing.T) {
+	fs := &fakeStore{servers: map[string]db.Server{
+		"p": {ID: "p", Hostname: "web-01", Status: "pending"},
+		"a": {ID: "a", Status: "active"},
+	}}
+	r := New(fs)
+	s, ok, err := r.Approve(context.Background(), "p")
+	if err != nil || !ok || s.Hostname != "web-01" {
+		t.Fatalf("approve pending: %+v ok=%v err=%v", s, ok, err)
+	}
+	if fs.servers["p"].Status != "active" {
+		t.Fatalf("status must be active after approve, got %q", fs.servers["p"].Status)
+	}
+	if _, ok, _ := r.Approve(context.Background(), "a"); ok {
+		t.Fatal("an already-active server must NOT be approvable (no resurrect)")
+	}
+	if _, ok, _ := r.Approve(context.Background(), "missing"); ok {
+		t.Fatal("a missing id must report ok=false")
+	}
+}
+
+func TestRejectOnlyPending(t *testing.T) {
+	fs := &fakeStore{servers: map[string]db.Server{
+		"p": {ID: "p", Hostname: "web-01", Status: "pending"},
+		"a": {ID: "a", Status: "active"},
+	}}
+	r := New(fs)
+	s, ok, err := r.Reject(context.Background(), "p")
+	if err != nil || !ok || s.Hostname != "web-01" {
+		t.Fatalf("reject pending: %+v ok=%v err=%v", s, ok, err)
+	}
+	if _, present := fs.servers["p"]; present {
+		t.Fatal("a rejected pending server must be deleted")
+	}
+	if _, ok, _ := r.Reject(context.Background(), "a"); ok {
+		t.Fatal("an ACTIVE server must NOT be deletable via reject (safety)")
+	}
+	if _, present := fs.servers["a"]; !present {
+		t.Fatal("the active server must remain after a refused reject")
+	}
+}
+
+func TestApproveRejectPropagateDBError(t *testing.T) {
+	r := New(&fakeStore{err: errors.New("db down")})
+	if _, _, err := r.Approve(context.Background(), "p"); err == nil {
+		t.Fatal("approve must propagate a genuine DB error")
+	}
+	if _, _, err := r.Reject(context.Background(), "p"); err == nil {
+		t.Fatal("reject must propagate a genuine DB error")
 	}
 }

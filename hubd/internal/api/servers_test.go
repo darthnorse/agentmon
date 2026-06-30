@@ -94,6 +94,22 @@ func (f fakeStore) GetServer(_ context.Context, id string) (db.Server, error) {
 	return db.Server{}, sql.ErrNoRows
 }
 func (f fakeStore) TouchServerLastSeen(_ context.Context, _ string) error { return nil }
+func (f fakeStore) SetServerStatus(_ context.Context, id, status string) (bool, error) {
+	s, ok := f.servers[id]
+	if !ok {
+		return false, nil
+	}
+	s.Status = status
+	f.servers[id] = s // shared map → mutation persists despite the value receiver
+	return true, nil
+}
+func (f fakeStore) DeleteServer(_ context.Context, id string) (bool, error) {
+	if _, ok := f.servers[id]; !ok {
+		return false, nil
+	}
+	delete(f.servers, id)
+	return true, nil
+}
 
 func TestServersHandlerListsForAuthedPrincipal(t *testing.T) {
 	reg := registry.New(fakeStore{servers: map[string]db.Server{"server-a": {ID: "server-a", Name: "A", Status: "active", URL: "http://x"}}})

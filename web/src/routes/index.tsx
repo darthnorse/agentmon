@@ -6,8 +6,8 @@ import { listServers, listSessions } from "@/lib/api-client";
 import { useAuth } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
-import { EnableAlerts } from "@/components/EnableAlerts";
 import { NewSessionForm } from "@/components/NewSessionForm";
+import { PendingAgents } from "@/components/PendingAgents";
 import { DesktopShell } from "@/components/DesktopShell";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -143,19 +143,17 @@ export function ShellRoute() {
           <Button
             variant="outline"
             size="sm"
+            className="hidden sm:inline-flex"
             onClick={goNextBlocked}
             disabled={!nextBlockedRow}
             title="Jump to the next blocked session (n)"
           >
             Next blocked ⟶
           </Button>
-          <EnableAlerts />
-          <SettingsPanel />
-          <Button variant="ghost" size="sm" onClick={() => signOut().finally(() => navigate({ to: "/login" }))}>
-            Sign out
-          </Button>
+          <SettingsPanel onSignOut={() => signOut().finally(() => navigate({ to: "/login" }))} />
         </div>
       </header>
+      <PendingAgents />
       {showNew && newServer && (
         <div className="border-b border-border px-4 py-3">
           {servers.length > 1 && (

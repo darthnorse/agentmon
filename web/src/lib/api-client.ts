@@ -1,6 +1,6 @@
 import type {
   ServerSummary, SessionInfo, Session, SeenRequest,
-  PushSubscriptionJSON, VapidKeyResponse, CreateSessionRequest,
+  PushSubscriptionJSON, VapidKeyResponse, CreateSessionRequest, PendingServer,
 } from "@/lib/contracts";
 
 const BASE = "/api/v1";
@@ -83,6 +83,16 @@ export const renameSession = (serverId: string, from: string, to: string, target
       (target ? `?target=${encodeURIComponent(target)}` : ""),
     { from, to },
   );
+
+// Admit UI: list agents awaiting admission, then approve (→ active) or reject
+// (remove the pending enrollment). approve/reject are mutating (auto-CSRF).
+export const listPending = () => request<PendingServer[]>("GET", "/servers/pending");
+
+export const approveServer = (id: string) =>
+  request<void>("POST", `/servers/${encodeURIComponent(id)}/approve`);
+
+export const rejectServer = (id: string) =>
+  request<void>("POST", `/servers/${encodeURIComponent(id)}/reject`);
 
 // Web-Push (M9). VAPID public key is non-secret; subscribe/unsubscribe are mutating
 // (auto-CSRF). Unsubscribe sends only the endpoint (the server's PK).

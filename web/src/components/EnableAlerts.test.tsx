@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 // Mock the feature-detected push client and the audio cue so the component can be
 // exercised in jsdom (no real ServiceWorker / PushManager / WebAudio).
-vi.mock("@/lib/push", () => ({ pushSupported: vi.fn(), enablePush: vi.fn(), getActiveRegistration: vi.fn() }));
+vi.mock("@/lib/push", () => ({ pushSupported: vi.fn(), enablePush: vi.fn(), disablePush: vi.fn(), getActiveRegistration: vi.fn() }));
 vi.mock("@/lib/audio-cue", () => ({ audioCue: { prime: vi.fn(), play: vi.fn() } }));
 
 import { EnableAlerts } from "@/components/EnableAlerts";
@@ -40,8 +40,25 @@ describe("EnableAlerts", () => {
 
     expect(audioCue.prime).toHaveBeenCalled();
     await waitFor(() => expect(push.enablePush).toHaveBeenCalledWith(fakeReg));
-    // success state reflected to the user
-    await waitFor(() => expect(screen.getByText(/alerts on/i)).toBeInTheDocument());
+    // success → the toggle flips to a "Disable alerts" affordance
+    await waitFor(() => expect(screen.getByRole("button", { name: /disable alerts/i })).toBeInTheDocument());
+  });
+
+  it("disables push when toggled off after being enabled", async () => {
+    (push.pushSupported as any).mockReturnValue(true);
+    (push.enablePush as any).mockResolvedValue(true);
+    const fakeReg = {} as ServiceWorkerRegistration;
+    (push.getActiveRegistration as any).mockResolvedValue(fakeReg);
+    (push.disablePush as any).mockResolvedValue(undefined);
+
+    render(<EnableAlerts />);
+    await userEvent.click(screen.getByRole("button", { name: /enable alerts/i }));
+    const disableBtn = await screen.findByRole("button", { name: /disable alerts/i });
+
+    await userEvent.click(disableBtn);
+    await waitFor(() => expect(push.disablePush).toHaveBeenCalledWith(fakeReg));
+    // back to the enable affordance
+    await waitFor(() => expect(screen.getByRole("button", { name: /enable alerts/i })).toBeInTheDocument());
   });
 
   it("reflects a denied/failed enrolment without throwing", async () => {

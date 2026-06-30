@@ -27,6 +27,11 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("GET /api/v1/me", rd.Auth.RequireAuth(rd.Auth.MeHandler()))
 
 	mux.Handle("GET /api/v1/servers", rd.Auth.RequireAuth(rd.API.ServersHandler()))
+	// Admit UI (M-admit): literal "pending" is more specific than "{id}", so ServeMux
+	// routes /servers/pending here rather than to the {id} detail handler.
+	mux.Handle("GET /api/v1/servers/pending", rd.Auth.RequireAuth(rd.API.PendingServersHandler()))
+	mux.Handle("POST /api/v1/servers/{id}/approve", rd.Auth.RequireAuth(rd.API.ServerApproveHandler()))
+	mux.Handle("POST /api/v1/servers/{id}/reject", rd.Auth.RequireAuth(rd.API.ServerRejectHandler()))
 	mux.Handle("GET /api/v1/servers/{id}", rd.Auth.RequireAuth(rd.API.ServerHandler()))
 	mux.Handle("GET /api/v1/servers/{id}/sessions", rd.Auth.RequireAuth(rd.API.ServerSessionsHandler()))
 	mux.Handle("POST /api/v1/servers/{id}/sessions", rd.Auth.RequireAuth(rd.API.ServerCreateSessionHandler()))

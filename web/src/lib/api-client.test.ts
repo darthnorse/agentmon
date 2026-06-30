@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { login, logout, me, listServers, listSessions, renameSession, setCsrfToken, ApiError } from "@/lib/api-client";
+import { login, logout, me, listServers, listSessions, renameSession, listPending, approveServer, rejectServer, setCsrfToken, ApiError } from "@/lib/api-client";
 
 function mockFetch(status: number, body: unknown) {
   // A 204/null-body status cannot carry a body in undici → pass null when no body.
@@ -74,6 +74,36 @@ describe("api-client", () => {
     vi.stubGlobal("fetch", f);
     await renameSession("srv-1", "old", "n");
     expect((f.mock.calls[0] as unknown as [string, RequestInit])[0]).toBe("/api/v1/servers/srv-1/sessions/rename");
+  });
+
+  it("listPending GETs the pending route without CSRF", async () => {
+    const f = mockFetch(200, [{ id: "web-01", hostname: "web-01", url: "http://x" }]);
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    const out = await listPending();
+    expect(out[0].id).toBe("web-01");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/servers/pending");
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBeUndefined();
+  });
+
+  it("approveServer POSTs to the approve route with CSRF (escaped id)", async () => {
+    const f = mockFetch(204, undefined);
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    await approveServer("web 01");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/servers/web%2001/approve");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
+  });
+
+  it("rejectServer POSTs to the reject route", async () => {
+    const f = mockFetch(204, undefined);
+    vi.stubGlobal("fetch", f);
+    await rejectServer("web-01");
+    expect((f.mock.calls[0] as unknown as [string, RequestInit])[0]).toBe("/api/v1/servers/web-01/reject");
   });
 
   it("listSessions omits the query when no target", async () => {

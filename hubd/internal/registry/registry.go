@@ -37,6 +37,19 @@ type Store interface {
 	ListServers(ctx context.Context, status string) ([]db.Server, error)
 	GetServer(ctx context.Context, id string) (db.Server, error)
 	TouchServerLastSeen(ctx context.Context, id string) error
+	SetServerStatus(ctx context.Context, id, status string) (bool, error)
+	DeleteServer(ctx context.Context, id string) (bool, error)
+}
+
+// PendingServer is a browser-safe projection of an agent awaiting admission —
+// enough for the operator to verify it (hostname + dial URL + os/arch) before
+// admitting, and NO secrets (no bearer / signing key).
+type PendingServer struct {
+	ID       string `json:"id"`
+	Hostname string `json:"hostname"`
+	URL      string `json:"url"`
+	OS       string `json:"os,omitempty"`
+	Arch     string `json:"arch,omitempty"`
 }
 
 type Registry struct{ store Store }
@@ -84,4 +97,54 @@ func (r *Registry) Get(ctx context.Context, id string) (db.Server, bool, error) 
 // TouchLastSeen records a successful hub→agent dial. Best-effort.
 func (r *Registry) TouchLastSeen(ctx context.Context, id string) error {
 	return r.store.TouchServerLastSeen(ctx, id)
+}
+
+// ListPending returns agents awaiting admission (status="pending") as browser-safe
+// projections for the admit UI.
+func (r *Registry) ListPending(ctx context.Context) ([]PendingServer, error) {
+	servers, err := r.store.ListServers(ctx, "pending")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PendingServer, 0, len(servers))
+	for _, s := range servers {
+		out = append(out, PendingServer{ID: s.ID, Hostname: s.Hostname, URL: s.URL, OS: s.OS, Arch: s.Arch})
+	}
+	return out, nil
+}
+
+// Approve admits a PENDING agent (status → active) and returns the affected server
+// (for audit). ok=false when there is no such id OR it isn't pending — admitting is
+// only ever a pending→active transition, never a way to resurrect a revoked server.
+func (r *Registry) Approve(ctx context.Context, id string) (db.Server, bool, error) {
+	s, err := r.store.GetServer(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.Server{}, false, nil
+	}
+	if err != nil {
+		return db.Server{}, false, err
+	}
+	if s.Status != "pending" {
+		return db.Server{}, false, nil
+	}
+	ok, err := r.store.SetServerStatus(ctx, id, "active")
+	return s, ok, err
+}
+
+// Reject removes a PENDING enrollment entirely and returns the affected server (for
+// audit). ok=false when there is no such id OR it isn't pending — this never deletes
+// an ACTIVE server (that is the more dangerous `server rm`, CLI-only).
+func (r *Registry) Reject(ctx context.Context, id string) (db.Server, bool, error) {
+	s, err := r.store.GetServer(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.Server{}, false, nil
+	}
+	if err != nil {
+		return db.Server{}, false, err
+	}
+	if s.Status != "pending" {
+		return db.Server{}, false, nil
+	}
+	ok, err := r.store.DeleteServer(ctx, id)
+	return s, ok, err
 }

@@ -28,6 +28,9 @@ export interface CreateSessionRequest { name: string; cwd?: string; command?: st
 // POST /api/v1/servers/{id}/sessions/rename body (mirrors shared.RenameSessionRequest).
 // `to` is validated by the same name rule as create. The response is the renamed Session.
 export interface RenameSessionRequest { from: string; to: string; }
+// GET /api/v1/servers/pending item (mirrors registry.PendingServer) — an agent
+// awaiting admission. No secrets; enough to verify it before approving.
+export interface PendingServer { id: string; hostname: string; url: string; os?: string; arch?: string; }
 // POST /api/v1/push/subscribe body (mirrors the browser PushSubscription.toJSON shape
 // the hub's api.push decodes). The endpoint is the natural unique key (server PK).
 export interface PushSubscriptionJSON { endpoint: string; keys: { p256dh: string; auth: string }; }
