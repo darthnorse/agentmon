@@ -115,14 +115,18 @@ enroll_rate_limit: { max_attempts: 30, window: "1m" }
 
 Apply config-only changes with `docker compose restart agentmon-hub` (config is read at startup).
 
-### 3. Create your login
+### 3. Sign in
+
+On first run (an empty database) the hub seeds a default login — **`admin` / `changeme123`** — so it's
+reachable immediately. Open `external_origin` in a browser, sign in, and **change the password** from the
+Settings menu (⚙); a banner nudges you until you do.
+
+Prefer the CLI, or need to reset a forgotten password?
 
 ```bash
 docker compose exec agentmon-hub /agentmon-hubd user set-password --username you --config /data/config.yaml
 # prompts for a password on stdin (or set AGENTMON_PASSWORD)
 ```
-
-Open `external_origin` in a browser and log in.
 
 ### 4. Install an agent on each server
 
@@ -143,7 +147,12 @@ and restarts (keeping its enrollment + config) — so the same command is also t
 > the installer: **`root` if you're logged in as root**, or your login name if you install with `sudo` from a
 > normal account (it uses `$SUDO_USER`). If that differs from the user whose agents/tmux you want to
 > monitor, pass `--user=<that-user>` (e.g. `--user=root`) — otherwise the agent watches the wrong tmux and
-> the server shows **no sessions**. (Likewise `--socket=<name>` for a non-default `tmux -L` socket.)
+> the server shows **no sessions**.
+>
+> **Sockets:** by default the agent watches a dedicated **`agentmon`** tmux socket — never your normal
+> `tmux` sessions — so it sees only what you deliberately put there: run monitored work with
+> `tmux -L agentmon …`. Pass `--socket=default` to watch your standard socket instead, or `--socket=<name>`
+> for another.
 
 ### 5. Admit the agent
 
