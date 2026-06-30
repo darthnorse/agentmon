@@ -139,6 +139,33 @@ describe("TerminalSocket", () => {
     sock.dispose();
   });
 
+  it("delivers a {t:state} text frame to onState (and never to onData)", () => {
+    const onData = vi.fn();
+    const onState = vi.fn();
+    const sock = new TerminalSocket(target, { onData, onState }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open();
+    FakeWS.instances[0].fireOpen();
+    FakeWS.instances[0].fireMessage(JSON.stringify({ t: "state", state: "blocked", session: "api" }));
+    expect(onState).toHaveBeenCalledTimes(1);
+    expect(onState).toHaveBeenCalledWith({ state: "blocked", session: "api" });
+    expect(onData).not.toHaveBeenCalled();
+    sock.dispose();
+  });
+
+  it("ignores non-state and malformed string frames without throwing", () => {
+    const onData = vi.fn();
+    const onState = vi.fn();
+    const sock = new TerminalSocket(target, { onData, onState }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open();
+    FakeWS.instances[0].fireOpen();
+    expect(() => FakeWS.instances[0].fireMessage("not json {")).not.toThrow();
+    FakeWS.instances[0].fireMessage(JSON.stringify({ t: "other", foo: 1 }));
+    FakeWS.instances[0].fireMessage("plain text");
+    expect(onState).not.toHaveBeenCalled();
+    expect(onData).not.toHaveBeenCalled();
+    sock.dispose();
+  });
+
   it("binaryType is set to arraybuffer after open()", () => {
     const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
     sock.open();

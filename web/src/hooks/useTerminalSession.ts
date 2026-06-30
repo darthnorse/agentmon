@@ -1,6 +1,8 @@
 import * as React from "react";
 import { TerminalSocket, type TerminalTarget } from "@/lib/ws-terminal";
 import type { XTermHandle } from "@/components/XTerm";
+import { useSessionState } from "@/store/session-state";
+import { normalizeState } from "@/lib/state";
 import * as keys from "@/lib/keybar";
 
 export interface TerminalController {
@@ -48,6 +50,15 @@ export function useTerminalSession(target: TerminalTarget) {
         xtermRef.current?.focus();
       },
       onClose: () => setConnected(false),
+      // Live hub state delta for this pane → update the shared store so the
+      // focused tile's dot tracks blocked/done without waiting for SSE.
+      onState: (f) =>
+        useSessionState.getState().applyDelta({
+          server: target.serverId,
+          target: target.target,
+          session: f.session,
+          state: normalizeState(f.state),
+        }),
     });
     sockRef.current = sock;
     sock.open();

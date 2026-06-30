@@ -31,11 +31,18 @@ export function nextDelay(attempt: number): number {
   return Math.min(BACKOFF_CAP, BACKOFF_BASE * 2 ** attempt);
 }
 
+export interface TerminalStateFrame {
+  state: string;
+  session: string;
+}
+
 export interface TerminalSocketHandlers {
   onData(bytes: Uint8Array): void;
   onOpen?(): void;
   onClose?(): void;
   onError?(): void;
+  // Out-of-band hub state delta for this pane's session ({t:"state",state,session}).
+  onState?(frame: TerminalStateFrame): void;
 }
 
 export interface TerminalSocketDeps {
@@ -80,7 +87,17 @@ export class TerminalSocket {
       this.handlers.onOpen?.();
     };
     ws.onmessage = (ev: MessageEvent) => {
-      if (typeof ev.data === "string") return; // relay sends no client control today
+      if (typeof ev.data === "string") {
+        // Text frames carry hub control, not terminal output. Today the only one
+        // we read is the {t:"state"} session-state delta; anything else is ignored.
+        try {
+          const m = JSON.parse(ev.data);
+          if (m && m.t === "state") {
+            this.handlers.onState?.({ state: m.state, session: m.session });
+          }
+        } catch { /* malformed JSON — ignore, never treat as output */ }
+        return;
+      }
       this.handlers.onData(new Uint8Array(ev.data as ArrayBuffer));
     };
     ws.onerror = () => {
