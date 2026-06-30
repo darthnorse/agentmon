@@ -8,12 +8,13 @@ import (
 )
 
 type Session struct {
-	Token       string
-	PrincipalID string
-	Username    string
-	DisplayName string
-	CSRFToken   string
-	Expiry      time.Time
+	Token              string
+	PrincipalID        string
+	Username           string
+	DisplayName        string
+	CSRFToken          string
+	MustChangePassword bool
+	Expiry             time.Time
 }
 
 type Store struct {
@@ -71,5 +72,16 @@ func (s *Store) Get(token string) (Session, bool) {
 func (s *Store) Delete(token string) {
 	s.mu.Lock()
 	delete(s.m, token)
+	s.mu.Unlock()
+}
+
+// SetMustChange updates the live session's must-change-password flag so /me reflects
+// it across reloads — set at login (default creds), cleared after a password change.
+func (s *Store) SetMustChange(token string, v bool) {
+	s.mu.Lock()
+	if sess, ok := s.m[token]; ok {
+		sess.MustChangePassword = v
+		s.m[token] = sess
+	}
 	s.mu.Unlock()
 }

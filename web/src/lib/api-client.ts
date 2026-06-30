@@ -1,6 +1,6 @@
 import type {
   ServerSummary, SessionInfo, Session, SeenRequest,
-  PushSubscriptionJSON, VapidKeyResponse, CreateSessionRequest, PendingServer,
+  PushSubscriptionJSON, VapidKeyResponse, CreateSessionRequest, PendingServer, ChangePasswordRequest,
 } from "@/lib/contracts";
 
 const BASE = "/api/v1";
@@ -52,7 +52,7 @@ export const logout = () => request<void>("POST", "/auth/logout");
 
 // Change the logged-in user's password (auto-CSRF). 401 if the current is wrong.
 export const changePassword = (currentPassword: string, newPassword: string) =>
-  request<void>("POST", "/auth/password", { currentPassword, newPassword });
+  request<void>("POST", "/auth/password", { currentPassword, newPassword } satisfies ChangePasswordRequest);
 
 export const me = () => request<SessionInfo>("GET", "/me");
 

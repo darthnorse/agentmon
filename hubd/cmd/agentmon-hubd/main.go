@@ -65,13 +65,17 @@ func main() {
 	rec := audit.NewRecorder(database)
 
 	// First-run bootstrap: seed a default login ONLY when the DB has no users yet, so
-	// a fresh hub is reachable immediately (the login UI then nudges changing it).
-	if hash, herr := authn.HashPassword(authn.DefaultPassword); herr == nil {
-		if seeded, _ := database.SeedDefaultUser(context.Background(), uuid.NewString(),
-			authn.DefaultUsername, authn.DefaultUsername, hash); seeded {
-			log.Printf("seeded default login %q / %q — change it in the web UI (⚙ Settings) or via 'user set-password'",
-				authn.DefaultUsername, authn.DefaultPassword)
-		}
+	// a fresh hub is reachable immediately (the login UI then nudges changing it). A
+	// failed seed leaves the hub unusable, so fail loud. The default password is NOT
+	// logged (it's a known constant, but credentials don't belong in system logs).
+	if hash, herr := authn.HashPassword(authn.DefaultPassword); herr != nil {
+		log.Fatalf("hash default password: %v", herr)
+	} else if seeded, serr := database.SeedDefaultUser(context.Background(), uuid.NewString(),
+		authn.DefaultUsername, authn.DefaultUsername, hash); serr != nil {
+		log.Fatalf("seed default user: %v", serr)
+	} else if seeded {
+		log.Printf("seeded default login %q — change it in the web UI (⚙ Settings) or via 'user set-password'",
+			authn.DefaultUsername)
 	}
 
 	onboard := authn.NewLimiter(enrollMax(cfg), enrollWindow(cfg))
@@ -116,6 +120,8 @@ func main() {
 		Password: authn.PasswordDeps{
 			Users:               database,
 			Audit:               rec,
+			Store:               store,
+			CookieName:          cfg.SessionCookie.Name,
 			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
 		API: api.Deps{

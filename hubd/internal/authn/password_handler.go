@@ -3,6 +3,7 @@ package authn
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"agentmon/hubd/internal/db"
@@ -32,6 +33,8 @@ type PasswordAudit interface {
 type PasswordDeps struct {
 	Users               PasswordStore
 	Audit               PasswordAudit
+	Store               *Store // to clear the must-change flag on the live session
+	CookieName          string
 	TrustForwardedProto bool
 }
 
@@ -56,7 +59,7 @@ func (d PasswordDeps) ChangeHandler() http.HandlerFunc {
 			return
 		}
 		if len(body.NewPassword) < minPasswordLen {
-			writeErr(w, http.StatusBadRequest, "new password must be at least 8 characters")
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("new password must be at least %d characters", minPasswordLen))
 			return
 		}
 		u, err := d.Users.GetUserByUsername(r.Context(), p.Username)
@@ -64,12 +67,18 @@ func (d PasswordDeps) ChangeHandler() http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		// Bound the argon2id verify/hash through the shared semaphore (as login does),
+		// so a compromised authed session can't amplify into unbounded memory/CPU use.
+		verifySem <- struct{}{}
 		match, _ := VerifyPassword(u.PasswordHash, body.CurrentPassword)
+		<-verifySem
 		if !match {
 			writeErr(w, http.StatusUnauthorized, "current password is incorrect")
 			return
 		}
+		verifySem <- struct{}{}
 		hash, err := HashPassword(body.NewPassword)
+		<-verifySem
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
@@ -77,6 +86,13 @@ func (d PasswordDeps) ChangeHandler() http.HandlerFunc {
 		if err := d.Users.SetPassword(r.Context(), u.ID, u.Username, u.DisplayName, hash); err != nil {
 			writeErr(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		// Password is no longer the default → clear the must-change flag on this session
+		// so /me stops nudging across reloads.
+		if d.Store != nil {
+			if c, cerr := r.Cookie(d.CookieName); cerr == nil {
+				d.Store.SetMustChange(c.Value, false)
+			}
 		}
 		d.Audit.PasswordChange(r.Context(), u.ID, ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		w.WriteHeader(http.StatusNoContent)

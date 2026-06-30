@@ -28,9 +28,10 @@ func (a *Authenticator) MeHandler() http.HandlerFunc {
 		}
 		csrf, _ := csrfFrom(r.Context())
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"principalId": p.ID, "username": p.Username,
 			"displayName": p.DisplayName, "csrfToken": csrf,
+			"mustChangePassword": p.MustChangePassword,
 		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
@@ -41,12 +42,16 @@ func pwReq(body string, p authz.Principal) (*http.Request, *httptest.ResponseRec
 	return r, httptest.NewRecorder()
 }
 
-func TestChangePasswordHappyPath(t *testing.T) {
+func TestChangePasswordHappyPathClearsSessionNudge(t *testing.T) {
 	hash, _ := HashPassword("oldpw")
 	store := &stubPwStore{u: db.User{ID: "u1", Username: "patrik", DisplayName: "P", PasswordHash: hash, Status: "active"}}
 	aud := &stubPwAudit{}
-	d := PasswordDeps{Users: store, Audit: aud}
+	sessStore := NewStore(time.Hour)
+	sess, _ := sessStore.New("u1", "patrik", "P")
+	sessStore.SetMustChange(sess.Token, true)
+	d := PasswordDeps{Users: store, Audit: aud, Store: sessStore, CookieName: "agentmon_session"}
 	r, w := pwReq(`{"currentPassword":"oldpw","newPassword":"newpassword1"}`, authz.Principal{ID: "u1", Username: "patrik"})
+	r.AddCookie(&http.Cookie{Name: "agentmon_session", Value: sess.Token})
 	d.ChangeHandler()(w, r)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("code %d: %s", w.Code, w.Body)
@@ -59,6 +64,38 @@ func TestChangePasswordHappyPath(t *testing.T) {
 	}
 	if aud.n != 1 {
 		t.Fatalf("password change must be audited once, got %d", aud.n)
+	}
+	if got, _ := sessStore.Get(sess.Token); got.MustChangePassword {
+		t.Fatal("the must-change nudge must be cleared on the session after a change")
+	}
+}
+
+func TestStoreSetMustChange(t *testing.T) {
+	s := NewStore(time.Hour)
+	sess, _ := s.New("u1", "admin", "A")
+	if got, _ := s.Get(sess.Token); got.MustChangePassword {
+		t.Fatal("a new session must default to mustChange=false")
+	}
+	s.SetMustChange(sess.Token, true)
+	if got, _ := s.Get(sess.Token); !got.MustChangePassword {
+		t.Fatal("SetMustChange(true) not reflected")
+	}
+	s.SetMustChange(sess.Token, false)
+	if got, _ := s.Get(sess.Token); got.MustChangePassword {
+		t.Fatal("SetMustChange(false) not reflected")
+	}
+}
+
+func TestMeHandlerReturnsMustChangePassword(t *testing.T) {
+	a := &Authenticator{}
+	r := httptest.NewRequest("GET", "/api/v1/me", nil)
+	r = r.WithContext(ContextWithPrincipal(r.Context(), authz.Principal{ID: "u1", Username: "admin", MustChangePassword: true}))
+	w := httptest.NewRecorder()
+	a.MeHandler()(w, r)
+	var resp map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if resp["mustChangePassword"] != true {
+		t.Fatalf("/me must reflect the session's mustChangePassword across reloads: %+v", resp)
 	}
 }
 

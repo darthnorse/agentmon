@@ -72,14 +72,17 @@ func (d LoginDeps) LoginHandler() http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "session")
 			return
 		}
+		// Nudge a change while the operator is still using the shipped default. Stored
+		// on the session so /me re-reports it across reloads (cleared on a change).
+		mustChange := body.Username == DefaultUsername && body.Password == DefaultPassword
+		d.Store.SetMustChange(sess.Token, mustChange)
 		SetSessionCookie(w, d.CookieName, sess.Token, SecureFromRequest(r, d.TrustForwardedProto), d.CookieTTL)
 		d.Audit.LoginSuccess(r.Context(), u.ID, ip, r.UserAgent())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"principalId": u.ID, "username": u.Username,
 			"displayName": u.DisplayName, "csrfToken": sess.CSRFToken,
-			// Nudge a change while the operator is still using the shipped default.
-			"mustChangePassword": body.Username == DefaultUsername && body.Password == DefaultPassword,
+			"mustChangePassword": mustChange,
 		})
 	}
 }

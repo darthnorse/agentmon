@@ -7,9 +7,10 @@ package authz
 import "context"
 
 type Principal struct {
-	ID          string
-	Username    string
-	DisplayName string
+	ID                 string
+	Username           string
+	DisplayName        string
+	MustChangePassword bool
 }
 
 type Action string

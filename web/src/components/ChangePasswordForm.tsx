@@ -33,13 +33,10 @@ export function ChangePasswordForm() {
       toast.success("Password changed");
     } catch (err) {
       const status = err instanceof ApiError ? err.status : undefined;
-      setError(
-        status === 401
-          ? "Current password is incorrect."
-          : status === 400
-            ? `New password must be at least ${MIN_LEN} characters.`
-            : "Could not change password.",
-      );
+      let msg = "Could not change password.";
+      if (status === 401) msg = "Current password is incorrect.";
+      else if (status === 400) msg = `New password must be at least ${MIN_LEN} characters.`;
+      setError(msg);
     } finally {
       setBusy(false);
     }

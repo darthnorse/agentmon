@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { listPending, approveServer, rejectServer } from "@/lib/api-client";
 import { queryClient } from "@/lib/query-client";
 import { Button } from "@/components/ui/button";
+import { WarningBanner } from "@/components/WarningBanner";
 import type { PendingServer } from "@/lib/contracts";
 
 // Admit UI. A full-width banner (its OWN row below the header, so it wraps cleanly
@@ -21,11 +22,7 @@ export function PendingAgents() {
   if (pending.length === 0) return null;
 
   return (
-    <div
-      className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2"
-      role="region"
-      aria-label="Agents pending approval"
-    >
+    <WarningBanner label="Agents pending approval">
       <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
         {pending.length} agent{pending.length === 1 ? "" : "s"} pending approval
       </div>
@@ -34,7 +31,7 @@ export function PendingAgents() {
           <PendingRow key={a.id} agent={a} />
         ))}
       </ul>
-    </div>
+    </WarningBanner>
   );
 }
 

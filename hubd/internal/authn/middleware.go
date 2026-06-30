@@ -71,9 +71,10 @@ func (a *Authenticator) RequireAuth(next http.Handler) http.Handler {
 			}
 		}
 		p := authz.Principal{
-			ID:          sess.PrincipalID,
-			Username:    sess.Username,
-			DisplayName: sess.DisplayName,
+			ID:                 sess.PrincipalID,
+			Username:           sess.Username,
+			DisplayName:        sess.DisplayName,
+			MustChangePassword: sess.MustChangePassword,
 		}
 		ctx := ContextWithPrincipal(r.Context(), p)
 		ctx = contextWithCSRF(ctx, sess.CSRFToken)
