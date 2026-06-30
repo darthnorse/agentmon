@@ -57,7 +57,6 @@ export function GridView() {
                     {p.serverName} ·
                   </button>
                   <SessionNameEditor className="min-w-0" serverId={p.serverId} target={p.target} name={p.session} paneId={p.paneId} />
-                  <span className="flex-none text-muted-foreground">· {p.paneId}</span>
                 </span>
                 <span className="flex flex-none items-center gap-1">
                   {expanded ? (
