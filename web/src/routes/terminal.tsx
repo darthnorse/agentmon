@@ -1,6 +1,7 @@
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
+import { SessionNameEditor } from "@/components/SessionNameEditor";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
@@ -21,7 +22,16 @@ export function MobileTerminalRoute() {
       <header className="flex items-center gap-2 border-b border-border px-2 py-2">
         <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/" })}>‹ Back</Button>
         <div className="min-w-0">
-          <div className="truncate font-medium">{session}</div>
+          <SessionNameEditor
+            className="font-medium"
+            serverId={serverId}
+            target={target}
+            name={session}
+            paneId={paneId}
+            onRenamed={(to) =>
+              navigate({ to: ".", search: (s) => ({ ...s, session: to }), replace: true })
+            }
+          />
           <div className="truncate text-xs text-muted-foreground">{serverId} · {paneId}</div>
         </div>
       </header>

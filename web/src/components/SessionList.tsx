@@ -2,6 +2,8 @@ import * as React from "react";
 import type { Session, ServerSummary, Window, Pane, SessionState } from "@/lib/contracts";
 import { Input } from "@/components/ui/input";
 import { StateDot } from "@/components/StateDot";
+import { SessionNameEditor } from "@/components/SessionNameEditor";
+import { rowActivation } from "@/lib/row-activation";
 import { paneKey } from "@/store/panes";
 
 export interface SessionRow {
@@ -74,16 +76,22 @@ export function SessionList({
             </li>
             {group.rows.map((row) => (
               <li key={paneKey(row.server.id, row.session.target, row.session.name, row.pane.id)}>
-                <button
-                  className="flex w-full items-center gap-2 border-b border-border px-4 py-3 text-left hover:bg-accent"
-                  onClick={() => onOpen(row)}
+                <div
+                  {...rowActivation(() => onOpen(row))}
+                  className="flex w-full cursor-pointer items-center gap-2 border-b border-border px-4 py-3 text-left hover:bg-accent"
                 >
                   <StateDot state={stateOf(row)} />
                   <div className="min-w-0">
-                    <div className="font-medium">{row.session.name}</div>
+                    <SessionNameEditor
+                      className="font-medium"
+                      serverId={row.server.id}
+                      target={row.session.target}
+                      name={row.session.name}
+                      paneId={row.pane.id}
+                    />
                     <div className="text-xs text-muted-foreground">{row.server.name} · {row.session.cwd || "—"}</div>
                   </div>
-                </button>
+                </div>
               </li>
             ))}
           </React.Fragment>

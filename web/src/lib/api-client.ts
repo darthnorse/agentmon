@@ -74,6 +74,16 @@ export const createSession = (serverId: string, body: CreateSessionRequest, targ
     body,
   );
 
+// Rename a tmux session (header inline-edit + the session-row action). The hub
+// re-lists and returns the renamed Session. Auto-CSRF (mutating).
+export const renameSession = (serverId: string, from: string, to: string, target?: string) =>
+  request<Session>(
+    "POST",
+    `/servers/${encodeURIComponent(serverId)}/sessions/rename` +
+      (target ? `?target=${encodeURIComponent(target)}` : ""),
+    { from, to },
+  );
+
 // Web-Push (M9). VAPID public key is non-secret; subscribe/unsubscribe are mutating
 // (auto-CSRF). Unsubscribe sends only the endpoint (the server's PK).
 export const getVapidPublicKey = () => request<VapidKeyResponse>("GET", "/push/vapid");

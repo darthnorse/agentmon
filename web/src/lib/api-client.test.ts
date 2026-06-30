@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { login, logout, me, listServers, listSessions, setCsrfToken, ApiError } from "@/lib/api-client";
+import { login, logout, me, listServers, listSessions, renameSession, setCsrfToken, ApiError } from "@/lib/api-client";
 
 function mockFetch(status: number, body: unknown) {
   // A 204/null-body status cannot carry a body in undici → pass null when no body.
@@ -54,6 +54,26 @@ describe("api-client", () => {
     vi.stubGlobal("fetch", f);
     await listSessions("srv 1", "t/x");
     expect((f.mock.calls[0] as unknown as [string, RequestInit])[0]).toBe("/api/v1/servers/srv%201/sessions?target=t%2Fx");
+  });
+
+  it("renameSession posts {from,to} with CSRF to the rename route", async () => {
+    const f = mockFetch(201, { name: "newname", server: "s", target: "default", windows: [] });
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    const out = await renameSession("srv-1", "old", "newname", "default");
+    expect(out.name).toBe("newname");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/servers/srv-1/sessions/rename?target=default");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ from: "old", to: "newname" }));
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
+  });
+
+  it("renameSession omits the target query when not given", async () => {
+    const f = mockFetch(201, { name: "n", server: "s", target: "default", windows: [] });
+    vi.stubGlobal("fetch", f);
+    await renameSession("srv-1", "old", "n");
+    expect((f.mock.calls[0] as unknown as [string, RequestInit])[0]).toBe("/api/v1/servers/srv-1/sessions/rename");
   });
 
   it("listSessions omits the query when no target", async () => {

@@ -112,6 +112,52 @@ func CreateSessionHandler(cfg config.Config, create SessionCreator) http.Handler
 	}
 }
 
+// SessionRenamer renames an existing tmux session on the given socket. DI seam for
+// RenameSessionHandler (mirrors SessionCreator): production binds tmux.RenameSession
+// + tmux.ExecRunner; tests inject a fake.
+type SessionRenamer func(ctx context.Context, socket, from, to string) error
+
+// RenameSessionHandler serves POST /sessions/rename?target=<label>. The body's `to`
+// is re-validated against the shared charset rule; `from` must be non-empty (an
+// existing tmux name). Maps tmux.ErrSessionExists→409 and tmux.ErrNoSession→404.
+func RenameSessionHandler(cfg config.Config, rename SessionRenamer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxCreateBody)
+		var req shared.RenameSessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.From == "" {
+			writeJSONError(w, http.StatusBadRequest, "from is required")
+			return
+		}
+		if err := shared.ValidateSessionName(req.To); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		t, ok := cfg.ResolveTarget(r.URL.Query().Get("target"))
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "unknown target")
+			return
+		}
+		if err := rename(r.Context(), t.SocketName, req.From, req.To); err != nil {
+			switch {
+			case errors.Is(err, tmux.ErrSessionExists):
+				writeJSONError(w, http.StatusConflict, "a session with that name already exists")
+			case errors.Is(err, tmux.ErrNoSession):
+				writeJSONError(w, http.StatusNotFound, "no such session")
+			default:
+				log.Printf("sessions: rename failed (target=%q from=%q to=%q): %v", t.Label, req.From, req.To, err)
+				writeJSONError(w, http.StatusInternalServerError, "rename failed")
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(shared.CreateSessionResponse{Name: req.To})
+	}
+}
+
 // stampState fills Session.State from the machine's per-pane states (rolled up).
 // A nil machine (hooks disabled) leaves every session StateUnknown.
 func stampState(m *state.Machine, target string, sessions []shared.Session) {

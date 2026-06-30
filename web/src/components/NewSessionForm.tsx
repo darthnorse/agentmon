@@ -4,11 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Session, CreateSessionRequest } from "@/lib/contracts";
-
-// Client-side mirror of shared.ValidateSessionName (^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$).
-// The hub + agent re-validate; this only gates the submit button for fast feedback.
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-export const isValidSessionName = (name: string): boolean => NAME_RE.test(name);
+import { isValidSessionName, SESSION_NAME_HINT } from "@/lib/session-name";
 
 // The last path segment of a directory, used to suggest a default name (§9.5).
 const baseName = (p: string): string => {
@@ -69,9 +65,7 @@ export function NewSessionForm({ serverId, target, onCreated }: Props) {
           onChange={(e) => { setName(e.target.value); setNameEdited(true); setError(null); }}
         />
         {name && !nameOk && (
-          <p className="text-xs text-muted-foreground">
-            Letters, digits, “_” and “-” only; must start with a letter or digit (max 64).
-          </p>
+          <p className="text-xs text-muted-foreground">{SESSION_NAME_HINT}</p>
         )}
       </div>
       <div className="space-y-1.5">

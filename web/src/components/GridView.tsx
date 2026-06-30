@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
+import { SessionNameEditor } from "@/components/SessionNameEditor";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
 
@@ -40,18 +41,23 @@ export function GridView() {
           const hidden = activeId !== null && !expanded;
           return (
             <div
-              key={p.id}
+              // Key by the session-independent pane identity so a session RENAME
+              // (which changes p.id) does NOT remount the tile and tear down its
+              // WebSocket. p.id still drives focus/close/expand below.
+              key={`${p.serverId}:${p.target}:${p.paneId}`}
               className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border"
               style={{ display: hidden ? "none" : "flex" }}
             >
               <div className="flex items-center justify-between border-b border-border bg-card px-2 py-1 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <StateDot state={effectiveSessionState(snap, p.serverId, p.target, p.session, p.state)} />
-                  <button className="min-w-0 truncate text-left hover:underline"
+                  <button className="min-w-0 flex-none truncate text-left text-muted-foreground hover:underline"
                     onClick={() => (expanded ? collapse() : focus(p.id))}
                     title={expanded ? "Back to grid" : "Expand"}>
-                    {p.serverName} · {p.session} · {p.paneId}
+                    {p.serverName} ·
                   </button>
+                  <SessionNameEditor className="min-w-0" serverId={p.serverId} target={p.target} name={p.session} paneId={p.paneId} />
+                  <span className="flex-none text-muted-foreground">· {p.paneId}</span>
                 </span>
                 <span className="flex flex-none items-center gap-1">
                   {expanded ? (

@@ -91,6 +91,25 @@ func TestSessionCreateRecorded(t *testing.T) {
 	}
 }
 
+func TestSessionRenameRecorded(t *testing.T) {
+	s := &fakeSink{}
+	r := NewRecorder(s)
+	r.SessionRename(context.Background(), "u1", "session:aigallery/default/newproj", "old", "newproj", "10.0.0.2", "curl/8")
+	if len(s.rows) != 1 {
+		t.Fatalf("rows: %d", len(s.rows))
+	}
+	got := s.rows[0]
+	if got.Action != "session.rename" || got.Result != "allow" {
+		t.Fatalf("action/result: %+v", got)
+	}
+	if got.PrincipalID != "u1" || got.Resource != "session:aigallery/default/newproj" {
+		t.Fatalf("principal/resource: %+v", got)
+	}
+	if got.Meta != `{"from":"old","to":"newproj"}` {
+		t.Fatalf("meta: %q", got.Meta)
+	}
+}
+
 func TestServerLifecycleAudits(t *testing.T) {
 	cap := &captureSink{}
 	r := NewRecorder(cap)

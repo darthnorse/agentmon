@@ -340,3 +340,60 @@ func TestCreateSessionHandlerRequiresBearer(t *testing.T) {
 		t.Fatalf("missing bearer: code %d, want 401", rr.Code)
 	}
 }
+
+func renameReq(body string) (*http.Request, *httptest.ResponseRecorder) {
+	return httptest.NewRequest(http.MethodPost, "/sessions/rename?target=default", strings.NewReader(body)),
+		httptest.NewRecorder()
+}
+
+func TestRenameSessionHandlerValid(t *testing.T) {
+	var gotSocket, gotFrom, gotTo string
+	rename := func(ctx context.Context, socket, from, to string) error {
+		gotSocket, gotFrom, gotTo = socket, from, to
+		return nil
+	}
+	h := RenameSessionHandler(createTestCfg(t.TempDir()), rename)
+	req, rr := renameReq(`{"from":"old","to":"new-name"}`)
+	h(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp shared.CreateSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil || resp.Name != "new-name" {
+		t.Fatalf("resp = %+v err %v", resp, err)
+	}
+	if gotSocket != "sock-1" || gotFrom != "old" || gotTo != "new-name" {
+		t.Fatalf("renamer got socket=%q from=%q to=%q", gotSocket, gotFrom, gotTo)
+	}
+}
+
+func TestRenameSessionHandlerRejects(t *testing.T) {
+	noCall := func(context.Context, string, string, string) error {
+		t.Helper()
+		t.Fatal("must not call renamer")
+		return nil
+	}
+	cfg := createTestCfg(t.TempDir())
+	cases := []struct {
+		name, body, target string
+		rename             SessionRenamer
+		want               int
+	}{
+		{"bad to", `{"from":"old","to":"-bad name"}`, "default", noCall, http.StatusBadRequest},
+		{"empty from", `{"from":"","to":"new"}`, "default", noCall, http.StatusBadRequest},
+		{"unknown target", `{"from":"old","to":"new"}`, "ghost", noCall, http.StatusNotFound},
+		{"duplicate", `{"from":"old","to":"taken"}`, "default", func(context.Context, string, string, string) error { return tmux.ErrSessionExists }, http.StatusConflict},
+		{"no such session", `{"from":"ghost","to":"new"}`, "default", func(context.Context, string, string, string) error { return tmux.ErrNoSession }, http.StatusNotFound},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := RenameSessionHandler(cfg, c.rename)
+			req := httptest.NewRequest(http.MethodPost, "/sessions/rename?target="+c.target, strings.NewReader(c.body))
+			rr := httptest.NewRecorder()
+			h(rr, req)
+			if rr.Code != c.want {
+				t.Fatalf("code %d, want %d (%s)", rr.Code, c.want, rr.Body.String())
+			}
+		})
+	}
+}
