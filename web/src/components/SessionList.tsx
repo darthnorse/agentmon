@@ -1,7 +1,6 @@
 import * as React from "react";
 import type { Session, ServerSummary, Window, Pane, SessionState } from "@/lib/contracts";
 import { Input } from "@/components/ui/input";
-import { sortBlockedFirst } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
 
 export interface SessionRow {
@@ -34,6 +33,15 @@ export function matchesQuery(row: SessionRow, q: string): boolean {
   return hay.includes(q.toLowerCase());
 }
 
+// Mobile §6.2 sectioned inbox: 4 ordered groups. idle + unknown share the "Idle"
+// bucket so the noisy unknown state doesn't sprout its own near-permanent section.
+const SECTIONS: ReadonlyArray<{ key: string; label: string; states: ReadonlyArray<SessionState> }> = [
+  { key: "attention", label: "Needs attention", states: ["blocked"] },
+  { key: "done", label: "Done", states: ["done"] },
+  { key: "working", label: "Working", states: ["working"] },
+  { key: "idle", label: "Idle", states: ["idle", "unknown"] },
+];
+
 export function SessionList({
   rows, query, onQueryChange, onOpen, stateOf,
 }: {
@@ -43,7 +51,11 @@ export function SessionList({
   onOpen(row: SessionRow): void;
   stateOf(row: SessionRow): SessionState;
 }) {
-  const filtered = sortBlockedFirst(rows.filter((r) => matchesQuery(r, query)), stateOf);
+  const filtered = rows.filter((r) => matchesQuery(r, query));
+  const groups = SECTIONS.map((section) => ({
+    ...section,
+    rows: filtered.filter((r) => section.states.includes(stateOf(r))),
+  })).filter((g) => g.rows.length > 0);
   return (
     <div className="flex h-full flex-col">
       <div className="p-3">
@@ -51,21 +63,31 @@ export function SessionList({
           onChange={(e) => onQueryChange(e.target.value)} aria-label="Search sessions" />
       </div>
       <ul className="flex-1 overflow-y-auto">
-        {filtered.map((row) => (
-          <li key={`${row.server.id}:${row.session.target}:${row.session.name}:${row.pane.id}`}>
-            <button
-              className="flex w-full items-center gap-2 border-b border-border px-4 py-3 text-left hover:bg-accent"
-              onClick={() => onOpen(row)}
+        {groups.map((group) => (
+          <React.Fragment key={group.key}>
+            <li
+              data-section={group.key}
+              className="border-b border-border bg-muted/40 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
             >
-              <StateDot state={stateOf(row)} />
-              <div className="min-w-0">
-                <div className="font-medium">{row.session.name}</div>
-                <div className="text-xs text-muted-foreground">{row.server.name} · {row.session.cwd || "—"}</div>
-              </div>
-            </button>
-          </li>
+              {group.label}
+            </li>
+            {group.rows.map((row) => (
+              <li key={`${row.server.id}:${row.session.target}:${row.session.name}:${row.pane.id}`}>
+                <button
+                  className="flex w-full items-center gap-2 border-b border-border px-4 py-3 text-left hover:bg-accent"
+                  onClick={() => onOpen(row)}
+                >
+                  <StateDot state={stateOf(row)} />
+                  <div className="min-w-0">
+                    <div className="font-medium">{row.session.name}</div>
+                    <div className="text-xs text-muted-foreground">{row.server.name} · {row.session.cwd || "—"}</div>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </React.Fragment>
         ))}
-        {filtered.length === 0 && (
+        {groups.length === 0 && (
           <li className="px-4 py-6 text-center text-sm text-muted-foreground">No sessions</li>
         )}
       </ul>
