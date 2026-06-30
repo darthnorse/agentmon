@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +18,10 @@ import (
 type fakeLister struct {
 	servers []registry.ServerSummary
 	get     map[string]db.Server
+
+	mu       sync.Mutex
+	touched  []string // server IDs passed to TouchLastSeen, in call order
+	touchErr error    // optional error returned by TouchLastSeen (best-effort path)
 }
 
 func (f *fakeLister) List(_ context.Context) ([]registry.ServerSummary, error) {
@@ -25,6 +30,21 @@ func (f *fakeLister) List(_ context.Context) ([]registry.ServerSummary, error) {
 func (f *fakeLister) Get(_ context.Context, id string) (db.Server, bool, error) {
 	s, ok := f.get[id]
 	return s, ok, nil
+}
+
+// TouchLastSeen records the call (thread-safe: Tick fans out one goroutine per
+// server) and optionally returns touchErr to exercise the best-effort path.
+func (f *fakeLister) TouchLastSeen(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.touched = append(f.touched, id)
+	return f.touchErr
+}
+
+func (f *fakeLister) touchedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.touched...)
 }
 
 type fakeAgent struct {
@@ -611,5 +631,115 @@ func TestPollerPublishesDoneReAlert(t *testing.T) {
 		}
 	default:
 		t.Fatal("tick 2 re-alert: expected a Change on done→done re-alert, got none")
+	}
+}
+
+// ─── TouchLastSeen tests (M11 T1) ───────────────────────────────────────────
+
+// touchFixture builds a poller whose single server "s" is reachable via GET
+// /state, returning the lister so tests can inspect TouchLastSeen calls.
+func touchFixture() (*Poller, *fakeLister, *fakeAgent) {
+	lister := &fakeLister{
+		servers: []registry.ServerSummary{{ID: "s"}},
+		get:     map[string]db.Server{"s": {ID: "s", URL: "http://x", Bearer: "b"}},
+	}
+	agent := &fakeAgent{
+		state: map[string]shared.AgentState{
+			"s": {Panes: []shared.PaneState{{Pane: "%0", State: shared.StateDone, TransitionSeq: 1, DoneSeq: 1, Epoch: "1"}}},
+		},
+		sessions: map[string][]shared.Session{
+			"s": {{Name: "api", Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}},
+		},
+	}
+	store := &fakeStore{}
+	clk := time.Unix(100, 0)
+	p := NewPoller(lister, agent, store, NewProjection(), time.Second, func() time.Time { return clk }, nil)
+	return p, lister, agent
+}
+
+// A successful GET /state poll must refresh the server's last_seen exactly once
+// for that server, keyed on the server ID.
+func TestPollerTouchesLastSeenOnStateSuccess(t *testing.T) {
+	p, lister, _ := touchFixture()
+	p.Tick(context.Background())
+	if got := lister.touchedIDs(); len(got) != 1 || got[0] != "s" {
+		t.Fatalf("want TouchLastSeen([s]) once, got %v", got)
+	}
+}
+
+// The degraded path (agent 404s GET /state but Sessions() succeeds — the agent
+// IS reachable) must also refresh last_seen.
+func TestPollerTouchesLastSeenOnDegradedSuccess(t *testing.T) {
+	p, lister, agent := touchFixture()
+	pollerForceStateErr(agent, "s", registry.ErrStateUnsupported)
+	agent.sessions["s"] = []shared.Session{{Name: "api", Target: "", State: shared.StateDone}}
+	p.Tick(context.Background())
+	if got := lister.touchedIDs(); len(got) != 1 || got[0] != "s" {
+		t.Fatalf("degraded reachable: want TouchLastSeen([s]) once, got %v", got)
+	}
+}
+
+// A non-404 State() error means the agent is unreachable → backoff → last_seen
+// must NOT be refreshed.
+func TestPollerNoTouchOnUnreachable(t *testing.T) {
+	p, lister, agent := touchFixture()
+	pollerForceStateErr(agent, "s", errors.New("dial timeout"))
+	p.Tick(context.Background())
+	if got := lister.touchedIDs(); len(got) != 0 {
+		t.Fatalf("unreachable agent must not touch last_seen, got %v", got)
+	}
+}
+
+// In the degraded path, if even Sessions() fails the agent is unreachable →
+// last_seen must NOT be refreshed.
+func TestPollerNoTouchOnDegradedSessionsError(t *testing.T) {
+	p, lister, agent := touchFixture()
+	pollerForceStateErr(agent, "s", registry.ErrStateUnsupported)
+	agent.sessionsErr = map[string]error{"s": errors.New("boom")}
+	p.Tick(context.Background())
+	if got := lister.touchedIDs(); len(got) != 0 {
+		t.Fatalf("degraded sessions error must not touch last_seen, got %v", got)
+	}
+}
+
+// State() succeeded (agent reachable) so last_seen is refreshed even if the
+// follow-up Sessions() call fails — reachability is proven by the /state 200.
+func TestPollerTouchesLastSeenWhenStateOKButSessionsFail(t *testing.T) {
+	p, lister, agent := touchFixture()
+	agent.sessionsErr = map[string]error{"s": errors.New("boom")}
+	p.Tick(context.Background())
+	if got := lister.touchedIDs(); len(got) != 1 || got[0] != "s" {
+		t.Fatalf("state-ok/sessions-fail: want TouchLastSeen([s]) once, got %v", got)
+	}
+}
+
+// A best-effort TouchLastSeen failure must not abort the poll: the snapshot is
+// still ingested and projected as usual.
+func TestPollerTouchLastSeenErrorIsNonFatal(t *testing.T) {
+	p, lister, _ := touchFixture()
+	lister.touchErr = errors.New("touch failed")
+	// Reuse the store/proj on the poller via a fresh tick; verify no panic and
+	// that the event is still written by inspecting the poller's projection.
+	p.Tick(context.Background())
+	if v, ok := p.proj.Session("s", "", "api"); !ok || v.Global != shared.StateDone {
+		t.Fatalf("touch error must not block ingestion; projection=%+v ok=%v", v, ok)
+	}
+	if got := lister.touchedIDs(); len(got) != 1 {
+		t.Fatalf("want TouchLastSeen attempted once despite error, got %v", got)
+	}
+}
+
+// A server skipped by the backoff window (no State() call this tick) must not
+// refresh last_seen.
+func TestPollerNoTouchWhileBackedOff(t *testing.T) {
+	p, lister, agent := touchFixture()
+	pollerForceStateErr(agent, "s", errors.New("dial timeout"))
+	p.Tick(context.Background()) // tick 1: error → backoff armed, no touch
+	p.Tick(context.Background()) // tick 2: within backoff window → skipped entirely
+	if got := lister.touchedIDs(); len(got) != 0 {
+		t.Fatalf("backed-off server must not touch last_seen, got %v", got)
+	}
+	if agent.stateCalls.Load() != 1 {
+		t.Fatalf("tick 2 should be skipped by backoff (1 State call), got %d", agent.stateCalls.Load())
 	}
 }

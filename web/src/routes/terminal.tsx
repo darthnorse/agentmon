@@ -2,6 +2,8 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
+import { usePrefs } from "@/store/prefs";
+import { themeOf } from "@/lib/terminal-themes";
 
 export interface TerminalSearch { target: string; session: string; }
 
@@ -9,6 +11,8 @@ export function MobileTerminalRoute() {
   const { serverId, paneId } = useParams({ strict: false }) as { serverId: string; paneId: string };
   const { target, session } = useSearch({ strict: false }) as TerminalSearch;
   const navigate = useNavigate();
+  const fontSize = usePrefs((s) => s.fontSizeMobile);
+  const theme = themeOf(usePrefs((s) => s.terminalTheme));
 
   useFocusedSeen({ serverId, target, sessionName: session });
 
@@ -22,7 +26,7 @@ export function MobileTerminalRoute() {
         </div>
       </header>
       <div className="min-h-0 flex-1">
-        <TerminalView serverId={serverId} paneId={paneId} target={target} showKeyBar fontSize={10} />
+        <TerminalView serverId={serverId} paneId={paneId} target={target} showKeyBar fontSize={fontSize} theme={theme} />
       </div>
     </div>
   );

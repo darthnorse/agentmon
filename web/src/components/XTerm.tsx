@@ -1,7 +1,8 @@
 import * as React from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { TERMINAL_THEMES } from "@/lib/terminal-themes";
 import "@xterm/xterm/css/xterm.css";
 
 export interface XTermHandle {
@@ -17,8 +18,8 @@ export interface XTermHandle {
 
 export const XTerm = React.forwardRef<
   XTermHandle,
-  { onData(d: string): void; onResize(cols: number, rows: number): void; fontSize?: number }
->(function XTerm({ onData, onResize, fontSize = 13 }, ref) {
+  { onData(d: string): void; onResize(cols: number, rows: number): void; fontSize?: number; theme?: ITheme }
+>(function XTerm({ onData, onResize, fontSize = 13, theme = TERMINAL_THEMES.dark }, ref) {
   const hostRef = React.useRef<HTMLDivElement>(null);
   const termRef = React.useRef<Terminal | null>(null);
   const fitRef = React.useRef<FitAddon | null>(null);
@@ -26,6 +27,9 @@ export const XTerm = React.forwardRef<
   // keep the latest callbacks without re-creating the terminal
   const onDataRef = React.useRef(onData);
   const onResizeRef = React.useRef(onResize);
+  // latest font size for the touch-swipe cell math (font size is user-configurable)
+  const fontSizeRef = React.useRef(fontSize);
+  fontSizeRef.current = fontSize;
   onDataRef.current = onData;
   onResizeRef.current = onResize;
 
@@ -50,7 +54,7 @@ export const XTerm = React.forwardRef<
       fontSize,
       scrollback: 5000,
       fontFamily: "Menlo, Consolas, monospace",
-      theme: { background: "#111418", foreground: "#cdd6e0" },
+      theme,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -86,7 +90,7 @@ export const XTerm = React.forwardRef<
       if (startY === null || e.touches.length !== 1) return;
       const y = e.touches[0].clientY;
       const dy = startY - y;
-      const cell = 13 * 1.2;
+      const cell = (fontSizeRef.current || 13) * 1.2;
       if (Math.abs(dy) > 6) {
         const lines = Math.trunc(dy / cell);
         if (lines !== 0) { term.scrollLines(lines); startY = y; }
@@ -108,6 +112,16 @@ export const XTerm = React.forwardRef<
       fitRef.current = null;
     };
   }, []);
+
+  // Live-apply font size + theme changes without remounting (prefs are editable
+  // while a pane is open). Refit so the new cell metrics reflow the grid.
+  React.useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontSize = fontSize;
+    term.options.theme = theme;
+    try { fitRef.current?.fit(); } catch { /* detached */ }
+  }, [fontSize, theme]);
 
   return <div ref={hostRef} className="h-full w-full" />;
 });

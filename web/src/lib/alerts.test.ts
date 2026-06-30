@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAttentionTransition, blockedTitle } from "@/lib/alerts";
+import { isAttentionTransition, isAlertTransition, blockedTitle, doneTitle } from "@/lib/alerts";
 
 const KEY = "srvdefaultsess";
 
@@ -47,5 +47,74 @@ describe("isAttentionTransition", () => {
 describe("blockedTitle", () => {
   it("names the session in the shared blocked-alert title", () => {
     expect(blockedTitle("api-refactor")).toBe("🔴 api-refactor needs input");
+  });
+});
+
+describe("isAlertTransition", () => {
+  // --- blocked: identical to isAttentionTransition, regardless of alertOnDone ---
+  it("true into blocked even when alertOnDone is off (blocked always alerts)", () => {
+    expect(isAlertTransition("working", "blocked", null, KEY, false)).toBe(true);
+  });
+
+  it("true into blocked when alertOnDone is on", () => {
+    expect(isAlertTransition("working", "blocked", null, KEY, true)).toBe(true);
+  });
+
+  it("true into blocked on a first sighting (prev undefined)", () => {
+    expect(isAlertTransition(undefined, "blocked", null, KEY, false)).toBe(true);
+  });
+
+  it("false into blocked for the focused key", () => {
+    expect(isAlertTransition("working", "blocked", KEY, KEY, false)).toBe(false);
+  });
+
+  it("no re-fire when already blocked", () => {
+    expect(isAlertTransition("blocked", "blocked", null, KEY, true)).toBe(false);
+  });
+
+  // --- done: gated on alertOnDone ---
+  it("true into done when alertOnDone is on (non-focused)", () => {
+    expect(isAlertTransition("working", "done", null, KEY, true)).toBe(true);
+  });
+
+  it("true into done on a first sighting (prev undefined) when alertOnDone is on", () => {
+    expect(isAlertTransition(undefined, "done", null, KEY, true)).toBe(true);
+  });
+
+  it("false into done when alertOnDone is off", () => {
+    expect(isAlertTransition("working", "done", null, KEY, false)).toBe(false);
+  });
+
+  it("false into done for the focused key even when alertOnDone is on", () => {
+    expect(isAlertTransition("working", "done", KEY, KEY, true)).toBe(false);
+  });
+
+  it("no re-fire when already done (alertOnDone on)", () => {
+    expect(isAlertTransition("done", "done", null, KEY, true)).toBe(false);
+  });
+
+  // --- everything else never alerts ---
+  it("false into working/idle/unknown regardless of alertOnDone", () => {
+    expect(isAlertTransition("blocked", "working", null, KEY, true)).toBe(false);
+    expect(isAlertTransition("done", "idle", null, KEY, true)).toBe(false);
+    expect(isAlertTransition(undefined, "unknown", null, KEY, true)).toBe(false);
+  });
+
+  it("matches isAttentionTransition exactly when alertOnDone is false", () => {
+    const cases: [import("@/lib/contracts").SessionState | undefined, import("@/lib/contracts").SessionState][] = [
+      ["working", "blocked"], ["blocked", "blocked"], [undefined, "blocked"],
+      ["working", "done"], ["idle", "working"], [undefined, "done"],
+    ];
+    for (const [prev, next] of cases) {
+      expect(isAlertTransition(prev, next, "otherkey", KEY, false)).toBe(
+        isAttentionTransition(prev, next, "otherkey", KEY),
+      );
+    }
+  });
+});
+
+describe("doneTitle", () => {
+  it("names the session in the shared done-alert title", () => {
+    expect(doneTitle("api-refactor")).toBe("✅ api-refactor finished");
   });
 });

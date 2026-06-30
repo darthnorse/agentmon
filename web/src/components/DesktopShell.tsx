@@ -4,11 +4,12 @@ import { GridView } from "@/components/GridView";
 import { usePanes, GRID_TILE_CAP } from "@/store/panes";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import type { SessionRow } from "@/components/SessionList";
-import type { SeenRequest, SessionState } from "@/lib/contracts";
+import type { SeenRequest, ServerSummary, SessionState } from "@/lib/contracts";
 
 export function DesktopShell({
-  rows, query, onQueryChange, stateOf,
+  servers, rows, query, onQueryChange, stateOf,
 }: {
+  servers: ServerSummary[];
   rows: SessionRow[];
   query: string;
   onQueryChange(q: string): void;
@@ -42,7 +43,7 @@ export function DesktopShell({
 
   return (
     <div className="flex h-full">
-      <Sidebar rows={rows} query={query} onQueryChange={onQueryChange} onOpen={onOpen} stateOf={stateOf} />
+      <Sidebar servers={servers} rows={rows} query={query} onQueryChange={onQueryChange} onOpen={onOpen} stateOf={stateOf} />
       <main className="min-w-0 flex-1">
         {notice && (
           <div className="bg-destructive px-3 py-1 text-center text-xs font-semibold text-destructive-foreground">

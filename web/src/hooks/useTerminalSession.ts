@@ -1,6 +1,8 @@
 import * as React from "react";
 import { TerminalSocket, type TerminalTarget } from "@/lib/ws-terminal";
 import type { XTermHandle } from "@/components/XTerm";
+import { useSessionState } from "@/store/session-state";
+import { normalizeState, stateKey } from "@/lib/state";
 import * as keys from "@/lib/keybar";
 
 export interface TerminalController {
@@ -48,6 +50,23 @@ export function useTerminalSession(target: TerminalTarget) {
         xtermRef.current?.focus();
       },
       onClose: () => setConnected(false),
+      // Live hub state delta for this pane. ONLY the focused pane consumes it (its
+      // dot tracks blocked/done a touch sooner than SSE). A non-focused open tile
+      // must NOT pre-write the shared store: the SSE alert gate reads the prior
+      // state from that store, so a terminal-WS frame landing first would make the
+      // gate see "no transition" and silently drop the attention alert (M9 core
+      // loop). The focused pane is suppressed from alerts anyway, so it's safe.
+      onState: (f) => {
+        const key = stateKey(target.serverId, target.target, f.session);
+        if (key === useSessionState.getState().focusedKey) {
+          useSessionState.getState().applyDelta({
+            server: target.serverId,
+            target: target.target,
+            session: f.session,
+            state: normalizeState(f.state),
+          });
+        }
+      },
     });
     sockRef.current = sock;
     sock.open();

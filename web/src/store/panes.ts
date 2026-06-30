@@ -13,7 +13,13 @@ export interface OpenPane {
   state?: SessionState; // REST state captured at open — first-paint fallback until the SSE store has it
 }
 
-const idOf = (p: Omit<OpenPane, "id">) => `${p.serverId}:${p.target}:${p.session}:${p.paneId}`;
+// The canonical pane id / grid key. Exported so callers that have the parts (the
+// inbox rows, focus-next) build the SAME key instead of hand-joining it — if the
+// format ever drifts, focus(id) must not silently miss.
+export const paneKey = (serverId: string, target: string, session: string, paneId: string) =>
+  `${serverId}:${target}:${session}:${paneId}`;
+
+const idOf = (p: Omit<OpenPane, "id">) => paneKey(p.serverId, p.target, p.session, p.paneId);
 
 interface PanesState {
   panes: OpenPane[];

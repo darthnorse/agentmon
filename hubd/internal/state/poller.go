@@ -21,6 +21,9 @@ import (
 type ServerLister interface {
 	List(ctx context.Context) ([]registry.ServerSummary, error)
 	Get(ctx context.Context, id string) (db.Server, bool, error)
+	// TouchLastSeen refreshes a server's last_seen on a successful background
+	// poll (the agent answered). Best-effort: errors are logged, not fatal.
+	TouchLastSeen(ctx context.Context, id string) error
 }
 
 // AgentAPI is satisfied by *registry.Client.
@@ -157,6 +160,8 @@ func (p *Poller) pollServer(ctx context.Context, id string) {
 		return
 	}
 	p.resetBackoff(id)
+	// GET /state answered → the agent is reachable; refresh last_seen.
+	p.touchLastSeen(ctx, id)
 
 	// Build pane-ID → session-name map from the live session tree.
 	sessions, err := p.agent.Sessions(ctx, srv, "")
@@ -300,6 +305,8 @@ func (p *Poller) pollDegraded(ctx context.Context, srv db.Server) {
 		log.Printf("poller: degraded sessions (server=%s): %v", srv.ID, err)
 		return
 	}
+	// Sessions() answered in the degraded path → the agent is reachable.
+	p.touchLastSeen(ctx, srv.ID)
 
 	receivedAt := HubTS(p.now())
 
@@ -431,6 +438,14 @@ func (p *Poller) latestReceivedAt(serverID, target, session string, hadNewEvent 
 		return prior.LatestReceivedAt
 	}
 	return ""
+}
+
+// touchLastSeen refreshes a server's last_seen after a successful poll. It is
+// best-effort: a failure is logged but never aborts the poll cycle.
+func (p *Poller) touchLastSeen(ctx context.Context, id string) {
+	if err := p.lister.TouchLastSeen(ctx, id); err != nil {
+		log.Printf("poller: touch last_seen (server=%s): %v", id, err)
+	}
 }
 
 // ─── Backoff helpers ─────────────────────────────────────────────────────────

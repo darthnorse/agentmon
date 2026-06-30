@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
 import type { StateEventFrame } from "@/lib/contracts";
 import { stateKey } from "@/lib/state";
-import { blockedTitle } from "@/lib/alerts";
+import { blockedTitle, doneTitle } from "@/lib/alerts";
 import { audioCue } from "@/lib/audio-cue";
 
 // M9 Tier 1/2 in-app attention driver. Returns the `onAttention` handler that
@@ -18,7 +18,9 @@ export function useAttentionAlerts(): (frame: StateEventFrame) => void {
   const navigate = useNavigate();
   return React.useCallback(
     (frame: StateEventFrame) => {
-      const title = blockedTitle(frame.session);
+      // The gate (useStateStream) only calls us for an alerting transition into
+      // `blocked` or `done` — pick the matching copy by the frame's state.
+      const title = frame.state === "done" ? doneTitle(frame.session) : blockedTitle(frame.session);
 
       try {
         toast(title, {

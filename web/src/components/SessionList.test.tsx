@@ -56,3 +56,68 @@ describe("SessionList state", () => {
     expect(screen.getAllByRole("img", { name: "blocked" })).toHaveLength(1);
   });
 });
+
+describe("SessionList sectioned inbox", () => {
+  const allStates = {
+    s1: [
+      mkSession("s-idle", "@0", "%0"),
+      mkSession("s-blocked", "@1", "%1"),
+      mkSession("s-unknown", "@2", "%2"),
+      mkSession("s-done", "@3", "%3"),
+      mkSession("s-working", "@4", "%4"),
+    ],
+  };
+  const stateMap: Record<string, SessionState> = {
+    "s-idle": "idle", "s-blocked": "blocked", "s-unknown": "unknown",
+    "s-done": "done", "s-working": "working",
+  };
+  const stateOf = (r: SessionRow): SessionState => stateMap[r.session.name];
+
+  function orderedSequence(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll("ul > li")).map((li) => {
+      const el = li as HTMLElement;
+      if (el.dataset.section) return `H:${el.textContent}`;
+      const name = el.querySelector(".font-medium")?.textContent;
+      return `R:${name ?? el.textContent}`;
+    });
+  }
+
+  it("groups rows under ordered section headers; rows sit under the right header", () => {
+    const rows = flattenSessions(servers, allStates);
+    const { container } = render(
+      <SessionList rows={rows} query="" onQueryChange={() => {}} onOpen={() => {}} stateOf={stateOf} />,
+    );
+    expect(orderedSequence(container)).toEqual([
+      "H:Needs attention", "R:s-blocked",
+      "H:Done", "R:s-done",
+      "H:Working", "R:s-working",
+      "H:Idle", "R:s-idle", "R:s-unknown",
+    ]);
+  });
+
+  it("omits the header of an empty section", () => {
+    const onlyIdle = { s1: [mkSession("s-idle", "@0", "%0")] };
+    const rows = flattenSessions(servers, onlyIdle);
+    render(<SessionList rows={rows} query="" onQueryChange={() => {}} onOpen={() => {}} stateOf={stateOf} />);
+    expect(screen.getByText("Idle")).toBeInTheDocument();
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+    expect(screen.queryByText("Done")).not.toBeInTheDocument();
+    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+  });
+
+  it("search filter still narrows rows within sections", () => {
+    const rows = flattenSessions(servers, allStates);
+    render(<SessionList rows={rows} query="blocked" onQueryChange={() => {}} onOpen={() => {}} stateOf={stateOf} />);
+    expect(screen.getByText("s-blocked")).toBeInTheDocument();
+    expect(screen.queryByText("s-idle")).not.toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+    expect(screen.queryByText("Idle")).not.toBeInTheDocument();
+  });
+});
+
+function mkSession(name: string, winId: string, paneId: string) {
+  return {
+    name, server: "s1", target: "default", cwd: `/home/${name}`, command: "claude",
+    windows: [{ id: winId, index: "0", name: "m", panes: [{ id: paneId, command: "c", cwd: `/home/${name}` }] }],
+  };
+}
