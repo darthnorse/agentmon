@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 
 vi.mock("@/components/TerminalView", () => ({
   TerminalView: (p: any) => <div data-testid={`tv-${p.paneId}`} />,
@@ -48,5 +48,17 @@ describe("GridView", () => {
     usePanes.getState().collapse();
     render(<GridView />);
     expect(screen.getByRole("img", { name: "working" })).toBeInTheDocument();
+  });
+
+  it("renaming an open pane does NOT remount its terminal (the WS survives)", () => {
+    usePanes.getState().openPane({ serverId: "s", paneId: "%0", target: "default", session: "old", serverName: "h" });
+    usePanes.getState().collapse();
+    render(<GridView />);
+    const before = screen.getByTestId("tv-%0");
+    // renamePane changes the pane's id; if the tile keyed off it, React would
+    // unmount/remount the terminal (new DOM node) and drop the WebSocket.
+    act(() => usePanes.getState().renamePane("s:default:old:%0", "newname"));
+    const after = screen.getByTestId("tv-%0");
+    expect(after).toBe(before); // same DOM node ⇒ the tile (and its WS) was preserved
   });
 });

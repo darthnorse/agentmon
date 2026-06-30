@@ -140,30 +140,34 @@ func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 		d.Audit.SessionCreate(r.Context(), p.ID, shared.SessionID(id, auditTarget, resp.Name), resp.Name,
 			authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 
-		// Bare session for the success-but-no-observed-pane fallbacks.
-		bare := shared.Session{Name: resp.Name, Server: id, Target: auditTarget}
+		// Re-list and return the created session (state overlaid); a re-list failure
+		// or a race where it vanished still reports success — the create was audited.
+		d.writeReListedSession(w, r, p.ID, srv, id, target, auditTarget, resp.Name, "create-session")
+	}
+}
 
-		sessions, err := d.Agent.Sessions(r.Context(), srv, target)
-		if err != nil {
-			// The session WAS created and audited; a re-list failure must not be
-			// reported as a create failure. Report success with the bare session —
-			// the client refetches the list to discover the pane.
-			log.Printf("create-session re-list: agent %s: %v", id, err)
-			writeJSON(w, http.StatusCreated, bare)
+// writeReListedSession re-lists the server's sessions after a create/rename and
+// writes the named session (with overlaid per-principal state) as 201. A re-list
+// failure, or a session that vanished before the re-list could observe it, still
+// reports 201 with a bare session — the mutation was already performed and audited,
+// so it must never be surfaced as a failure. op labels the re-list log line.
+func (d Deps) writeReListedSession(w http.ResponseWriter, r *http.Request, principalID string, srv db.Server, id, target, auditTarget, name, op string) {
+	bare := shared.Session{Name: name, Server: id, Target: auditTarget}
+	sessions, err := d.Agent.Sessions(r.Context(), srv, target)
+	if err != nil {
+		log.Printf("%s re-list: agent %s: %v", op, id, err)
+		writeJSON(w, http.StatusCreated, bare)
+		return
+	}
+	_ = d.Reg.TouchLastSeen(r.Context(), id)
+	d.overlayState(r.Context(), principalID, id, sessions)
+	for i := range sessions {
+		if sessions[i].Name == name {
+			writeJSON(w, http.StatusCreated, sessions[i])
 			return
 		}
-		_ = d.Reg.TouchLastSeen(r.Context(), id)
-		d.overlayState(r.Context(), p.ID, id, sessions)
-		for i := range sessions {
-			if sessions[i].Name == resp.Name {
-				writeJSON(w, http.StatusCreated, sessions[i])
-				return
-			}
-		}
-		// Created but gone before the re-list could observe it (rare race). Still
-		// report success with the bare session so the client learns the name.
-		writeJSON(w, http.StatusCreated, bare)
 	}
+	writeJSON(w, http.StatusCreated, bare)
 }
 
 // ServerRenameSessionHandler handles POST /api/v1/servers/{id}/sessions/rename:
@@ -222,22 +226,7 @@ func (d Deps) ServerRenameSessionHandler() http.HandlerFunc {
 		d.Audit.SessionRename(r.Context(), p.ID, shared.SessionID(id, auditTarget, req.To), req.From, req.To,
 			authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 
-		bare := shared.Session{Name: req.To, Server: id, Target: auditTarget}
-		sessions, err := d.Agent.Sessions(r.Context(), srv, target)
-		if err != nil {
-			log.Printf("rename-session re-list: agent %s: %v", id, err)
-			writeJSON(w, http.StatusCreated, bare)
-			return
-		}
-		_ = d.Reg.TouchLastSeen(r.Context(), id)
-		d.overlayState(r.Context(), p.ID, id, sessions)
-		for i := range sessions {
-			if sessions[i].Name == req.To {
-				writeJSON(w, http.StatusCreated, sessions[i])
-				return
-			}
-		}
-		writeJSON(w, http.StatusCreated, bare)
+		d.writeReListedSession(w, r, p.ID, srv, id, target, auditTarget, req.To, "rename-session")
 	}
 }
 

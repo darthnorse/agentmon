@@ -41,7 +41,10 @@ export function GridView() {
           const hidden = activeId !== null && !expanded;
           return (
             <div
-              key={p.id}
+              // Key by the session-independent pane identity so a session RENAME
+              // (which changes p.id) does NOT remount the tile and tear down its
+              // WebSocket. p.id still drives focus/close/expand below.
+              key={`${p.serverId}:${p.target}:${p.paneId}`}
               className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border"
               style={{ display: hidden ? "none" : "flex" }}
             >

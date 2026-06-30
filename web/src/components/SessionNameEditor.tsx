@@ -2,7 +2,7 @@ import * as React from "react";
 import { renameSession, ApiError } from "@/lib/api-client";
 import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
-import { isValidSessionName } from "@/components/NewSessionForm";
+import { isValidSessionName, SESSION_NAME_HINT } from "@/lib/session-name";
 
 interface Props {
   serverId: string;
@@ -41,7 +41,7 @@ export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, c
     if (busy) return;
     if (value === name) { cancel(); return; }
     if (!isValidSessionName(value)) {
-      setError("Letters, digits, “_” and “-” only; start with a letter or digit.");
+      setError(SESSION_NAME_HINT);
       return;
     }
     setBusy(true);

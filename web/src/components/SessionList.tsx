@@ -3,6 +3,7 @@ import type { Session, ServerSummary, Window, Pane, SessionState } from "@/lib/c
 import { Input } from "@/components/ui/input";
 import { StateDot } from "@/components/StateDot";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
+import { rowActivation } from "@/lib/row-activation";
 import { paneKey } from "@/store/panes";
 
 export interface SessionRow {
@@ -76,13 +77,8 @@ export function SessionList({
             {group.rows.map((row) => (
               <li key={paneKey(row.server.id, row.session.target, row.session.name, row.pane.id)}>
                 <div
-                  role="button"
-                  tabIndex={0}
+                  {...rowActivation(() => onOpen(row))}
                   className="flex w-full cursor-pointer items-center gap-2 border-b border-border px-4 py-3 text-left hover:bg-accent"
-                  onClick={() => onOpen(row)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(row); }
-                  }}
                 >
                   <StateDot state={stateOf(row)} />
                   <div className="min-w-0">

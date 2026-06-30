@@ -5,6 +5,7 @@ import { matchesQuery } from "@/components/SessionList";
 import { sortBlockedFirst, rollUp } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
+import { rowActivation } from "@/lib/row-activation";
 
 // Desktop servers→sessions tree. Dots roll up; blocked sorts first. The tree is
 // seeded from the full `servers` list so a session-less server still renders (its
@@ -62,13 +63,8 @@ export function Sidebar({
             {list.map((row) => (
               <div
                 key={`${row.session.target}:${row.session.name}:${row.pane.id}`}
-                role="button"
-                tabIndex={0}
+                {...rowActivation(() => onOpen(row))}
                 className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 text-left text-sm hover:bg-accent"
-                onClick={() => onOpen(row)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(row); }
-                }}
               >
                 <StateDot state={stateOf(row)} />
                 <div className="min-w-0">

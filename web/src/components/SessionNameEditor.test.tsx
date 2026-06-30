@@ -15,7 +15,6 @@ const h = vi.hoisted(() => {
 });
 vi.mock("@/lib/api-client", () => ({
   renameSession: h.renameSession,
-  createSession: vi.fn(), // NewSessionForm (source of isValidSessionName) imports this
   ApiError: h.ApiError,
 }));
 
