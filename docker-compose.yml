@@ -9,6 +9,10 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
     image: agentmon-hubd:dev
+    # Fixed container name (else compose auto-names it agentmon-agentmon-hub-1). The hub
+    # is a singleton, so pinning the name is safe and makes `docker logs agentmon-hub`
+    # / `docker exec` nicer. (compose subcommands still use the service name below.)
+    container_name: agentmon-hub
     restart: unless-stopped
     # Host networking: simplest on a LAN, and required on nested hosts (Proxmox
     # LXC / Docker-in-LXC) where bridge networking can't set net sysctls. The hub
@@ -26,5 +30,5 @@ services:
       #   cp deploy/hub.config.example.yaml deploy/data/config.yaml   (then edit it)
       # Unraid: point this at /mnt/user/appdata/agentmon.
       - ./deploy/data:/data
-    # Enroll each box:  curl <external_origin>/install.sh | sudo bash
+    # Enroll each box:  sudo bash -c "$(curl -fsSL <external_origin>/install.sh)"
     # Then admit it:    docker compose exec agentmon-hub /agentmon-hubd server approve <hostname>
