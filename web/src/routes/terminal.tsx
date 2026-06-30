@@ -30,7 +30,7 @@ export function MobileTerminalRoute() {
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
         <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/" })}>‹ Back</Button>
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
           <SessionNameEditor
             className="font-medium"
             serverId={serverId}
@@ -41,7 +41,7 @@ export function MobileTerminalRoute() {
               navigate({ to: ".", search: (s) => ({ ...s, session: to }), replace: true })
             }
           />
-          <div className="truncate text-xs text-muted-foreground">{serverId}</div>
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{serverId}</span>
         </div>
       </header>
       <div className="min-h-0 flex-1">
