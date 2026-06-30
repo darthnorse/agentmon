@@ -1,4 +1,7 @@
-import type { ServerSummary, SessionInfo, Session, SeenRequest } from "@/lib/contracts";
+import type {
+  ServerSummary, SessionInfo, Session, SeenRequest,
+  PushSubscriptionJSON, VapidKeyResponse,
+} from "@/lib/contracts";
 
 const BASE = "/api/v1";
 
@@ -59,3 +62,13 @@ export const listSessions = (serverId: string, target?: string) =>
   );
 
 export const postSeen = (req: SeenRequest) => request<void>("POST", "/seen", req);
+
+// Web-Push (M9). VAPID public key is non-secret; subscribe/unsubscribe are mutating
+// (auto-CSRF). Unsubscribe sends only the endpoint (the server's PK).
+export const getVapidPublicKey = () => request<VapidKeyResponse>("GET", "/push/vapid");
+
+export const subscribePush = (sub: PushSubscriptionJSON) =>
+  request<void>("POST", "/push/subscribe", sub);
+
+export const unsubscribePush = (endpoint: string) =>
+  request<void>("POST", "/push/unsubscribe", { endpoint });

@@ -35,6 +35,10 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("POST /api/v1/seen", rd.Auth.RequireAuth(rd.API.SeenHandler()))
 	mux.Handle("GET /api/v1/events", rd.Auth.RequireAuth(rd.API.EventsHandler()))
 
+	mux.Handle("GET /api/v1/push/vapid", rd.Auth.RequireAuth(rd.API.VapidHandler()))
+	mux.Handle("POST /api/v1/push/subscribe", rd.Auth.RequireAuth(rd.API.SubscribeHandler()))
+	mux.Handle("POST /api/v1/push/unsubscribe", rd.Auth.RequireAuth(rd.API.UnsubscribeHandler()))
+
 	mux.Handle("POST /api/v1/enroll", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Enroll.Handler()))
 
 	mux.Handle("GET /install.sh", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Install.ScriptHandler()))

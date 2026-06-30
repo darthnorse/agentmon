@@ -1,8 +1,26 @@
 import { create } from "zustand";
 import type { SessionInfo } from "@/lib/contracts";
 import * as api from "@/lib/api-client";
+import { disablePush, getActiveRegistration } from "@/lib/push";
 import { usePanes } from "@/store/panes";
 import { useSessionState } from "@/store/session-state";
+
+/** Best-effort Web-Push teardown on sign-out (M9). Runs before logout so the
+ *  unsubscribe POST still carries a valid CSRF token. Never throws — a failed
+ *  push teardown must never block the user from signing out. No-ops where the
+ *  service worker is unavailable (unsupported browser / dev / test). */
+async function unsubscribePushBestEffort(): Promise<void> {
+  // getActiveRegistration() never throws and never hangs (it uses getRegistration(),
+  // not the `.ready` trap). disablePush() is best-effort, but guard it anyway so a
+  // teardown failure can never block sign-out.
+  const reg = await getActiveRegistration();
+  if (!reg) return;
+  try {
+    await disablePush(reg);
+  } catch {
+    /* best-effort; ignore */
+  }
+}
 
 /** Reset panes + query cache without a static import cycle.
  *  query-client.ts imports auth.ts (for useAuth), so auth.ts must not
@@ -42,6 +60,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     get().setSession(info);
   },
   async signOut() {
+    await unsubscribePushBestEffort();
     try { await api.logout(); } catch { /* best-effort; clear locally regardless */ }
     finally { get().clear(); }
   },

@@ -94,4 +94,44 @@ describe("api-client", () => {
     expect(init.body).toBe(JSON.stringify({ serverId: "s", target: "default", sessionName: "x" }));
     expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
   });
+
+  it("getVapidPublicKey GETs /push/vapid and returns the publicKey (no CSRF header)", async () => {
+    const f = mockFetch(200, { publicKey: "BPubKey" });
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    const { getVapidPublicKey } = await import("@/lib/api-client");
+    const res = await getVapidPublicKey();
+    expect(res.publicKey).toBe("BPubKey");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/push/vapid");
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBeUndefined();
+  });
+
+  it("subscribePush POSTs the subscription body with X-CSRF-Token", async () => {
+    const f = mockFetch(204, undefined);
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    const { subscribePush } = await import("@/lib/api-client");
+    const sub = { endpoint: "https://push.example/abc", keys: { p256dh: "pk", auth: "au" } };
+    await subscribePush(sub);
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/push/subscribe");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify(sub));
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
+  });
+
+  it("unsubscribePush POSTs the endpoint with X-CSRF-Token", async () => {
+    const f = mockFetch(204, undefined);
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    const { unsubscribePush } = await import("@/lib/api-client");
+    await unsubscribePush("https://push.example/abc");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/push/unsubscribe");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ endpoint: "https://push.example/abc" }));
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
+  });
 });

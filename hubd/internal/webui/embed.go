@@ -3,12 +3,20 @@ package webui
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 	"strings"
 )
 
 //go:embed dist
 var assets embed.FS
+
+func init() {
+	// Go's default mime table has no entry for .webmanifest, so http.FileServer
+	// would content-sniff the PWA manifest to text/plain. Register the spec type
+	// so it is served as application/manifest+json.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // Handler serves the embedded SPA with SPA-fallback routing: any path that is
 // not an existing static asset and is not under /api returns index.html, so

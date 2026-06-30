@@ -28,6 +28,7 @@ type Config struct {
 	EnrollRateLimit     RateLimitCfg  `yaml:"enroll_rate_limit"`
 	StatePollInterval   time.Duration `yaml:"state_poll_interval"`
 	SSEHeartbeat        time.Duration `yaml:"sse_heartbeat"`
+	VAPIDSubject        string        `yaml:"vapid_subject"` // M9: Web-Push VAPID subject (mailto:/URL); defaults to external_origin
 }
 
 func Load(path string) (Config, error) {

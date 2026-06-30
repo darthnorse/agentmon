@@ -29,6 +29,14 @@ type SeenStore interface {
 	LatestSessionEvent(ctx context.Context, serverID, target, session string) (db.StateEvent, bool, error)
 }
 
+// PushStore is the persistence interface for push_subscriptions. *db.DB
+// satisfies it. It is the union of the methods used by the push HTTP handlers
+// (M9 T2) and the push dispatcher (M9 T4).
+type PushStore interface {
+	UpsertSubscription(ctx context.Context, s db.PushSubscription) error
+	DeleteSubscriptionForPrincipal(ctx context.Context, principalID, endpoint string) error
+}
+
 // Deps holds the shared dependencies for all API handlers.
 type Deps struct {
 	Reg                 *registry.Registry
@@ -45,6 +53,9 @@ type Deps struct {
 	Seen                SeenStore          // M7: principal_seen persistence
 	Bcast               *state.Broadcaster // M7: fan-out broadcaster for SSE deltas
 	SSEHeartbeat        time.Duration      // M7: heartbeat interval for SSE (default 25s)
+	Push                PushStore          // M9: push_subscriptions persistence
+	VAPIDPublic         string             // M9: VAPID public key served to clients (non-secret)
+	Presence            *state.Presence    // M9: live-SSE presence counter for push de-dup (nil → disabled)
 }
 
 // authorizeOr403 resolves the principal from the request context, calls
