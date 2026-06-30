@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { SessionInfo } from "@/lib/contracts";
 import * as api from "@/lib/api-client";
-import { disablePush } from "@/lib/push";
+import { disablePush, getActiveRegistration } from "@/lib/push";
 import { usePanes } from "@/store/panes";
 import { useSessionState } from "@/store/session-state";
 
@@ -10,15 +10,12 @@ import { useSessionState } from "@/store/session-state";
  *  push teardown must never block the user from signing out. No-ops where the
  *  service worker is unavailable (unsupported browser / dev / test). */
 async function unsubscribePushBestEffort(): Promise<void> {
+  // getActiveRegistration() never throws and never hangs (it uses getRegistration(),
+  // not the `.ready` trap). disablePush() is best-effort, but guard it anyway so a
+  // teardown failure can never block sign-out.
+  const reg = await getActiveRegistration();
+  if (!reg) return;
   try {
-    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-    // Use getRegistration(), NOT `.ready`: `.ready` only resolves once a worker
-    // becomes ACTIVE and otherwise stays pending forever — a try/catch can't
-    // guard a never-resolving promise, so awaiting it would hang sign-out when
-    // the SW failed to activate. getRegistration() resolves promptly to the
-    // registration (active or not) or undefined.
-    const reg = await navigator.serviceWorker.getRegistration();
-    if (!reg) return;
     await disablePush(reg);
   } catch {
     /* best-effort; ignore */

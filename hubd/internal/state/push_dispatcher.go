@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
@@ -57,15 +58,17 @@ type pushMsg struct {
 // concurrently-blocked sessions and self-prunes when a session leaves blocked.
 // It is driven only from RunPushDispatcher's single drain goroutine, so it needs
 // no synchronization.
-type blockedGate struct{ blocked map[string]bool }
+type blockedKey struct{ server, target, session string }
 
-func newBlockedGate() *blockedGate { return &blockedGate{blocked: map[string]bool{}} }
+type blockedGate struct{ blocked map[blockedKey]bool }
+
+func newBlockedGate() *blockedGate { return &blockedGate{blocked: map[blockedKey]bool{}} }
 
 // fresh records c and reports whether it is a NEW entry into blocked (the session
 // was not already blocked). A non-blocked change forgets the session, so a later
 // re-block is fresh again (a re-alert).
 func (g *blockedGate) fresh(c Change) bool {
-	key := c.ServerID + "\x1f" + c.Target + "\x1f" + c.Session
+	key := blockedKey{c.ServerID, c.Target, c.Session}
 	if c.Global == shared.StateBlocked {
 		if g.blocked[key] {
 			return false
@@ -170,6 +173,9 @@ func NewWebPushSender(keys db.VAPIDKeys, subject string) PushSender {
 			return 0, err
 		}
 		defer resp.Body.Close()
+		// Drain the body before Close so the shared http.Client can reuse the
+		// HTTP/1.1 connection across sends (no-op cost on HTTP/2 push services).
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return resp.StatusCode, nil
 	}
 }

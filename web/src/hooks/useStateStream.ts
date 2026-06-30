@@ -25,17 +25,15 @@ export function useStateStream(
         onSnapshot: s.applySnapshot,
         onDelta: (frame) => {
           const key = stateKey(frame.server, frame.target, frame.session);
-          const prev = useSessionState.getState().live.get(key);
-          useSessionState.getState().applyDelta(frame);
+          // Capture the store once: read prev BEFORE applyDelta, then reuse the same
+          // snapshot for focusedKey (applyDelta never mutates focusedKey).
+          const store = useSessionState.getState();
+          const prev = store.live.get(key);
+          store.applyDelta(frame);
           const cb = onAttentionRef.current;
           if (
             cb &&
-            isAttentionTransition(
-              prev,
-              normalizeState(frame.state),
-              useSessionState.getState().focusedKey,
-              key,
-            )
+            isAttentionTransition(prev, normalizeState(frame.state), store.focusedKey, key)
           ) {
             cb(frame);
           }

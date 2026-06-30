@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,6 +25,34 @@ type subscribeRequest struct {
 
 type unsubscribeRequest struct {
 	Endpoint string `json:"endpoint"`
+}
+
+// isSafePushEndpoint validates a browser-supplied Web-Push endpoint before the
+// dispatcher will POST to it: it must be an https URL whose host is not localhost
+// nor a loopback/private/link-local/unspecified IP literal. This is an SSRF guard
+// against an authenticated principal pointing the hub at internal services. It does
+// NOT resolve DNS (a hostname resolving to an internal IP is still accepted); a full
+// resolving guard is deferred (see the M9 carryover) and is moot under the v1
+// single-principal model where the caller already owns the host.
+func isSafePushEndpoint(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+			ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return false
+		}
+	}
+	return true
 }
 
 // VapidHandler handles GET /api/v1/push/vapid: returns the server's VAPID public
@@ -52,12 +82,12 @@ func (d Deps) SubscribeHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "endpoint and keys required")
 			return
 		}
-		// Reject non-https endpoints: real Web-Push services are always https, and
-		// this blocks an authenticated principal from registering an internal/loopback
-		// URL the dispatcher would then POST to on every blocked event (SSRF defense,
-		// matters once multi-user lands).
-		if !strings.HasPrefix(req.Endpoint, "https://") {
-			writeJSONError(w, http.StatusBadRequest, "endpoint must be https")
+		// Validate the endpoint before the dispatcher will POST to it: real Web-Push
+		// services are public https hosts. This blocks an authenticated principal from
+		// pointing the hub at an internal/loopback/private address on every blocked
+		// event (SSRF defense; matters most once multi-user lands).
+		if !isSafePushEndpoint(req.Endpoint) {
+			writeJSONError(w, http.StatusBadRequest, "endpoint must be an https URL to a public host")
 			return
 		}
 		p, ok := d.authorizeOr403(w, r, authz.ServerView, "server:*")

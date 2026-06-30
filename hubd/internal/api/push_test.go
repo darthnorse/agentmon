@@ -190,6 +190,41 @@ func TestSubscribeEmptyEndpoint(t *testing.T) {
 	}
 }
 
+// TestIsSafePushEndpoint unit-tests the SSRF endpoint guard directly.
+func TestIsSafePushEndpoint(t *testing.T) {
+	safe := []string{
+		"https://fcm.googleapis.com/fcm/send/abc",
+		"https://updates.push.services.mozilla.com/wpush/v2/xyz",
+		"https://web.push.apple.com/abc",
+		"https://push.example/abc",
+	}
+	unsafe := []string{
+		"http://push.example/abc",        // not https
+		"https://127.0.0.1/x",            // loopback v4
+		"https://[::1]/x",                // loopback v6
+		"https://localhost/x",            // localhost
+		"https://app.localhost/x",        // *.localhost
+		"https://10.0.0.5/x",             // private
+		"https://192.168.1.9/x",          // private
+		"https://172.16.4.4/x",           // private
+		"https://169.254.169.254/latest", // link-local (cloud metadata)
+		"https://0.0.0.0/x",              // unspecified
+		"ftp://push.example/x",           // wrong scheme
+		"https:///nohost",                // empty host
+		"not a url",                      // unparseable / no scheme
+	}
+	for _, e := range safe {
+		if !isSafePushEndpoint(e) {
+			t.Errorf("isSafePushEndpoint(%q) = false, want true", e)
+		}
+	}
+	for _, e := range unsafe {
+		if isSafePushEndpoint(e) {
+			t.Errorf("isSafePushEndpoint(%q) = true, want false", e)
+		}
+	}
+}
+
 // TestSubscribeRejectsNonHttps: a non-https endpoint (SSRF vector) → 400, no upsert.
 func TestSubscribeRejectsNonHttps(t *testing.T) {
 	store := &fakePushStore{}

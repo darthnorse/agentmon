@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { isAttentionTransition } from "@/lib/alerts";
+import { isAttentionTransition, blockedTitle } from "@/lib/alerts";
 
-const KEY = "srvdefaultsess";
+const KEY = "srvdefaultsess";
 
 describe("isAttentionTransition", () => {
   it("true when transitioning into blocked from working (non-focused)", () => {
@@ -40,6 +40,12 @@ describe("isAttentionTransition", () => {
   });
 
   it("true when a different key is focused", () => {
-    expect(isAttentionTransition("working", "blocked", "otherkey", KEY)).toBe(true);
+    expect(isAttentionTransition("working", "blocked", "otherkey", KEY)).toBe(true);
+  });
+});
+
+describe("blockedTitle", () => {
+  it("names the session in the shared blocked-alert title", () => {
+    expect(blockedTitle("api-refactor")).toBe("🔴 api-refactor needs input");
   });
 });

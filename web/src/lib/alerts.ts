@@ -14,3 +14,11 @@ export function isAttentionTransition(
 ): boolean {
   return next === "blocked" && prev !== "blocked" && key !== focusedKey;
 }
+
+// The blocked-alert title shown in every tier — the in-app toast, the page-driven
+// Notification (Tier 2), and the service-worker push notification (Tier 3). One
+// source so the wording/emoji can't drift between the app bundle and the SW bundle.
+// Pure + DOM-free, so the service worker can import it.
+export function blockedTitle(session: string): string {
+  return `🔴 ${session} needs input`;
+}

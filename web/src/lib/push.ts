@@ -18,6 +18,23 @@ export function pushSupported(): boolean {
   );
 }
 
+/**
+ * Best-effort fetch of the service-worker registration. Uses getRegistration(),
+ * NOT `.ready`: `.ready` only resolves once a worker is ACTIVE and otherwise stays
+ * pending forever (dev/test where registration is prod-gated, or a failed install),
+ * which would hang any awaiter — the trap this single helper exists to prevent in
+ * every caller (sign-out teardown + the enable-alerts flow). Resolves to the
+ * registration or undefined; never throws.
+ */
+export async function getActiveRegistration(): Promise<ServiceWorkerRegistration | undefined> {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return undefined;
+    return (await navigator.serviceWorker.getRegistration()) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Convert a base64url VAPID public key to the Uint8Array applicationServerKey wants. */
 export function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);

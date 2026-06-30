@@ -7,7 +7,7 @@ vi.mock("@/lib/api-client", () => ({
   setCsrfToken: vi.fn(),
 }));
 
-vi.mock("@/lib/push", () => ({ disablePush: vi.fn() }));
+vi.mock("@/lib/push", () => ({ disablePush: vi.fn(), getActiveRegistration: vi.fn() }));
 
 import { useAuth } from "@/store/auth";
 import { usePanes } from "@/store/panes";
@@ -82,7 +82,7 @@ describe("auth store", () => {
   it("signOut best-effort unsubscribes push, and a throw never blocks logout", async () => {
     (api.logout as any).mockResolvedValue(undefined);
     const fakeReg = {} as ServiceWorkerRegistration;
-    (navigator as any).serviceWorker = { getRegistration: () => Promise.resolve(fakeReg) };
+    (push.getActiveRegistration as any).mockResolvedValue(fakeReg);
     // even if push teardown rejects, sign-out must still resolve + clear
     (push.disablePush as any).mockRejectedValue(new Error("push teardown failed"));
     useAuth.getState().setSession(info);
@@ -94,14 +94,11 @@ describe("auth store", () => {
     expect(useAuth.getState().session).toBeNull();
   });
 
-  it("signOut does not hang when the service worker never activates", async () => {
+  it("signOut does not hang and skips teardown when there is no active registration", async () => {
     (api.logout as any).mockResolvedValue(undefined);
-    // `.ready` never resolves (SW failed to activate); the fix must NOT await it.
-    // getRegistration() resolves promptly to undefined → push teardown is skipped.
-    (navigator as any).serviceWorker = {
-      ready: new Promise(() => {}),
-      getRegistration: () => Promise.resolve(undefined),
-    };
+    // getActiveRegistration() resolves to undefined (no active SW) — it encapsulates
+    // the `.ready`-never-resolves guard, so sign-out neither hangs nor tears down.
+    (push.getActiveRegistration as any).mockResolvedValue(undefined);
     useAuth.getState().setSession(info);
     await expect(useAuth.getState().signOut()).resolves.toBeUndefined();
     expect(push.disablePush).not.toHaveBeenCalled();

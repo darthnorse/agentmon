@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 // Mock the feature-detected push client and the audio cue so the component can be
 // exercised in jsdom (no real ServiceWorker / PushManager / WebAudio).
-vi.mock("@/lib/push", () => ({ pushSupported: vi.fn(), enablePush: vi.fn() }));
+vi.mock("@/lib/push", () => ({ pushSupported: vi.fn(), enablePush: vi.fn(), getActiveRegistration: vi.fn() }));
 vi.mock("@/lib/audio-cue", () => ({ audioCue: { prime: vi.fn(), play: vi.fn() } }));
 
 import { EnableAlerts } from "@/components/EnableAlerts";
@@ -33,7 +33,7 @@ describe("EnableAlerts", () => {
     (push.pushSupported as any).mockReturnValue(true);
     (push.enablePush as any).mockResolvedValue(true);
     const fakeReg = {} as ServiceWorkerRegistration;
-    (navigator as any).serviceWorker = { getRegistration: () => Promise.resolve(fakeReg) };
+    (push.getActiveRegistration as any).mockResolvedValue(fakeReg);
 
     render(<EnableAlerts />);
     await userEvent.click(screen.getByRole("button", { name: /enable alerts/i }));
@@ -47,7 +47,7 @@ describe("EnableAlerts", () => {
   it("reflects a denied/failed enrolment without throwing", async () => {
     (push.pushSupported as any).mockReturnValue(true);
     (push.enablePush as any).mockResolvedValue(false);
-    (navigator as any).serviceWorker = { getRegistration: () => Promise.resolve({} as ServiceWorkerRegistration) };
+    (push.getActiveRegistration as any).mockResolvedValue({} as ServiceWorkerRegistration);
 
     render(<EnableAlerts />);
     await userEvent.click(screen.getByRole("button", { name: /enable alerts/i }));
@@ -58,12 +58,9 @@ describe("EnableAlerts", () => {
 
   it("does not hang and shows blocked when no service worker is registered", async () => {
     (push.pushSupported as any).mockReturnValue(true);
-    // `.ready` would never resolve here; the component must use getRegistration(),
-    // which resolves to undefined → blocked, never enablePush, never a hang.
-    (navigator as any).serviceWorker = {
-      ready: new Promise(() => {}),
-      getRegistration: () => Promise.resolve(undefined),
-    };
+    // getActiveRegistration resolves to undefined (no active SW) → blocked, never
+    // enablePush, never a hang (the `.ready` trap lives behind getActiveRegistration).
+    (push.getActiveRegistration as any).mockResolvedValue(undefined);
 
     render(<EnableAlerts />);
     await userEvent.click(screen.getByRole("button", { name: /enable alerts/i }));

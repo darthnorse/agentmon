@@ -2,6 +2,8 @@
 // AgentMon service worker (vite-plugin-pwa `injectManifest` source).
 // Owns: Workbox precache of the app shell + Web-Push display + notification focus.
 import { precacheAndRoute } from "workbox-precaching";
+import { stateKey } from "@/lib/state";
+import { blockedTitle } from "@/lib/alerts";
 
 // `self` is the ServiceWorkerGlobalScope here; cast rather than redeclare so this
 // file still type-checks under the app's DOM-libbed tsconfig.
@@ -39,13 +41,23 @@ sw.addEventListener("push", (event) => {
   } catch {
     data = undefined;
   }
-  if (!data || data.type !== "blocked") return;
-  const title = "\u{1F534} " + data.session + " needs input";
-  const tag = data.server + "" + data.target + "" + data.session;
+  if (!data || data.type !== "blocked") {
+    // The subscription is userVisibleOnly:true, so EVERY received push must produce a
+    // visible notification or the browser may penalise/revoke the subscription. The hub
+    // only sends type "blocked", but a malformed/undecryptable push must still show
+    // something rather than returning silently.
+    event.waitUntil(
+      sw.registration.showNotification("AgentMon", { body: "An agent needs attention" }),
+    );
+    return;
+  }
   event.waitUntil(
-    sw.registration.showNotification(title, {
+    sw.registration.showNotification(blockedTitle(data.session), {
       body: data.server,
-      tag,
+      // Same canonical key the in-app Tier-2 Notification uses (stateKey, -
+      // delimited), so the two tiers coalesce instead of double-notifying and distinct
+      // (server,target,session) triples never collide into one tag.
+      tag: stateKey(data.server, data.target, data.session),
       data,
     }),
   );

@@ -13,6 +13,7 @@ import {
   enablePush,
   disablePush,
   urlBase64ToUint8Array,
+  getActiveRegistration,
 } from "@/lib/push";
 
 const mGetVapid = vi.mocked(getVapidPublicKey);
@@ -44,6 +45,35 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   clearSupport();
+});
+
+describe("getActiveRegistration", () => {
+  it("returns undefined when serviceWorker is unavailable (no hang)", async () => {
+    clearSupport();
+    await expect(getActiveRegistration()).resolves.toBeUndefined();
+  });
+
+  it("returns the registration from getRegistration() (not .ready)", async () => {
+    const reg = {} as ServiceWorkerRegistration;
+    Object.defineProperty(navigator, "serviceWorker", {
+      // `.ready` never resolves — getActiveRegistration must not await it.
+      value: { ready: new Promise(() => {}), getRegistration: () => Promise.resolve(reg) },
+      configurable: true,
+    });
+    await expect(getActiveRegistration()).resolves.toBe(reg);
+  });
+
+  it("swallows a throwing getRegistration and returns undefined", async () => {
+    Object.defineProperty(navigator, "serviceWorker", {
+      value: {
+        getRegistration: () => {
+          throw new Error("boom");
+        },
+      },
+      configurable: true,
+    });
+    await expect(getActiveRegistration()).resolves.toBeUndefined();
+  });
 });
 
 describe("pushSupported", () => {

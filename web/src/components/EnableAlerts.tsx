@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { pushSupported, enablePush } from "@/lib/push";
+import { pushSupported, enablePush, getActiveRegistration } from "@/lib/push";
 import { audioCue } from "@/lib/audio-cue";
 
 // Opt-in control for attention alerts (M9). Renders nothing on browsers that can't
@@ -22,12 +22,9 @@ export function EnableAlerts() {
     audioCue.prime();
     setStatus("enabling");
     try {
-      // getRegistration(), NOT `.ready`: `.ready` never resolves when no worker is
-      // active (dev/test where registration is prod-gated, or a failed install),
-      // which would hang the button in "enabling" forever — same trap fixed in
-      // store/auth.ts. getRegistration() resolves promptly to the registration or
-      // undefined.
-      const reg = await navigator.serviceWorker.getRegistration();
+      // getActiveRegistration() never hangs (getRegistration(), not the `.ready`
+      // trap); undefined → no active SW yet, so we can't enrol.
+      const reg = await getActiveRegistration();
       if (!reg) {
         setStatus("blocked");
         return;
@@ -35,7 +32,6 @@ export function EnableAlerts() {
       const ok = await enablePush(reg);
       setStatus(ok ? "enabled" : "blocked");
     } catch {
-      // enablePush is itself best-effort; this guards the registration await too.
       setStatus("blocked");
     }
   }
