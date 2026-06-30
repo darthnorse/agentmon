@@ -9,6 +9,7 @@ export interface XTermHandle {
   write(b: Uint8Array): void;
   fit(): { cols: number; rows: number } | null;
   focus(): void;
+  blur(): void;
   appCursor(): boolean;
   getSelection(): string;
   paste(text: string): void;
@@ -41,6 +42,7 @@ export const XTerm = React.forwardRef<
       return t ? { cols: t.cols, rows: t.rows } : null;
     },
     focus: () => termRef.current?.focus(),
+    blur: () => termRef.current?.blur(),
     appCursor: () => !!termRef.current?.modes.applicationCursorKeysMode,
     getSelection: () => termRef.current?.getSelection() ?? "",
     paste: (text) => termRef.current?.paste(text),

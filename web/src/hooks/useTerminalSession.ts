@@ -11,6 +11,7 @@ export interface TerminalController {
   ctrlArmed: boolean;
   paste(): Promise<void>;
   copy(): Promise<void>;
+  dismissKeyboard(): void;
 }
 
 export function useTerminalSession(target: TerminalTarget) {
@@ -106,6 +107,9 @@ export function useTerminalSession(target: TerminalTarget) {
       const sel = xtermRef.current?.getSelection() ?? "";
       if (!sel) return;
       try { await navigator.clipboard.writeText(sel); } catch { /* secure context */ }
+    },
+    dismissKeyboard() {
+      xtermRef.current?.blur(); // drops focus on xterm's hidden textarea → soft keyboard closes
     },
   }), [ctrlArmed, send]);
 

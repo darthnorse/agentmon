@@ -3,6 +3,7 @@ import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
+import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
 
@@ -17,8 +18,13 @@ export function MobileTerminalRoute() {
 
   useFocusedSeen({ serverId, target, sessionName: session });
 
+  // Size the whole route to the visible viewport so the terminal + key bar stay ABOVE the
+  // iOS soft keyboard (which overlays the page rather than shrinking it). Falls back to
+  // h-full where visualViewport is unavailable.
+  const { height: vvHeight } = useVisualViewport();
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" style={{ height: vvHeight ? `${vvHeight}px` : undefined }}>
       <header
         className="flex items-center gap-2 border-b border-border bg-background px-2 py-2"
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
