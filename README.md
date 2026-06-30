@@ -31,8 +31,12 @@ status *is* navigation, and the thing you most need is "which agent needs me, an
   toast + sound + vibrate while AgentMon is open, and a **Web-Push** notification when it's backgrounded or
   your phone is asleep (install it as a PWA first — required on iOS).
 - **Installable PWA** — add it to your home screen for a full-screen mobile terminal and push notifications.
-- **Create sessions from the UI** — spin up a new project session on any server (see
-  [`session_dirs`](#agent-agenttoml)).
+- **Create + rename sessions from the UI** — spin up a new project session on any server (see
+  [`session_dirs`](#agent-agenttoml)), or rename one inline from its terminal header or the session list.
+- **Admit agents from the web** — newly-installed agents show up as a *pending* banner; **Approve** or
+  **Reject** them from the dashboard (the trust gate, no CLI needed).
+- **One-command install + upgrade** — `curl <hub>/install.sh | sudo bash` enrolls a new agent, updates an
+  existing one in place, and offers to wire up the Claude Code state hooks.
 - **Per-user preferences** — terminal theme + font size (separately tunable for desktop and mobile), and an
   optional "alert me when a session finishes" toggle.
 
@@ -143,24 +147,35 @@ and restarts (keeping its enrollment + config) — so the same command is also t
 
 ### 5. Admit the agent
 
-Enrolled agents are pending until you approve them:
+A freshly-installed agent is **pending** until you approve it — admitting is the trust gate (the hub only
+dials + relays agents you've admitted). The easiest way is the **web UI**: a *"N agents pending approval"*
+banner appears at the top of the dashboard showing each agent's hostname + dial URL + os/arch, with
+**Approve** / **Reject** buttons. Or from the hub CLI:
 
 ```bash
 docker compose exec agentmon-hub /agentmon-hubd server list
 docker compose exec agentmon-hub /agentmon-hubd server approve <hostname>
 ```
 
-The server now appears in the UI with its live sessions. (`server revoke` / `server rm` to undo.)
+The server then appears in the UI with its live sessions. (`server revoke` / `server rm` to undo.)
 
 ### 6. Enable Claude Code state (hooks)
 
-The live `blocked` / `done` / `working` dots come from Claude Code hooks. **The installer handles this for
-you**: if it detects Claude Code on the host it offers to install them (or pass **`--hooks`** to do it
-non-interactively, **`--no-hooks`** to skip). That provisions a hook token, wires it into `agent.toml`, and
-merges the hooks into the run-user's global `~/.claude/settings.json`.
+The live `blocked` / `done` / `working` dots come from Claude Code hooks — and **the installer offers to set
+them up for you**. When it detects Claude Code on the host (the run-user's `~/.claude`, or a `claude` binary
+on `PATH`) it asks:
+
+```
+Claude Code detected. Install AgentMon hooks for live agent state? [y/N]
+```
+
+The prompt works even through `curl … | sudo bash` (it reads `/dev/tty`). Saying **yes** generates a hook
+token, wires it into `agent.toml`, and merges the hooks into the run-user's global `~/.claude/settings.json`
+— idempotent, so re-running is safe. If Claude Code isn't on the host it's skipped silently. Override the
+prompt with **`--hooks`** (install non-interactively) or **`--no-hooks`** (skip):
 
 ```bash
-curl <external_origin>/install.sh | sudo bash -s -- --user=root --hooks
+curl <external_origin>/install.sh | sudo bash -s -- --hooks       # or --no-hooks
 ```
 
 To wire hooks manually (or into a **per-project** `.claude/settings.json`, which the installer doesn't touch):
