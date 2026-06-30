@@ -35,7 +35,7 @@ export function MobileTerminalRoute() {
               navigate({ to: ".", search: (s) => ({ ...s, session: to }), replace: true })
             }
           />
-          <div className="truncate text-xs text-muted-foreground">{serverId} · {paneId}</div>
+          <div className="truncate text-xs text-muted-foreground">{serverId}</div>
         </div>
       </header>
       <div className="min-h-0 flex-1">
