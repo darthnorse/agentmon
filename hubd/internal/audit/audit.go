@@ -6,6 +6,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
 	"github.com/google/uuid"
@@ -47,6 +48,15 @@ func (r *Recorder) Deny(ctx context.Context, principalID string, action authz.Ac
 func (r *Recorder) TerminalOpen(ctx context.Context, principalID, resource, mode, ip, ua string) {
 	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "terminal.open",
 		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: mode})
+}
+
+func (r *Recorder) SessionCreate(ctx context.Context, principalID, resource, sessionName, ip, ua string) {
+	meta, err := json.Marshal(map[string]string{"session": sessionName})
+	if err != nil {
+		meta = []byte("{}")
+	}
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "session.create",
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
 }
 
 func (r *Recorder) ServerEnroll(ctx context.Context, id, hostname, ip string) {
