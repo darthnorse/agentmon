@@ -28,7 +28,6 @@ export function NewSessionForm({ serverId, target, onCreated }: Props) {
   const [cwd, setCwd] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
-  void target; // accepted for symmetry with the open path; the hub derives the agent target separately
 
   const nameOk = isValidSessionName(name);
 
@@ -40,13 +39,13 @@ export function NewSessionForm({ serverId, target, onCreated }: Props) {
     const body: CreateSessionRequest = { name };
     if (cwd.trim()) body.cwd = cwd.trim();
     try {
-      const session = await createSession(serverId, body);
+      const session = await createSession(serverId, body, target);
       setName("");
       setNameEdited(false);
       setCwd("");
       onCreated(session);
     } catch (err) {
-      const status = err instanceof ApiError ? err.status : (err as { status?: number }).status;
+      const status = err instanceof ApiError ? err.status : undefined;
       if (status === 409) {
         setError("A session with that name already exists.");
       } else {

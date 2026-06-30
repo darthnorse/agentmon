@@ -69,12 +69,15 @@ func ValidateCwd(cwd string, allowed []string) (string, error) {
 	if fi, err := os.Stat(resolved); err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("cwd is not a directory")
 	}
+	sep := string(filepath.Separator)
 	for _, root := range allowed {
 		r, err := filepath.EvalSymlinks(filepath.Clean(root))
 		if err != nil {
 			continue
 		}
-		if resolved == r || strings.HasPrefix(resolved, r+string(filepath.Separator)) {
+		// TrimSuffix handles a root that resolves to "/" (boundary "/"), where a plain
+		// r+sep would be "//" and reject every subdirectory.
+		if resolved == r || strings.HasPrefix(resolved, strings.TrimSuffix(r, sep)+sep) {
 			return resolved, nil
 		}
 	}

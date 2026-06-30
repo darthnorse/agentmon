@@ -161,6 +161,18 @@ func TestValidateCwd(t *testing.T) {
 		}
 	})
 
+	t.Run("root / allows any absolute subdir", func(t *testing.T) {
+		// A session_dir that resolves to "/" must allow its subdirectories — the
+		// boundary check must not become "//" and reject everything.
+		got, err := ValidateCwd("/tmp", []string{"/"})
+		if err != nil {
+			t.Fatalf("ValidateCwd(/tmp, [/]) = %v, want allowed", err)
+		}
+		if got != "/tmp" {
+			t.Fatalf("resolved %q, want /tmp", got)
+		}
+	})
+
 	t.Run("sibling prefix-collision rejected", func(t *testing.T) {
 		// A directory whose path shares the string prefix of root but is NOT
 		// under it (root="/x/foo", sibling="/x/foobar") must be rejected — the

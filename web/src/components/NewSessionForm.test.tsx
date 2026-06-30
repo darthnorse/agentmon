@@ -48,7 +48,7 @@ describe("NewSessionForm", () => {
     render(<NewSessionForm serverId="s" target="default" onCreated={onCreated} />);
     await userEvent.type(screen.getByLabelText(/name/i), "dockmon");
     await userEvent.click(screen.getByRole("button", { name: /create/i }));
-    await waitFor(() => expect(createSession).toHaveBeenCalledWith("s", { name: "dockmon" }));
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith("s", { name: "dockmon" }, "default"));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(session));
   });
 
@@ -58,7 +58,7 @@ describe("NewSessionForm", () => {
     await userEvent.type(screen.getByLabelText(/name/i), "dockmon");
     await userEvent.type(screen.getByLabelText(/directory|cwd/i), "/home/proj");
     await userEvent.click(screen.getByRole("button", { name: /create/i }));
-    await waitFor(() => expect(createSession).toHaveBeenCalledWith("s", { name: "dockmon", cwd: "/home/proj" }));
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith("s", { name: "dockmon", cwd: "/home/proj" }, "default"));
   });
 
   it("suggests the directory basename as the name until the name is edited", async () => {

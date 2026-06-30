@@ -180,6 +180,45 @@ func TestServerCreateSessionRelistFailureStill201(t *testing.T) {
 	}
 }
 
+// TestServerCreateSessionForwardsRawTargetToAgent: with no ?target=, the hub must
+// forward the RAW (empty) target to the agent — so the agent resolves its first
+// target like the list path, not require a literal "default" label — while the
+// audit resource still keys on a concrete "default" label.
+func TestServerCreateSessionForwardsRawTargetToAgent(t *testing.T) {
+	var gotTarget string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok-a" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodPost {
+			gotTarget = r.URL.Query().Get("target") // what the hub forwarded
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"name":"newproj"}`))
+			return
+		}
+		_, _ = w.Write([]byte(createListBody)) // GET re-list
+	}))
+	defer ts.Close()
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a", Status: "active"})
+	sink := &captureSink{}
+	d.Audit = audit.NewRecorder(sink)
+
+	r, w := createReq(t, "server-a", "", `{"name":"newproj"}`) // no ?target=
+	d.ServerCreateSessionHandler()(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	if gotTarget != "" {
+		t.Fatalf("hub must forward the raw (empty) target to the agent, got %q", gotTarget)
+	}
+	e, ok := sink.find("session.create")
+	if !ok || e.Resource != shared.SessionID("server-a", "default", "newproj") {
+		t.Fatalf("audit resource must use the default label: %+v", e)
+	}
+}
+
 // TestServerCreateSessionBadNameIs400: an invalid name is rejected at the browser
 // boundary BEFORE the agent is contacted (the agent URL is unreachable, proving
 // no agent call is made).

@@ -67,6 +67,10 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 	}
 }
 
+// maxCreateSessionBody caps the create-session request body — a tiny JSON object
+// ({name, cwd?, command?}); aligned with the agent's maxCreateBody.
+const maxCreateSessionBody = 8 << 10 // 8 KiB
+
 // ServerCreateSessionHandler handles POST /api/v1/servers/{id}/sessions: it
 // validates the requested name at the browser boundary, authorizes session.create,
 // asks the agent to create the tmux session, then re-lists and returns the full
@@ -83,7 +87,7 @@ func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 			return
 		}
 		var req shared.CreateSessionRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCreateSessionBody)).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "bad request")
 			return
 		}
@@ -108,11 +112,15 @@ func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "unknown server")
 			return
 		}
+		// Forward the RAW target to the agent (empty → the agent resolves its first
+		// target), exactly like ServerSessionsHandler — do NOT substitute "default"
+		// for the agent calls, or an agent whose sole target is labeled non-"default"
+		// would 404 on create while listing succeeds. Use a concrete label only for
+		// the audit resource + the bare-session fallback.
 		target := r.URL.Query().Get("target")
-		if target == "" {
-			// Normalize so the audit resource + re-list key on a concrete label,
-			// matching SessionDetailHandler (empty → "default").
-			target = "default"
+		auditTarget := target
+		if auditTarget == "" {
+			auditTarget = "default"
 		}
 		resp, err := d.Agent.CreateSession(r.Context(), srv, target, req)
 		if err != nil {
@@ -129,8 +137,11 @@ func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 		}
 		// Audit as soon as the agent confirms the create, so a created session is
 		// always recorded even if the re-list below fails.
-		d.Audit.SessionCreate(r.Context(), p.ID, shared.SessionID(id, target, resp.Name), resp.Name,
+		d.Audit.SessionCreate(r.Context(), p.ID, shared.SessionID(id, auditTarget, resp.Name), resp.Name,
 			authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
+
+		// Bare session for the success-but-no-observed-pane fallbacks.
+		bare := shared.Session{Name: resp.Name, Server: id, Target: auditTarget}
 
 		sessions, err := d.Agent.Sessions(r.Context(), srv, target)
 		if err != nil {
@@ -138,7 +149,7 @@ func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 			// reported as a create failure. Report success with the bare session —
 			// the client refetches the list to discover the pane.
 			log.Printf("create-session re-list: agent %s: %v", id, err)
-			writeJSON(w, http.StatusCreated, shared.Session{Name: resp.Name, Server: id, Target: target})
+			writeJSON(w, http.StatusCreated, bare)
 			return
 		}
 		_ = d.Reg.TouchLastSeen(r.Context(), id)
@@ -151,7 +162,7 @@ func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 		}
 		// Created but gone before the re-list could observe it (rare race). Still
 		// report success with the bare session so the client learns the name.
-		writeJSON(w, http.StatusCreated, shared.Session{Name: resp.Name, Server: id, Target: target})
+		writeJSON(w, http.StatusCreated, bare)
 	}
 }
 

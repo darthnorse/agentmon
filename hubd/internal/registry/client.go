@@ -62,7 +62,7 @@ func (c *Client) Sessions(ctx context.Context, srv db.Server, target string) ([]
 func (c *Client) CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error) {
 	u := srv.URL + "/sessions"
 	if target != "" {
-		u += "?" + url.Values{"target": {target}}.Encode()
+		u += "?target=" + url.QueryEscape(target) // same idiom as Sessions/State
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
