@@ -1,5 +1,10 @@
 package shared
 
+import (
+	"fmt"
+	"regexp"
+)
+
 // State is an agent session/pane state. The agent emits only these five global
 // states; the per-principal done→idle "seen" projection is hub-side.
 type State string
@@ -55,6 +60,41 @@ type Pane struct {
 	ID      string `json:"id"`
 	Command string `json:"command"`
 	Cwd     string `json:"cwd"`
+}
+
+// CreateSessionRequest is the body of POST /sessions (agent) and
+// POST /api/v1/servers/{id}/sessions (hub). Name is required and validated by
+// ValidateSessionName; Cwd is optional (agent allow-lists it); Command is
+// rejected with 400 if non-empty in v1 (forward-compat field only).
+type CreateSessionRequest struct {
+	Name    string `json:"name"`
+	Cwd     string `json:"cwd,omitempty"`
+	Command string `json:"command,omitempty"`
+}
+
+// CreateSessionResponse is the agent's POST /sessions success body. The hub
+// re-lists after create and returns the full Session instead.
+type CreateSessionResponse struct {
+	Name string `json:"name"`
+}
+
+// sessionNameRe is the single name rule enforced at both the hub (browser
+// boundary) and the agent (exec boundary): 1–64 chars, must start with an
+// alphanumeric, then only A–Z a–z 0–9 _ -. This excludes '.' and ':' (tmux
+// disallows them in session names), whitespace, slashes, and a leading '-'
+// (tmux option confusion).
+var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// ValidateSessionName reports whether name is an acceptable tmux session name
+// under the shared charset rule. It returns a descriptive error on rejection.
+func ValidateSessionName(name string) error {
+	if name == "" {
+		return fmt.Errorf("session name is required")
+	}
+	if !sessionNameRe.MatchString(name) {
+		return fmt.Errorf("invalid session name %q: must be 1-64 chars, start with a letter or digit, and contain only letters, digits, '_' or '-'", name)
+	}
+	return nil
 }
 
 // SessionList is the agent's GET /sessions response envelope. The hub re-shapes
