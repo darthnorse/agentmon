@@ -2,8 +2,9 @@
 # shellcheck shell=bash
 # AgentMon agent installer — served by the hub, templated with its own URL + checksums.
 # Re-running on a host that's already installed UPDATES the binary in place (keeps the
-# enrollment + config); a first run enrolls + installs the systemd unit.
-# Usage: curl <hub>/install.sh | sudo bash [-s -- --hostname=H --user=U --socket=S --dry-run]
+# enrollment + config); a first run enrolls + installs the systemd unit. With Claude
+# Code present it offers to install the state hooks (or pass --hooks / --no-hooks).
+# Usage: curl <hub>/install.sh | sudo bash [-s -- --hostname=H --user=U --socket=S --hooks|--no-hooks --dry-run]
 set -euo pipefail
 
 HUB_URL="{{.HubURL}}"
@@ -15,11 +16,14 @@ HOSTNAME_OVERRIDE=""
 USER_OVERRIDE=""
 SOCKET_OVERRIDE=""
 DRY_RUN="0"
+HOOKS_FLAG="" # "" = auto-detect + prompt; "yes" = --hooks; "no" = --no-hooks
 for arg in "$@"; do
   case "$arg" in
     --hostname=*) HOSTNAME_OVERRIDE="${arg#*=}" ;;
     --user=*)     USER_OVERRIDE="${arg#*=}" ;;
     --socket=*)   SOCKET_OVERRIDE="${arg#*=}" ;;
+    --hooks)      HOOKS_FLAG="yes" ;;
+    --no-hooks)   HOOKS_FLAG="no" ;;
     --dry-run)    DRY_RUN="1" ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -50,6 +54,71 @@ smoke_test() {
   [ "$ok" = "1" ] || die "agent did not become healthy; check: journalctl -u agentmon-agent"
 }
 
+# provision_hook_token gives the agent a hook auth token (idempotent): generate one,
+# materialise it at a 0600 path the hook command can read, wire it into agent.toml as
+# a top-level key (BEFORE the [[targets]] table), and restart so the agent loads it.
+provision_hook_token() {
+  grep -q '^hook_token' /etc/agentmon/agent.toml 2>/dev/null && return 0
+  local tok tmp
+  tok="$( { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 40; } 2>/dev/null || true )"
+  [ -n "$tok" ] || die "could not generate a hook token"
+  umask 077
+  printf '%s' "$tok" > /etc/agentmon/hook_token
+  chown "$RUN_USER" /etc/agentmon/hook_token
+  chmod 600 /etc/agentmon/hook_token
+  tmp="$(mktemp)"
+  awk '/^\[\[targets\]\]/ && !ins { print "hook_token = \"file:/etc/agentmon/hook_token\""; print "hook_token_file = \"/etc/agentmon/hook_token\""; ins=1 } { print }' \
+    /etc/agentmon/agent.toml > "$tmp"
+  cat "$tmp" > /etc/agentmon/agent.toml # overwrite contents, preserving owner/0600
+  rm -f "$tmp"
+  systemctl restart agentmon-agent
+  smoke_test
+}
+
+# install_hooks_into merges AgentMon's state hooks into $1/.claude/settings.json for
+# RUN_USER (idempotent — Merge de-dupes), keeping the file owned by RUN_USER.
+install_hooks_into() {
+  local home_dir="$1" settings
+  settings="$home_dir/.claude/settings.json"
+  mkdir -p "$home_dir/.claude"
+  chown "$RUN_USER" "$home_dir/.claude" 2>/dev/null || true
+  /usr/local/bin/agentmon-agent hooks install --config /etc/agentmon/agent.toml --settings "$settings"
+  chown "$RUN_USER" "$settings" 2>/dev/null || true
+  echo "✓ Hooks installed into $settings — restart your Claude Code sessions to pick them up."
+}
+
+# maybe_install_hooks decides whether to set up Claude Code state hooks: --no-hooks
+# skips; --hooks forces; otherwise (auto) it installs only when hooks aren't already
+# configured AND Claude Code is present, prompting on a terminal (works under
+# `curl | bash` via /dev/tty) and skipping quietly when non-interactive.
+maybe_install_hooks() {
+  [ "$HOOKS_FLAG" = "no" ] && return 0
+  local home_dir
+  home_dir="$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6)"
+  [ -n "$home_dir" ] || home_dir="${HOME:-/root}"
+
+  if [ "$HOOKS_FLAG" != "yes" ]; then
+    grep -q '^hook_token' /etc/agentmon/agent.toml 2>/dev/null && return 0 # already set up
+    if [ ! -d "$home_dir/.claude" ] && ! command -v claude >/dev/null 2>&1; then
+      return 0 # no Claude Code on this host → nothing to hook
+    fi
+    if [ ! -r /dev/tty ]; then
+      echo "Claude Code detected — re-run with --hooks to enable live agent state (hooks)."
+      return 0
+    fi
+    printf 'Claude Code detected. Install AgentMon hooks for live agent state? [y/N] ' > /dev/tty
+    local ans=""
+    read -r ans < /dev/tty || true
+    case "$ans" in
+      [Yy]*) ;;
+      *) echo "Skipping hooks (re-run with --hooks to enable)."; return 0 ;;
+    esac
+  fi
+
+  provision_hook_token
+  install_hooks_into "$home_dir"
+}
+
 command -v systemctl >/dev/null 2>&1 || die "systemd (systemctl) is required; this installer does not support non-systemd hosts"
 command -v curl >/dev/null 2>&1 || die "curl is required"
 
@@ -72,11 +141,20 @@ if [ -f /etc/agentmon/agent.toml ] && [ -f /etc/agentmon/hub_token ] && [ -f /et
   INSTALLED="1"
 fi
 
+hooks_plan() {
+  case "$HOOKS_FLAG" in
+    yes) echo "install (--hooks)" ;;
+    no)  echo "skip (--no-hooks)" ;;
+    *)   echo "auto (detect Claude Code + prompt)" ;;
+  esac
+}
+
 echo "AgentMon installer:"
 echo "  hub:      $HUB_URL"
 echo "  hostname: $HOST"
 echo "  run-as:   $RUN_USER"
 echo "  arch:     $ARCH"
+echo "  hooks:    $(hooks_plan)"
 if [ "$INSTALLED" = "1" ]; then
   echo "  mode:     update (existing install — binary swap, config preserved)"
 else
@@ -91,6 +169,11 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "[dry-run] would enroll at $HUB_URL/api/v1/enroll as '$HOST'"
     echo "[dry-run] would write /etc/agentmon/agent.toml + secrets, install + start the systemd unit"
   fi
+  case "$HOOKS_FLAG" in
+    yes) echo "[dry-run] would provision a hook token + install Claude Code hooks for '$RUN_USER'" ;;
+    no)  echo "[dry-run] would NOT install hooks" ;;
+    *)   echo "[dry-run] would offer to install Claude Code hooks if Claude Code is detected" ;;
+  esac
   echo "[dry-run] no changes made."
   exit 0
 fi
@@ -104,21 +187,22 @@ if [ "$INSTALLED" = "1" ]; then
     # Binary is current. Re-running the installer is also the documented heal path,
     # so if the service is stopped/crashed, restart it rather than no-op'ing.
     if systemctl is-active --quiet agentmon-agent; then
-      echo "✓ $HOST already up to date (sha256 $SHA256_EXPECT) and running; nothing to do."
-      exit 0
+      echo "✓ $HOST already up to date (sha256 $SHA256_EXPECT) and running."
+    else
+      echo "Binary is current but the agent is not running — restarting..."
+      systemctl restart agentmon-agent
+      smoke_test
+      echo "✓ $HOST restarted."
     fi
-    echo "Binary is current but the agent is not running — restarting..."
+  else
+    echo "Updating the agent binary in place (enrollment + config preserved)..."
+    download_and_verify
+    install -m 0755 "$TMP" /usr/local/bin/agentmon-agent
     systemctl restart agentmon-agent
     smoke_test
-    echo "✓ $HOST restarted."
-    exit 0
+    echo "✓ $HOST updated and restarted."
   fi
-  echo "Updating the agent binary in place (enrollment + config preserved)..."
-  download_and_verify
-  install -m 0755 "$TMP" /usr/local/bin/agentmon-agent
-  systemctl restart agentmon-agent
-  smoke_test
-  echo "✓ $HOST updated and restarted."
+  maybe_install_hooks # re-run with --hooks to add hooks to an existing agent
   exit 0
 fi
 
@@ -179,5 +263,6 @@ systemctl daemon-reload
 systemctl enable --now agentmon-agent
 
 smoke_test
+maybe_install_hooks
 
-echo "✓ $HOST enrolled — pending approval. Run 'agentmon-hubd server approve $HOST' on the hub."
+echo "✓ $HOST enrolled — pending approval. Approve it in the AgentMon web UI (or 'agentmon-hubd server approve $HOST' on the hub)."

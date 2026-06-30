@@ -126,7 +126,7 @@ The hub serves a templated installer. On each box you want to monitor:
 
 ```bash
 curl <external_origin>/install.sh | sudo bash
-# optional: --hostname=H --user=U --socket=S --dry-run
+# optional: --hostname=H --user=U --socket=S --hooks|--no-hooks --dry-run
 ```
 
 It downloads the right binary (checksum-verified), enrolls with the hub, and installs + starts the
@@ -154,10 +154,19 @@ The server now appears in the UI with its live sessions. (`server revoke` / `ser
 
 ### 6. Enable Claude Code state (hooks)
 
-For live `blocked` / `done` / `working` dots, install the agent's hooks into Claude Code on that server:
+The live `blocked` / `done` / `working` dots come from Claude Code hooks. **The installer handles this for
+you**: if it detects Claude Code on the host it offers to install them (or pass **`--hooks`** to do it
+non-interactively, **`--no-hooks`** to skip). That provisions a hook token, wires it into `agent.toml`, and
+merges the hooks into the run-user's global `~/.claude/settings.json`.
 
 ```bash
-agentmon-agent hooks install --settings ~/.claude/settings.json   # or a project .claude/settings.json
+curl <external_origin>/install.sh | sudo bash -s -- --user=root --hooks
+```
+
+To wire hooks manually (or into a **per-project** `.claude/settings.json`, which the installer doesn't touch):
+
+```bash
+agentmon-agent hooks install --settings ~/.claude/settings.json     # or a project's .claude/settings.json
 agentmon-agent hook-test --session myproject --event PermissionRequest   # verify
 ```
 
