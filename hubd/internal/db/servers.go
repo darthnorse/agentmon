@@ -117,6 +117,33 @@ func (d *DB) DeleteServer(ctx context.Context, id string) (bool, error) {
 	return n > 0, nil
 }
 
+// ApproveIfPending flips a PENDING server to active ATOMICALLY: the status
+// predicate and the update are one statement, so a concurrent revoke/rm/re-enroll
+// cannot be raced into resurrecting a non-pending server. ok=false when there is no
+// such id OR it isn't pending (the admit UI relies on this for its "pending-only"
+// guarantee rather than a separate read-then-write).
+func (d *DB) ApproveIfPending(ctx context.Context, id string) (bool, error) {
+	res, err := d.sql.ExecContext(ctx,
+		`UPDATE servers SET status='active', updated_at=datetime('now') WHERE id=? AND status='pending'`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// RejectIfPending deletes a PENDING enrollment ATOMICALLY; it never deletes an
+// active server (that is the CLI-only DeleteServer). ok=false when there is no such
+// id OR it isn't pending.
+func (d *DB) RejectIfPending(ctx context.Context, id string) (bool, error) {
+	res, err := d.sql.ExecContext(ctx, `DELETE FROM servers WHERE id=? AND status='pending'`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 func (d *DB) TouchServerLastSeen(ctx context.Context, id string) error {
 	_, err := d.sql.ExecContext(ctx,
 		`UPDATE servers SET last_seen_at=datetime('now') WHERE id=?`, id)

@@ -84,6 +84,17 @@ func TestEnrollRejectsUnsafeOSField(t *testing.T) {
 	}
 }
 
+func TestEnrollRejectsReservedPendingHostname(t *testing.T) {
+	d, _ := enrollDeps()
+	r := httptest.NewRequest("POST", "/api/v1/enroll", strings.NewReader(`{"hostname":"pending","arch":"amd64","os":"linux","agentVersion":"dev"}`))
+	r.RemoteAddr = "10.0.0.9:1"
+	w := httptest.NewRecorder()
+	d.Handler()(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("hostname 'pending' shadows the admit-list route; must be 400, got %d", w.Code)
+	}
+}
+
 func TestEnrollBadBodyIs400(t *testing.T) {
 	d, _ := enrollDeps()
 	for _, body := range []string{`{not json`, `{"hostname":"","arch":"amd64"}`, `{"hostname":"web-01","arch":"sparc"}`} {

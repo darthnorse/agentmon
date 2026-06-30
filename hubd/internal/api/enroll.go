@@ -66,6 +66,13 @@ func (e EnrollDeps) Handler() http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "bad request")
 			return
 		}
+		// "pending" is a reserved id: GET /api/v1/servers/pending is the admit-list
+		// route, which would shadow GET /api/v1/servers/{id} for a server with that
+		// id. Reject it at the source (operators can pass --hostname to override).
+		if req.Hostname == "pending" {
+			writeJSONError(w, http.StatusBadRequest, "hostname \"pending\" is reserved")
+			return
+		}
 		if req.Arch != "amd64" && req.Arch != "arm64" {
 			writeJSONError(w, http.StatusBadRequest, "bad request")
 			return

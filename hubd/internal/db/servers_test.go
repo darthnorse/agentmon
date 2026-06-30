@@ -112,3 +112,50 @@ func TestSetStatusDeleteAndTouch(t *testing.T) {
 		t.Fatalf("deleted server still present: %v", err)
 	}
 }
+
+// The admit UI's "pending-only" guarantee is enforced atomically by the SQL status
+// predicate (not a read-then-write), so these never resurrect or delete a non-pending row.
+func TestApproveRejectIfPendingAreAtomicAndPendingOnly(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	for _, s := range []Server{
+		{ID: "pending-1", Name: "p", Hostname: "p", URL: "u", Status: "pending", Bearer: "b", SigningKey: "k"},
+		{ID: "active-1", Name: "a", Hostname: "a", URL: "u", Status: "active", Bearer: "b", SigningKey: "k"},
+	} {
+		if err := d.EnrollServer(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if ok, err := d.ApproveIfPending(ctx, "pending-1"); err != nil || !ok {
+		t.Fatalf("approve pending: ok=%v err=%v", ok, err)
+	}
+	if got, _ := d.GetServer(ctx, "pending-1"); got.Status != "active" {
+		t.Fatalf("status not active after approve: %+v", got)
+	}
+	if ok, _ := d.ApproveIfPending(ctx, "pending-1"); ok {
+		t.Fatal("re-approving an already-active row must be a no-op (atomic guard)")
+	}
+	if ok, _ := d.ApproveIfPending(ctx, "active-1"); ok {
+		t.Fatal("an active server must NOT be approvable (no resurrect)")
+	}
+	if ok, _ := d.ApproveIfPending(ctx, "ghost"); ok {
+		t.Fatal("approving a missing id must be false")
+	}
+
+	if ok, _ := d.RejectIfPending(ctx, "active-1"); ok {
+		t.Fatal("RejectIfPending must NOT delete an active server")
+	}
+	if _, err := d.GetServer(ctx, "active-1"); err != nil {
+		t.Fatalf("active server must remain after a refused reject: %v", err)
+	}
+	if err := d.EnrollServer(ctx, Server{ID: "pending-2", Name: "p2", Hostname: "p2", URL: "u", Status: "pending", Bearer: "b", SigningKey: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.RejectIfPending(ctx, "pending-2"); err != nil || !ok {
+		t.Fatalf("reject pending: ok=%v err=%v", ok, err)
+	}
+	if _, err := d.GetServer(ctx, "pending-2"); err != sql.ErrNoRows {
+		t.Fatal("a rejected pending server must be gone")
+	}
+}

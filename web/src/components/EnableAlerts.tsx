@@ -13,6 +13,17 @@ import { audioCue } from "@/lib/audio-cue";
 
 type EnableStatus = "idle" | "enabling" | "enabled" | "disabling" | "blocked";
 
+function enableLabel(status: EnableStatus): string {
+  switch (status) {
+    case "blocked":
+      return "Alerts blocked";
+    case "enabling":
+      return "Enabling…";
+    default:
+      return "Enable alerts";
+  }
+}
+
 export function EnableAlerts() {
   const [status, setStatus] = React.useState<EnableStatus>("idle");
   const supported = pushSupported();
@@ -79,7 +90,7 @@ export function EnableAlerts() {
 
   return (
     <Button variant="outline" size="sm" onClick={onEnable} disabled={status === "enabling"}>
-      {status === "blocked" ? "Alerts blocked" : status === "enabling" ? "Enabling…" : "Enable alerts"}
+      {enableLabel(status)}
     </Button>
   );
 }

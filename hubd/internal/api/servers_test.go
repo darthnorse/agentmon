@@ -94,17 +94,18 @@ func (f fakeStore) GetServer(_ context.Context, id string) (db.Server, error) {
 	return db.Server{}, sql.ErrNoRows
 }
 func (f fakeStore) TouchServerLastSeen(_ context.Context, _ string) error { return nil }
-func (f fakeStore) SetServerStatus(_ context.Context, id, status string) (bool, error) {
+func (f fakeStore) ApproveIfPending(_ context.Context, id string) (bool, error) {
 	s, ok := f.servers[id]
-	if !ok {
+	if !ok || s.Status != "pending" {
 		return false, nil
 	}
-	s.Status = status
+	s.Status = "active"
 	f.servers[id] = s // shared map → mutation persists despite the value receiver
 	return true, nil
 }
-func (f fakeStore) DeleteServer(_ context.Context, id string) (bool, error) {
-	if _, ok := f.servers[id]; !ok {
+func (f fakeStore) RejectIfPending(_ context.Context, id string) (bool, error) {
+	s, ok := f.servers[id]
+	if !ok || s.Status != "pending" {
 		return false, nil
 	}
 	delete(f.servers, id)

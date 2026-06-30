@@ -45,24 +45,25 @@ func (f *fakeStore) TouchServerLastSeen(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeStore) SetServerStatus(_ context.Context, id, status string) (bool, error) {
+func (f *fakeStore) ApproveIfPending(_ context.Context, id string) (bool, error) {
 	if f.err != nil {
 		return false, f.err
 	}
 	s, ok := f.servers[id]
-	if !ok {
+	if !ok || s.Status != "pending" { // atomic: only a pending row transitions
 		return false, nil
 	}
-	s.Status = status
+	s.Status = "active"
 	f.servers[id] = s
 	return true, nil
 }
 
-func (f *fakeStore) DeleteServer(_ context.Context, id string) (bool, error) {
+func (f *fakeStore) RejectIfPending(_ context.Context, id string) (bool, error) {
 	if f.err != nil {
 		return false, f.err
 	}
-	if _, ok := f.servers[id]; !ok {
+	s, ok := f.servers[id]
+	if !ok || s.Status != "pending" { // atomic: only a pending row is deleted
 		return false, nil
 	}
 	delete(f.servers, id)

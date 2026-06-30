@@ -37,8 +37,10 @@ type Store interface {
 	ListServers(ctx context.Context, status string) ([]db.Server, error)
 	GetServer(ctx context.Context, id string) (db.Server, error)
 	TouchServerLastSeen(ctx context.Context, id string) error
-	SetServerStatus(ctx context.Context, id, status string) (bool, error)
-	DeleteServer(ctx context.Context, id string) (bool, error)
+	// ApproveIfPending / RejectIfPending enforce the pending precondition ATOMICALLY
+	// in a single statement (no read-then-write race) — see db.ApproveIfPending.
+	ApproveIfPending(ctx context.Context, id string) (bool, error)
+	RejectIfPending(ctx context.Context, id string) (bool, error)
 }
 
 // PendingServer is a browser-safe projection of an agent awaiting admission —
@@ -113,10 +115,10 @@ func (r *Registry) ListPending(ctx context.Context) ([]PendingServer, error) {
 	return out, nil
 }
 
-// Approve admits a PENDING agent (status → active) and returns the affected server
-// (for audit). ok=false when there is no such id OR it isn't pending — admitting is
-// only ever a pending→active transition, never a way to resurrect a revoked server.
-func (r *Registry) Approve(ctx context.Context, id string) (db.Server, bool, error) {
+// load fetches a server by id. (srv,true,nil) when found; (_,false,nil) when
+// missing; (_,false,err) on a genuine DB error. The shared read prefix of Approve/
+// Reject (and the same errNoRows/err handling as Get).
+func (r *Registry) load(ctx context.Context, id string) (db.Server, bool, error) {
 	s, err := r.store.GetServer(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return db.Server{}, false, nil
@@ -124,27 +126,31 @@ func (r *Registry) Approve(ctx context.Context, id string) (db.Server, bool, err
 	if err != nil {
 		return db.Server{}, false, err
 	}
-	if s.Status != "pending" {
-		return db.Server{}, false, nil
+	return s, true, nil
+}
+
+// Approve admits a PENDING agent (status → active) and returns the affected server
+// (for audit). The pending-only precondition is enforced ATOMICALLY by
+// ApproveIfPending (not by the read below), so a concurrent revoke/rm cannot be
+// raced into resurrecting a non-pending server. ok=false when missing or not pending.
+// The read is only to recover the hostname for the audit + a clean miss.
+func (r *Registry) Approve(ctx context.Context, id string) (db.Server, bool, error) {
+	s, found, err := r.load(ctx, id)
+	if !found {
+		return db.Server{}, false, err
 	}
-	ok, err := r.store.SetServerStatus(ctx, id, "active")
+	ok, err := r.store.ApproveIfPending(ctx, id)
 	return s, ok, err
 }
 
 // Reject removes a PENDING enrollment entirely and returns the affected server (for
-// audit). ok=false when there is no such id OR it isn't pending — this never deletes
-// an ACTIVE server (that is the more dangerous `server rm`, CLI-only).
+// audit). RejectIfPending enforces the pending-only precondition atomically — it
+// never deletes an ACTIVE server (that is the CLI-only `server rm`).
 func (r *Registry) Reject(ctx context.Context, id string) (db.Server, bool, error) {
-	s, err := r.store.GetServer(ctx, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return db.Server{}, false, nil
-	}
-	if err != nil {
+	s, found, err := r.load(ctx, id)
+	if !found {
 		return db.Server{}, false, err
 	}
-	if s.Status != "pending" {
-		return db.Server{}, false, nil
-	}
-	ok, err := r.store.DeleteServer(ctx, id)
+	ok, err := r.store.RejectIfPending(ctx, id)
 	return s, ok, err
 }

@@ -101,7 +101,16 @@ fi
 if [ "$INSTALLED" = "1" ]; then
   if [ -x /usr/local/bin/agentmon-agent ] && \
      [ "$(sha256sum /usr/local/bin/agentmon-agent | cut -d' ' -f1)" = "$SHA256_EXPECT" ]; then
-    echo "✓ $HOST already up to date (sha256 $SHA256_EXPECT); nothing to do."
+    # Binary is current. Re-running the installer is also the documented heal path,
+    # so if the service is stopped/crashed, restart it rather than no-op'ing.
+    if systemctl is-active --quiet agentmon-agent; then
+      echo "✓ $HOST already up to date (sha256 $SHA256_EXPECT) and running; nothing to do."
+      exit 0
+    fi
+    echo "Binary is current but the agent is not running — restarting..."
+    systemctl restart agentmon-agent
+    smoke_test
+    echo "✓ $HOST restarted."
     exit 0
   fi
   echo "Updating the agent binary in place (enrollment + config preserved)..."
