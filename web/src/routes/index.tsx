@@ -127,7 +127,12 @@ export function ShellRoute() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-border px-4 py-2">
+      <header
+        className="flex items-center justify-between border-b border-border bg-background px-4 py-2"
+        // In an installed PWA (iOS black-translucent status bar + viewport-fit=cover)
+        // the content flows under the status bar/notch — inset the top so the bar shows.
+        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
+      >
         <span className="font-semibold">AgentMon</span>
         <div className="flex items-center gap-2">
           {servers.length > 0 && (
