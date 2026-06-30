@@ -54,51 +54,69 @@ smoke_test() {
   [ "$ok" = "1" ] || die "agent did not become healthy; check: journalctl -u agentmon-agent"
 }
 
-# provision_hook_token gives the agent a hook auth token (idempotent): generate one,
-# materialise it at a 0600 path the hook command can read, wire it into agent.toml as
-# a top-level key (BEFORE the [[targets]] table), and restart so the agent loads it.
+# provision_hook_token gives the agent a hook auth token: generate one, materialise it
+# at a 0600 path the hook command can read, wire BOTH hook_token + hook_token_file into
+# agent.toml as top-level keys (BEFORE the [[targets]] table, swapped in ATOMICALLY so an
+# interruption can't truncate the live config), and restart so the agent loads it.
+# Idempotency keys on hook_token_file — we always write the pair, so its presence means
+# our provisioning is done.
 provision_hook_token() {
-  grep -q '^hook_token' /etc/agentmon/agent.toml 2>/dev/null && return 0
-  local tok tmp
+  grep -q '^hook_token_file' /etc/agentmon/agent.toml 2>/dev/null && return 0
+  # A hook_token without our companion hook_token_file is an operator's manual config;
+  # don't duplicate the key or risk the literal token landing in settings.json.
+  if grep -q '^hook_token' /etc/agentmon/agent.toml 2>/dev/null; then
+    die "agent.toml sets hook_token without hook_token_file; add hook_token_file, then run 'agentmon-agent hooks install' manually"
+  fi
+  local tok
   tok="$( { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 40; } 2>/dev/null || true )"
   [ -n "$tok" ] || die "could not generate a hook token"
   umask 077
   printf '%s' "$tok" > /etc/agentmon/hook_token
   chown "$RUN_USER" /etc/agentmon/hook_token
   chmod 600 /etc/agentmon/hook_token
-  tmp="$(mktemp)"
   awk '/^\[\[targets\]\]/ && !ins { print "hook_token = \"file:/etc/agentmon/hook_token\""; print "hook_token_file = \"/etc/agentmon/hook_token\""; ins=1 } { print }' \
-    /etc/agentmon/agent.toml > "$tmp"
-  cat "$tmp" > /etc/agentmon/agent.toml # overwrite contents, preserving owner/0600
-  rm -f "$tmp"
+    /etc/agentmon/agent.toml > /etc/agentmon/agent.toml.new
+  if ! grep -q '^hook_token_file' /etc/agentmon/agent.toml.new; then
+    rm -f /etc/agentmon/agent.toml.new
+    die "could not wire hook_token into agent.toml (no top-level [[targets]] anchor)"
+  fi
+  chown "$RUN_USER" /etc/agentmon/agent.toml.new
+  chmod 600 /etc/agentmon/agent.toml.new
+  mv -f /etc/agentmon/agent.toml.new /etc/agentmon/agent.toml # atomic
   systemctl restart agentmon-agent
   smoke_test
 }
 
-# install_hooks_into merges AgentMon's state hooks into $1/.claude/settings.json for
-# RUN_USER (idempotent — Merge de-dupes), keeping the file owned by RUN_USER.
+# install_hooks_into merges AgentMon's state hooks into $1/.claude/settings.json,
+# running the per-user file operations AS RUN_USER (via runuser) so root never follows a
+# symlink the run-user controls. Idempotent — Merge de-dupes.
 install_hooks_into() {
   local home_dir="$1" settings
   settings="$home_dir/.claude/settings.json"
-  mkdir -p "$home_dir/.claude"
-  chown "$RUN_USER" "$home_dir/.claude" 2>/dev/null || true
-  /usr/local/bin/agentmon-agent hooks install --config /etc/agentmon/agent.toml --settings "$settings"
-  chown "$RUN_USER" "$settings" 2>/dev/null || true
+  command -v runuser >/dev/null 2>&1 || die "runuser (util-linux) is required to install hooks safely"
+  runuser -u "$RUN_USER" -- mkdir -p "$home_dir/.claude"
+  runuser -u "$RUN_USER" -- /usr/local/bin/agentmon-agent hooks install --config /etc/agentmon/agent.toml --settings "$settings"
   echo "✓ Hooks installed into $settings — restart your Claude Code sessions to pick them up."
 }
 
 # maybe_install_hooks decides whether to set up Claude Code state hooks: --no-hooks
-# skips; --hooks forces; otherwise (auto) it installs only when hooks aren't already
-# configured AND Claude Code is present, prompting on a terminal (works under
-# `curl | bash` via /dev/tty) and skipping quietly when non-interactive.
+# skips; --hooks forces; otherwise (auto) it installs when Claude Code is present and the
+# hooks aren't ALREADY fully set up (token wired AND merged into settings.json — so a
+# partially-failed prior run is still completable). It prompts on a terminal (works under
+# `curl | bash` via /dev/tty) and skips quietly when non-interactive.
 maybe_install_hooks() {
   [ "$HOOKS_FLAG" = "no" ] && return 0
-  local home_dir
+  local home_dir settings
   home_dir="$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6)"
   [ -n "$home_dir" ] || home_dir="${HOME:-/root}"
+  settings="$home_dir/.claude/settings.json"
 
   if [ "$HOOKS_FLAG" != "yes" ]; then
-    grep -q '^hook_token' /etc/agentmon/agent.toml 2>/dev/null && return 0 # already set up
+    # Skip silently only when BOTH halves are already done (token wired + hooks merged).
+    if grep -q '^hook_token_file' /etc/agentmon/agent.toml 2>/dev/null && \
+       grep -q 'agentmon-hook' "$settings" 2>/dev/null; then
+      return 0
+    fi
     if [ ! -d "$home_dir/.claude" ] && ! command -v claude >/dev/null 2>&1; then
       return 0 # no Claude Code on this host → nothing to hook
     fi
@@ -108,7 +126,7 @@ maybe_install_hooks() {
     fi
     printf 'Claude Code detected. Install AgentMon hooks for live agent state? [y/N] ' > /dev/tty
     local ans=""
-    read -r ans < /dev/tty || true
+    read -r -t 30 ans < /dev/tty || true
     case "$ans" in
       [Yy]*) ;;
       *) echo "Skipping hooks (re-run with --hooks to enable)."; return 0 ;;
