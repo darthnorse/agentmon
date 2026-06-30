@@ -23,6 +23,10 @@ type Config struct {
 	HookTokenFile   string   `toml:"hook_token_file"` // optional path the agent writes the token to
 	ScrollbackLines int      `toml:"scrollback_lines"`
 	Targets         []Target `toml:"targets"`
+	// SessionDirs is the allow-list of roots in which POST /sessions may create a
+	// new tmux session (§13.6 directory policy). An empty/unset list defaults to
+	// the agent user's home directory (os.UserHomeDir) at the handler.
+	SessionDirs []string `toml:"session_dirs"`
 }
 
 func Load(path string) (Config, error) {
@@ -67,4 +71,3 @@ func (c Config) ResolveTarget(label string) (Target, bool) {
 	}
 	return Target{}, false
 }
-

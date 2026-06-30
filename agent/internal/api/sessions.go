@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"os"
 
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/state"
@@ -43,6 +45,70 @@ func SessionsHandler(cfg config.Config, discover Discoverer, m *state.Machine) h
 		stampState(m, t.Label, sessions)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(shared.SessionList{Sessions: sessions})
+	}
+}
+
+// maxCreateBody caps the POST /sessions request body. The body is a tiny JSON
+// object (name + optional cwd); anything larger is malformed or hostile.
+const maxCreateBody = 8 << 10 // 8 KiB
+
+// SessionCreator creates a detached tmux session named name with working
+// directory cwd on the given socket. It is the DI seam for CreateSessionHandler
+// (mirrors Discoverer): production binds tmux.CreateSession + tmux.ExecRunner;
+// tests inject a fake that records its arguments.
+type SessionCreator func(ctx context.Context, socket, name, cwd string) error
+
+// CreateSessionHandler serves POST /sessions?target=<label>. It is the agent's
+// exec boundary for session creation (§12.2 / §13.6): the body's name is
+// re-validated against the shared charset rule, a non-empty command is rejected
+// (custom commands are not supported in v1), the target resolves via config, and
+// the requested cwd is allow-listed against cfg.SessionDirs (defaulting to the
+// agent user's home) before any tmux invocation. The SessionCreator does the
+// actual no-shell exec. On success it returns 200 {"name":...}; the hub re-lists
+// and returns the full Session.
+func CreateSessionHandler(cfg config.Config, create SessionCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxCreateBody)
+		var req shared.CreateSessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if err := shared.ValidateSessionName(req.Name); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if req.Command != "" {
+			writeJSONError(w, http.StatusBadRequest, "custom commands are not supported")
+			return
+		}
+		t, ok := cfg.ResolveTarget(r.URL.Query().Get("target"))
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "unknown target")
+			return
+		}
+		allowed := cfg.SessionDirs
+		if len(allowed) == 0 {
+			if home, err := os.UserHomeDir(); err == nil && home != "" {
+				allowed = []string{home}
+			}
+		}
+		cwd, err := tmux.ValidateCwd(req.Cwd, allowed)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := create(r.Context(), t.SocketName, req.Name, cwd); err != nil {
+			if errors.Is(err, tmux.ErrSessionExists) {
+				writeJSONError(w, http.StatusConflict, "a session with that name already exists")
+				return
+			}
+			log.Printf("sessions: create failed (target=%q name=%q): %v", t.Label, req.Name, err)
+			writeJSONError(w, http.StatusInternalServerError, "create failed")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(shared.CreateSessionResponse{Name: req.Name})
 	}
 }
 
