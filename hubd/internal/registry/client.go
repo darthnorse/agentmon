@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,13 @@ import (
 type Client struct{ HTTP *http.Client }
 
 var ErrStateUnsupported = errors.New("agent does not support /state")
+
+// ErrInvalidSession maps an agent 400 (bad name, custom command, or cwd outside
+// the allow-list). ErrSessionExists maps an agent 409 (duplicate name).
+var (
+	ErrInvalidSession = errors.New("invalid session request")
+	ErrSessionExists  = errors.New("session already exists")
+)
 
 func NewClient(timeout time.Duration) *Client {
 	return &Client{HTTP: &http.Client{Timeout: timeout}}
@@ -49,6 +57,42 @@ func (c *Client) Sessions(ctx context.Context, srv db.Server, target string) ([]
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+func (c *Client) CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error) {
+	u := srv.URL + "/sessions"
+	if target != "" {
+		u += "?" + url.Values{"target": {target}}.Encode()
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return shared.CreateSessionResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return shared.CreateSessionResponse{}, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+srv.Bearer)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return shared.CreateSessionResponse{}, fmt.Errorf("dial agent %s: %w", srv.ID, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
+		var out shared.CreateSessionResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return shared.CreateSessionResponse{}, fmt.Errorf("decode agent %s create-session: %w", srv.ID, err)
+		}
+		return out, nil
+	case http.StatusBadRequest:
+		return shared.CreateSessionResponse{}, ErrInvalidSession
+	case http.StatusConflict:
+		return shared.CreateSessionResponse{}, ErrSessionExists
+	default:
+		return shared.CreateSessionResponse{}, fmt.Errorf("agent %s create-session returned %d", srv.ID, resp.StatusCode)
+	}
 }
 
 func (c *Client) State(ctx context.Context, srv db.Server, target string) (shared.AgentState, error) {
