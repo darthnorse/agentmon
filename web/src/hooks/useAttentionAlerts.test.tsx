@@ -15,6 +15,7 @@ import { audioCue } from "@/lib/audio-cue";
 import { useAttentionAlerts } from "@/hooks/useAttentionAlerts";
 import { useStateStream } from "@/hooks/useStateStream";
 import { useSessionState } from "@/store/session-state";
+import { usePrefs } from "@/store/prefs";
 import { stateKey } from "@/lib/state";
 import type { StateEventFrame } from "@/lib/contracts";
 
@@ -63,6 +64,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   FakeES.instances = [];
   useSessionState.getState().reset();
+  usePrefs.getState().setAlertOnDone(false);
   vibrate = vi.fn(() => true);
   Object.defineProperty(navigator, "vibrate", { value: vibrate, configurable: true });
   // jsdom default is "visible"; keep it explicit/resettable per test.
@@ -75,10 +77,12 @@ afterEach(() => {
   } catch {
     /* ignore */
   }
+  usePrefs.getState().setAlertOnDone(false);
   vi.unstubAllGlobals();
 });
 
 const BLOCKED: StateEventFrame = { server: "srv", target: "t1", session: "sesh", state: "blocked" };
+const DONE: StateEventFrame = { server: "srv", target: "t1", session: "sesh", state: "done" };
 
 describe("useAttentionAlerts", () => {
   it("fires toast + sound + vibrate once on a blocked transition for a non-focused key", () => {
@@ -151,5 +155,43 @@ describe("useAttentionAlerts", () => {
     expect(NotificationMock).not.toHaveBeenCalled();
     // foreground path still fired the toast.
     expect(mToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires a 'finished' toast on a done transition when alertOnDone is on", () => {
+    usePrefs.getState().setAlertOnDone(true);
+    render(<Harness />);
+    emitState(DONE);
+
+    expect(mToast).toHaveBeenCalledTimes(1);
+    expect(mPlay).toHaveBeenCalledTimes(1);
+    const [title, opts] = mToast.mock.calls[0] as [string, { description?: string }];
+    expect(title).toContain("sesh");
+    expect(title).toContain("finished");
+    expect(title).not.toContain("needs input");
+    expect(opts.description).toBe("srv");
+  });
+
+  it("does not fire on a done transition when alertOnDone is off", () => {
+    render(<Harness />); // alertOnDone defaults off
+    emitState(DONE);
+
+    expect(mToast).not.toHaveBeenCalled();
+    expect(mPlay).not.toHaveBeenCalled();
+  });
+
+  it("uses the done title (not blocked) in the system Notification when hidden", () => {
+    usePrefs.getState().setAlertOnDone(true);
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    const NotificationMock = vi.fn() as unknown as { (...a: unknown[]): void; permission: string };
+    NotificationMock.permission = "granted";
+    vi.stubGlobal("Notification", NotificationMock);
+
+    render(<Harness />);
+    emitState(DONE);
+
+    expect(NotificationMock).toHaveBeenCalledTimes(1);
+    const [ntitle] = (NotificationMock as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0] as [string];
+    expect(ntitle).toContain("finished");
   });
 });

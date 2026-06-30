@@ -12,7 +12,27 @@ export function isAttentionTransition(
   focusedKey: string | null,
   key: string,
 ): boolean {
-  return next === "blocked" && prev !== "blocked" && key !== focusedKey;
+  // Blocked-only attention rule — preserved for the M9 service-worker / Web-Push
+  // path (push stays blocked-only). It is exactly `isAlertTransition` with the
+  // done-too toggle off, so define it as that wrapper to keep one source of truth.
+  return isAlertTransition(prev, next, focusedKey, key, false);
+}
+
+// Generalized alert-transition rule (M11): fires into `blocked` always, and into
+// `done` only when `alertOnDone` is on. Same no-re-fire (prev !== target) and
+// tab-aware (never alert the focused key) guards as the M9 blocked rule. A first
+// sighting (prev === undefined) into an alerting state counts as a transition.
+export function isAlertTransition(
+  prev: SessionState | undefined,
+  next: SessionState,
+  focusedKey: string | null,
+  key: string,
+  alertOnDone: boolean,
+): boolean {
+  if (key === focusedKey) return false;
+  if (next === "blocked") return prev !== "blocked";
+  if (next === "done") return alertOnDone && prev !== "done";
+  return false;
 }
 
 // The blocked-alert title shown in every tier — the in-app toast, the page-driven
@@ -21,4 +41,10 @@ export function isAttentionTransition(
 // Pure + DOM-free, so the service worker can import it.
 export function blockedTitle(session: string): string {
   return `🔴 ${session} needs input`;
+}
+
+// The done-alert title (M11 `prefs.alertOnDone`). Pure + DOM-free like
+// `blockedTitle` so it can be shared across the app and any SW bundle.
+export function doneTitle(session: string): string {
+  return `✅ ${session} finished`;
 }
