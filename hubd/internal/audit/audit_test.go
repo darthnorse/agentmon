@@ -66,6 +66,31 @@ func TestTerminalOpenRecorded(t *testing.T) {
 	}
 }
 
+func TestSessionCreateRecorded(t *testing.T) {
+	s := &fakeSink{}
+	r := NewRecorder(s)
+	r.SessionCreate(context.Background(), "u1", "session:aigallery/default/proj", "proj", "10.0.0.2", "curl/8")
+	if len(s.rows) != 1 {
+		t.Fatalf("rows: %d", len(s.rows))
+	}
+	got := s.rows[0]
+	if got.Action != "session.create" || got.Result != "allow" {
+		t.Fatalf("action/result: %+v", got)
+	}
+	if got.PrincipalID != "u1" || got.Resource != "session:aigallery/default/proj" {
+		t.Fatalf("principal/resource: %+v", got)
+	}
+	if got.Meta != `{"session":"proj"}` {
+		t.Fatalf("meta: %q", got.Meta)
+	}
+	if got.IP != "10.0.0.2" || got.UserAgent != "curl/8" {
+		t.Fatalf("ip/ua: %+v", got)
+	}
+	if got.ID == "" {
+		t.Fatal("audit id not stamped")
+	}
+}
+
 func TestServerLifecycleAudits(t *testing.T) {
 	cap := &captureSink{}
 	r := NewRecorder(cap)

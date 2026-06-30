@@ -103,3 +103,95 @@ func TestClientStateUnsupportedOn404(t *testing.T) {
 		t.Fatalf("err = %v, want ErrStateUnsupported", err)
 	}
 }
+
+func TestClientCreateSessionOK(t *testing.T) {
+	var gotMethod, gotPath, gotTarget, gotAuth, gotCT string
+	var gotBody shared.CreateSessionRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotTarget = r.URL.Query().Get("target")
+		gotAuth = r.Header.Get("Authorization")
+		gotCT = r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(shared.CreateSessionResponse{Name: "proj"})
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	srv := db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a"}
+	resp, err := c.CreateSession(context.Background(), srv, "host1", shared.CreateSessionRequest{Name: "proj", Cwd: "/home/dev/proj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Name != "proj" {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q", gotMethod)
+	}
+	if gotPath != "/sessions" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotTarget != "host1" {
+		t.Fatalf("target = %q", gotTarget)
+	}
+	if gotAuth != "Bearer tok-a" {
+		t.Fatalf("auth = %q", gotAuth)
+	}
+	if gotCT != "application/json" {
+		t.Fatalf("content-type = %q", gotCT)
+	}
+	if gotBody.Name != "proj" || gotBody.Cwd != "/home/dev/proj" {
+		t.Fatalf("body = %+v", gotBody)
+	}
+}
+
+func TestClientCreateSessionInvalidOn400(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	_, err := c.CreateSession(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, "", shared.CreateSessionRequest{Name: "x"})
+	if !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("err = %v, want ErrInvalidSession", err)
+	}
+}
+
+func TestClientCreateSessionExistsOn409(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	_, err := c.CreateSession(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, "", shared.CreateSessionRequest{Name: "x"})
+	if !errors.Is(err, ErrSessionExists) {
+		t.Fatalf("err = %v, want ErrSessionExists", err)
+	}
+}
+
+func TestClientCreateSessionWrapsServerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	_, err := c.CreateSession(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, "", shared.CreateSessionRequest{Name: "x"})
+	if err == nil {
+		t.Fatal("5xx must error")
+	}
+	if errors.Is(err, ErrInvalidSession) || errors.Is(err, ErrSessionExists) {
+		t.Fatalf("5xx must not map to a sentinel: %v", err)
+	}
+}
+
+func TestClientCreateSessionTransportError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	ts.Close() // dead server
+	c := NewClient(500 * time.Millisecond)
+	_, err := c.CreateSession(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, "", shared.CreateSessionRequest{Name: "x"})
+	if err == nil {
+		t.Fatal("transport failure must error")
+	}
+}

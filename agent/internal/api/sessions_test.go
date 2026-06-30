@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -140,5 +142,201 @@ func TestSessionsHandlerNilMachineUnknown(t *testing.T) {
 	json.Unmarshal(rr.Body.Bytes(), &body)
 	if body.Sessions[0].State != shared.StateUnknown {
 		t.Fatalf("state = %q, want unknown", body.Sessions[0].State)
+	}
+}
+
+// createTestCfg builds an agent config whose default target carries socket and
+// whose session_dirs allow-list is rooted at dir (a t.TempDir()).
+func createTestCfg(dir string) config.Config {
+	return config.Config{
+		ServerID:    "server-a",
+		Targets:     []config.Target{{Label: "default", SocketName: "sock-1"}},
+		SessionDirs: []string{dir},
+	}
+}
+
+func TestCreateSessionHandlerValid(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "proj")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantCwd, err := filepath.EvalSymlinks(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotSocket, gotName, gotCwd string
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		gotSocket, gotName, gotCwd = socket, name, cwd
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+
+	body := `{"name":"proj","cwd":"` + sub + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp shared.CreateSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rr.Body.String())
+	}
+	if resp.Name != "proj" {
+		t.Fatalf("resp.Name = %q", resp.Name)
+	}
+	if gotSocket != "sock-1" || gotName != "proj" || gotCwd != wantCwd {
+		t.Fatalf("creator got socket=%q name=%q cwd=%q (want sock-1/proj/%s)", gotSocket, gotName, gotCwd, wantCwd)
+	}
+}
+
+func TestCreateSessionHandlerEmptyCwdDefaultsToFirstRoot(t *testing.T) {
+	dir := t.TempDir()
+	wantCwd, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotCwd string
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		gotCwd = cwd
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(`{"name":"proj"}`))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d: %s", rr.Code, rr.Body.String())
+	}
+	if gotCwd != wantCwd {
+		t.Fatalf("cwd = %q, want default root %q", gotCwd, wantCwd)
+	}
+}
+
+func TestCreateSessionHandlerBadName400(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		t.Fatal("creator must not be called for an invalid name")
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	for _, name := range []string{"", "-leading", "has space", "a/b", "a.b", "a:b"} {
+		body := `{"name":"` + name + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
+		rr := httptest.NewRecorder()
+		h(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("name %q: code %d, want 400", name, rr.Code)
+		}
+	}
+}
+
+func TestCreateSessionHandlerCommandRejected400(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		t.Fatal("creator must not be called when a command is supplied")
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	body := `{"name":"proj","command":"rm -rf /"}`
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code %d, want 400", rr.Code)
+	}
+}
+
+func TestCreateSessionHandlerCwdOutsideRoot400(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		t.Fatal("creator must not be called for a cwd outside the allow-list")
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	body := `{"name":"proj","cwd":"/etc"}`
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code %d, want 400", rr.Code)
+	}
+}
+
+func TestCreateSessionHandlerUnknownTarget404(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		t.Fatal("creator must not be called for an unknown target")
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=ghost", strings.NewReader(`{"name":"proj"}`))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("code %d, want 404", rr.Code)
+	}
+}
+
+func TestCreateSessionHandlerDuplicate409(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		return tmux.ErrSessionExists
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(`{"name":"proj"}`))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("code %d, want 409", rr.Code)
+	}
+}
+
+func TestCreateSessionHandlerCreateError500(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		return errors.New("tmux boom")
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(`{"name":"proj"}`))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("code %d, want 500", rr.Code)
+	}
+}
+
+func TestCreateSessionHandlerBadJSON400(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		t.Fatal("creator must not be called for a malformed body")
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(`{not json`))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code %d, want 400", rr.Code)
+	}
+}
+
+func TestCreateSessionHandlerRequiresBearer(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd string) error {
+		t.Fatal("creator must not be called without a valid bearer token")
+		return nil
+	}
+	h := RequireBearer("secret-token", CreateSessionHandler(createTestCfg(dir), create))
+
+	// No Authorization header → 401.
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(`{"name":"proj"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("missing bearer: code %d, want 401", rr.Code)
 	}
 }

@@ -22,6 +22,9 @@ export interface SessionInfo { principalId: string; username: string; displayNam
 export interface StateEventFrame { server: string; target: string; session: string; state: SessionState; }
 // POST /api/v1/seen body (mirrors hubd api.seenRequest).
 export interface SeenRequest { serverId: string; target: string; sessionName: string; }
+// POST /api/v1/servers/{id}/sessions body (mirrors shared.CreateSessionRequest).
+// Custom commands are rejected in v1; `command` is reserved. The response is a full Session.
+export interface CreateSessionRequest { name: string; cwd?: string; command?: string; }
 // POST /api/v1/push/subscribe body (mirrors the browser PushSubscription.toJSON shape
 // the hub's api.push decodes). The endpoint is the natural unique key (server PK).
 export interface PushSubscriptionJSON { endpoint: string; keys: { p256dh: string; auth: string }; }

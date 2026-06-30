@@ -20,6 +20,7 @@ const (
 	TerminalRead  Action = "terminal.read"
 	TerminalWrite Action = "terminal.write"
 	AuditRead     Action = "audit.read"
+	SessionCreate Action = "session.create"
 )
 
 type Decision struct {

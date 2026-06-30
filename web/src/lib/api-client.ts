@@ -1,6 +1,6 @@
 import type {
   ServerSummary, SessionInfo, Session, SeenRequest,
-  PushSubscriptionJSON, VapidKeyResponse,
+  PushSubscriptionJSON, VapidKeyResponse, CreateSessionRequest,
 } from "@/lib/contracts";
 
 const BASE = "/api/v1";
@@ -62,6 +62,17 @@ export const listSessions = (serverId: string, target?: string) =>
   );
 
 export const postSeen = (req: SeenRequest) => request<void>("POST", "/seen", req);
+
+// Create a tmux session (M10). The hub re-lists after create and returns the full
+// Session so the web can open the new terminal atomically. Auto-CSRF (mutating).
+// An empty target lets the hub/agent resolve the default target (v1 single-target).
+export const createSession = (serverId: string, body: CreateSessionRequest, target?: string) =>
+  request<Session>(
+    "POST",
+    `/servers/${encodeURIComponent(serverId)}/sessions` +
+      (target ? `?target=${encodeURIComponent(target)}` : ""),
+    body,
+  );
 
 // Web-Push (M9). VAPID public key is non-secret; subscribe/unsubscribe are mutating
 // (auto-CSRF). Unsubscribe sends only the endpoint (the server's PK).

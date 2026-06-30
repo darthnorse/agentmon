@@ -53,12 +53,17 @@ func main() {
 		return tmux.Discover(ctx, tmux.ExecRunner, opts)
 	}
 
+	createSession := func(ctx context.Context, socket, name, cwd string) error {
+		return tmux.CreateSession(ctx, tmux.ExecRunner, socket, name, cwd)
+	}
+
 	machine := state.New(nil)
 
 	_, tmuxErr := exec.LookPath("tmux")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.HealthHandler(cfg.ServerID, version, tmuxErr == nil))
 	mux.Handle("GET /sessions", api.RequireBearer(cfg.HubToken, api.SessionsHandler(cfg, discover, machine)))
+	mux.Handle("POST /sessions", api.RequireBearer(cfg.HubToken, api.CreateSessionHandler(cfg, createSession)))
 	mux.Handle("GET /state", api.RequireBearer(cfg.HubToken, api.StateHandler(cfg, machine)))
 
 	paneIO := &api.PaneIO{
