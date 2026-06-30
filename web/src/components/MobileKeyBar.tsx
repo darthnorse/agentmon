@@ -28,8 +28,10 @@ export function MobileKeyBar({ controller }: { controller: TerminalController })
     "flex-none h-8 rounded-md border border-border bg-accent px-3 text-xs text-accent-foreground active:bg-primary/30";
   return (
     <div
+      // No env(safe-area-inset-bottom) padding here: the bar only renders while the keyboard
+      // is up (it floats above the keyboard), so the home-indicator reservation is dead space
+      // that just opens a gap between this bar and iOS's keyboard accessory bar.
       className="flex items-stretch gap-1 border-t border-border bg-card p-1.5"
-      style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}
       onPointerDown={(e) => { if ((e.target as HTMLElement).tagName === "BUTTON") e.preventDefault(); }}
     >
       {/* Single-press "close keyboard" — pinned left (outside the scroll). Blurs xterm's

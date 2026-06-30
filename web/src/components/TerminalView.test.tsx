@@ -21,7 +21,7 @@ describe("TerminalView", () => {
     // The key bar only renders while the soft keyboard is up — simulate that (visible
     // viewport much shorter than the layout viewport).
     vi.stubGlobal("innerHeight", 800);
-    vi.stubGlobal("visualViewport", { height: 400, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    vi.stubGlobal("visualViewport", { height: 400, scale: 1, addEventListener: vi.fn(), removeEventListener: vi.fn() });
     const { getByTestId, getByText, unmount } = render(
       <TerminalView serverId="s" paneId="%0" target="default" showKeyBar />,
     );

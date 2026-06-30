@@ -17,7 +17,7 @@ function makeController(over: Partial<TerminalController> = {}): TerminalControl
 // is much shorter than the layout viewport) for the rendering tests.
 function keyboardUp() {
   vi.stubGlobal("innerHeight", 800);
-  vi.stubGlobal("visualViewport", { height: 400, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  vi.stubGlobal("visualViewport", { height: 400, scale: 1, addEventListener: vi.fn(), removeEventListener: vi.fn() });
 }
 
 describe("MobileKeyBar", () => {
