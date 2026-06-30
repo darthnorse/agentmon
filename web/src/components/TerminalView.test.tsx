@@ -17,7 +17,11 @@ vi.mock("@/lib/ws-terminal", async (orig) => {
 import { TerminalView } from "@/components/TerminalView";
 
 describe("TerminalView", () => {
-  it("mounts the terminal and opens a socket; shows the key bar when asked", () => {
+  it("mounts the terminal and opens a socket; shows the key bar when the keyboard is up", () => {
+    // The key bar only renders while the soft keyboard is up — simulate that (visible
+    // viewport much shorter than the layout viewport).
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("visualViewport", { height: 400, addEventListener: vi.fn(), removeEventListener: vi.fn() });
     const { getByTestId, getByText, unmount } = render(
       <TerminalView serverId="s" paneId="%0" target="default" showKeyBar />,
     );
@@ -26,5 +30,6 @@ describe("TerminalView", () => {
     expect(getByText("Esc")).toBeInTheDocument(); // key bar present
     unmount();
     expect(dispose).toHaveBeenCalled(); // cleans up the socket
+    vi.unstubAllGlobals();
   });
 });

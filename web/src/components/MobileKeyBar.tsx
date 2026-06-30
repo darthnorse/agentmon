@@ -20,6 +20,10 @@ const KEYS: { key: BarKey; label: string }[] = [
 // the soft keyboard stays up.
 export function MobileKeyBar({ controller }: { controller: TerminalController }) {
   const { keyboardOpen } = useVisualViewport();
+  // Only show the key bar while the soft keyboard is up — when reading Claude's output the
+  // terminal stays full-screen (and this avoids the bar being clipped at the bottom edge).
+  if (!keyboardOpen) return null;
+
   const btn =
     "flex-none h-8 rounded-md border border-border bg-accent px-3 text-xs text-accent-foreground active:bg-primary/30";
   return (
@@ -28,17 +32,15 @@ export function MobileKeyBar({ controller }: { controller: TerminalController })
       style={{ paddingBottom: "max(0.375rem, env(safe-area-inset-bottom))" }}
       onPointerDown={(e) => { if ((e.target as HTMLElement).tagName === "BUTTON") e.preventDefault(); }}
     >
-      {/* Single-press "close keyboard" — pinned left (outside the scroll), only while the
-          soft keyboard is up. Blurs xterm's textarea → the keyboard drops for full-screen reading. */}
-      {keyboardOpen && (
-        <button
-          className={`${btn} !bg-primary !text-primary-foreground`}
-          aria-label="Close keyboard"
-          onClick={() => controller.dismissKeyboard()}
-        >
-          ⌨▾
-        </button>
-      )}
+      {/* Single-press "close keyboard" — pinned left (outside the scroll). Blurs xterm's
+          textarea → the keyboard drops (and this bar hides) for full-screen reading. */}
+      <button
+        className={`${btn} !bg-primary !text-primary-foreground`}
+        aria-label="Close keyboard"
+        onClick={() => controller.dismissKeyboard()}
+      >
+        ⌨▾
+      </button>
       <div className="flex flex-nowrap gap-1 overflow-x-auto" style={{ touchAction: "pan-x" }}>
         <button
           className={`${btn} ${controller.ctrlArmed ? "!bg-primary !text-primary-foreground" : ""}`}

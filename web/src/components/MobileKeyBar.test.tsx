@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MobileKeyBar } from "@/components/MobileKeyBar";
@@ -13,7 +13,17 @@ function makeController(over: Partial<TerminalController> = {}): TerminalControl
   };
 }
 
+// The bar only renders while the soft keyboard is up — simulate that (the visible viewport
+// is much shorter than the layout viewport) for the rendering tests.
+function keyboardUp() {
+  vi.stubGlobal("innerHeight", 800);
+  vi.stubGlobal("visualViewport", { height: 400, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+}
+
 describe("MobileKeyBar", () => {
+  beforeEach(keyboardUp);
+  afterEach(() => vi.unstubAllGlobals());
+
   it("routes each bar key to controller.sendKey", async () => {
     const c = makeController();
     render(<MobileKeyBar controller={c} />);
@@ -37,23 +47,16 @@ describe("MobileKeyBar", () => {
     expect(screen.queryByRole("button", { name: /lock/i })).toBeNull();
   });
 
-  it("hides the close-keyboard button when the soft keyboard is down", () => {
-    // jsdom has no visualViewport → keyboardOpen is false.
-    render(<MobileKeyBar controller={makeController()} />);
-    expect(screen.queryByRole("button", { name: /close keyboard/i })).toBeNull();
+  it("renders nothing while the soft keyboard is down (full-screen reading)", () => {
+    vi.stubGlobal("visualViewport", undefined); // keyboard down → no visual-viewport shrink
+    const { container } = render(<MobileKeyBar controller={makeController()} />);
+    expect(container.firstChild).toBeNull();
   });
 
-  it("shows the close-keyboard button while the keyboard is up and dismisses on a single tap", async () => {
-    // Simulate the keyboard up: the visible viewport is much shorter than the layout viewport.
-    vi.stubGlobal("innerHeight", 800);
-    vi.stubGlobal("visualViewport", { height: 400, addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    try {
-      const c = makeController();
-      render(<MobileKeyBar controller={c} />);
-      await userEvent.click(screen.getByRole("button", { name: /close keyboard/i }));
-      expect(c.dismissKeyboard).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+  it("dismisses the keyboard on a single tap of the pinned close button", async () => {
+    const c = makeController();
+    render(<MobileKeyBar controller={c} />);
+    await userEvent.click(screen.getByRole("button", { name: /close keyboard/i }));
+    expect(c.dismissKeyboard).toHaveBeenCalledTimes(1);
   });
 });
