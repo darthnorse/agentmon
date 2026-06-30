@@ -135,6 +135,12 @@ installer is **idempotent**: re-running it on a host that's already installed ju
 and restarts (keeping its enrollment + config) — so the same command is also the [upgrade path](#updating).
 (Prefer a manual install? See `deploy/agent.example.toml` and `deploy/agentmon-agent.service`.)
 
+> **The agent watches one user's tmux — make sure it's the right user.** By default it runs as whoever runs
+> the installer: **`root` if you're logged in as root**, or your login name if you install with `sudo` from a
+> normal account (it uses `$SUDO_USER`). If that differs from the user whose agents/tmux you want to
+> monitor, pass `--user=<that-user>` (e.g. `--user=root`) — otherwise the agent watches the wrong tmux and
+> the server shows **no sessions**. (Likewise `--socket=<name>` for a non-default `tmux -L` socket.)
+
 ### 5. Admit the agent
 
 Enrolled agents are pending until you approve them:

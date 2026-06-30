@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { usePrefs } from "@/store/prefs";
+import { reloadApp } from "@/lib/pwa-update";
 import type { ThemeName } from "@/lib/terminal-themes";
 
 const FONT_MIN = 8;
@@ -17,6 +18,7 @@ const THEMES: ReadonlyArray<{ value: ThemeName; label: string }> = [
 // terminal font sizes (desktop + mobile), theme, and the done-alert toggle.
 export function SettingsPanel() {
   const [open, setOpen] = React.useState(false);
+  const [checking, setChecking] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
 
   const fontSizeDesktop = usePrefs((s) => s.fontSizeDesktop);
@@ -93,6 +95,20 @@ export function SettingsPanel() {
             />
             <span>Alert when a session finishes (done)</span>
           </label>
+          <div className="mt-3 border-t border-border pt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={checking}
+              onClick={() => { setChecking(true); void reloadApp(); }}
+            >
+              {checking ? "Checking…" : "Check for updates"}
+            </Button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Reloads the app to the latest deployed version (installed PWAs have no pull-to-refresh).
+            </p>
+          </div>
         </div>
       )}
     </div>
