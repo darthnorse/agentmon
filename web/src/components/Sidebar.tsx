@@ -30,7 +30,7 @@ export function Sidebar({
   // session-less server (always shown) from one whose sessions the filter hid.
   const hasSessions = new Set(rows.map((r) => r.server.id));
 
-  const groups0 = servers
+  const visibleGroups = servers
     .map((srv) => {
       const list = sortBlockedFirst(rowsByServer.get(srv.id) ?? [], stateOf);
       const serverState: SessionState = list.length
@@ -43,7 +43,7 @@ export function Sidebar({
       // name passes the search (session-less servers can only match by name).
       g.list.length > 0 || (g.sessionLess && (!q || g.serverName.toLowerCase().includes(q))),
     );
-  const groups = sortBlockedFirst(groups0, (g) => g.serverState);
+  const groups = sortBlockedFirst(visibleGroups, (g) => g.serverState);
 
   return (
     <aside className="flex h-full w-72 flex-none flex-col border-r border-border">

@@ -12,7 +12,7 @@ import { DesktopShell } from "@/components/DesktopShell";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useStateSnapshot } from "@/store/session-state";
-import { usePanes } from "@/store/panes";
+import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
 import { nextBlocked } from "@/lib/focus-next";
@@ -83,10 +83,10 @@ export function ShellRoute() {
   // Desktop opens/focuses its grid tile; mobile navigates to the terminal route.
   const nextBlockedRow = nextBlocked(rows, stateOf, snap.focusedKey);
   const goNextBlocked = React.useCallback(() => {
-    const row = nextBlocked(rows, stateOf, snap.focusedKey);
+    const row = nextBlockedRow;
     if (!row) return;
     if (isDesktop) {
-      const id = `${row.server.id}:${row.session.target}:${row.session.name}:${row.pane.id}`;
+      const id = paneKey(row.server.id, row.session.target, row.session.name, row.pane.id);
       const res = usePanes.getState().openPane({
         serverId: row.server.id, paneId: row.pane.id, target: row.session.target,
         session: row.session.name, serverName: row.server.name, state: row.session.state,
@@ -106,7 +106,7 @@ export function ShellRoute() {
         search: { target: row.session.target, session: row.session.name },
       });
     }
-  }, [rows, stateOf, snap.focusedKey, isDesktop, navigate]);
+  }, [nextBlockedRow, isDesktop, navigate]);
 
   // `n` jumps to the next blocked session. Guard against firing while the user is
   // typing in an input/textarea (the xterm input is a textarea) or a select.

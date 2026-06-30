@@ -12,9 +12,11 @@ export function isAttentionTransition(
   focusedKey: string | null,
   key: string,
 ): boolean {
-  // Blocked-only attention rule — preserved for the M9 service-worker / Web-Push
-  // path (push stays blocked-only). It is exactly `isAlertTransition` with the
-  // done-too toggle off, so define it as that wrapper to keep one source of truth.
+  // The blocked-only attention rule (M9). The live SSE path now uses
+  // isAlertTransition (which adds the optional done-too gate); this stays as the
+  // named blocked-only predicate — exactly isAlertTransition(...,false) — kept as
+  // one source of truth and exercised by the M9 test suite. (No production caller
+  // today; don't delete without also removing its tests.)
   return isAlertTransition(prev, next, focusedKey, key, false);
 }
 

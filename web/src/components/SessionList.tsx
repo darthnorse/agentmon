@@ -2,6 +2,7 @@ import * as React from "react";
 import type { Session, ServerSummary, Window, Pane, SessionState } from "@/lib/contracts";
 import { Input } from "@/components/ui/input";
 import { StateDot } from "@/components/StateDot";
+import { paneKey } from "@/store/panes";
 
 export interface SessionRow {
   server: ServerSummary;
@@ -72,7 +73,7 @@ export function SessionList({
               {group.label}
             </li>
             {group.rows.map((row) => (
-              <li key={`${row.server.id}:${row.session.target}:${row.session.name}:${row.pane.id}`}>
+              <li key={paneKey(row.server.id, row.session.target, row.session.name, row.pane.id)}>
                 <button
                   className="flex w-full items-center gap-2 border-b border-border px-4 py-3 text-left hover:bg-accent"
                   onClick={() => onOpen(row)}
