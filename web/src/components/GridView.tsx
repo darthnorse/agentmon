@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
+import { usePrefs } from "@/store/prefs";
+import { themeOf } from "@/lib/terminal-themes";
 
 // Live tiled grid. EVERY tile stays mounted (its own WS); expand is in-state, so
 // the non-focused tiles are hidden with display:none — sockets + scrollback survive.
@@ -13,6 +15,8 @@ export function GridView() {
   const focused = panes.find((p) => p.id === focusedId);
   const activeId = focused ? focusedId : null;
   const snap = useStateSnapshot();
+  const fontSize = usePrefs((s) => s.fontSizeDesktop);
+  const theme = themeOf(usePrefs((s) => s.terminalTheme));
 
   if (panes.length === 0) {
     return (
@@ -59,7 +63,7 @@ export function GridView() {
                 </span>
               </div>
               <div className="min-h-0 flex-1">
-                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} />
+                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} fontSize={fontSize} theme={theme} />
               </div>
             </div>
           );

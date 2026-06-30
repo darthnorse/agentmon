@@ -1,16 +1,18 @@
 import * as React from "react";
+import type { ITheme } from "@xterm/xterm";
 import { XTerm } from "@/components/XTerm";
 import { MobileKeyBar } from "@/components/MobileKeyBar";
 import { useTerminalSession } from "@/hooks/useTerminalSession";
 
 export function TerminalView({
-  serverId, paneId, target, showKeyBar = false, fontSize,
+  serverId, paneId, target, showKeyBar = false, fontSize, theme,
 }: {
   serverId: string;
   paneId: string;
   target: string;
   showKeyBar?: boolean;
   fontSize?: number;
+  theme?: ITheme;
 }) {
   const targetObj = React.useMemo(() => ({ serverId, paneId, target }), [serverId, paneId, target]);
   const { xtermRef, controller, connected, everConnected, handleData, handleResize } = useTerminalSession(targetObj);
@@ -23,7 +25,7 @@ export function TerminalView({
         </div>
       )}
       <div className="min-h-0 flex-1">
-        <XTerm ref={xtermRef} onData={handleData} onResize={handleResize} fontSize={fontSize} />
+        <XTerm ref={xtermRef} onData={handleData} onResize={handleResize} fontSize={fontSize} theme={theme} />
       </div>
       {showKeyBar && <MobileKeyBar controller={controller} />}
     </div>
