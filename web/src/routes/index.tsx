@@ -9,11 +9,13 @@ import { SessionList, flattenSessions, type SessionRow } from "@/components/Sess
 import { EnableAlerts } from "@/components/EnableAlerts";
 import { NewSessionForm } from "@/components/NewSessionForm";
 import { DesktopShell } from "@/components/DesktopShell";
+import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useStateSnapshot } from "@/store/session-state";
 import { usePanes } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
+import { nextBlocked } from "@/lib/focus-next";
 import type { Session, SessionState } from "@/lib/contracts";
 
 export function ShellRoute() {
@@ -77,6 +79,52 @@ export function ShellRoute() {
 
   const newServer = servers.find((s) => s.id === newServerId) ?? servers[0];
 
+  // Focus-next-blocked: jump to the next blocked session (blocked-first, wrapping).
+  // Desktop opens/focuses its grid tile; mobile navigates to the terminal route.
+  const nextBlockedRow = nextBlocked(rows, stateOf, snap.focusedKey);
+  const goNextBlocked = React.useCallback(() => {
+    const row = nextBlocked(rows, stateOf, snap.focusedKey);
+    if (!row) return;
+    if (isDesktop) {
+      const id = `${row.server.id}:${row.session.target}:${row.session.name}:${row.pane.id}`;
+      const res = usePanes.getState().openPane({
+        serverId: row.server.id, paneId: row.pane.id, target: row.session.target,
+        session: row.session.name, serverName: row.server.name, state: row.session.state,
+      });
+      // At the tile cap, openPane is a no-op — don't focus a phantom pane; tell the user.
+      if (!res.ok && res.reason === "cap") {
+        toast(`“${row.session.name}” needs attention`, {
+          description: "Close a terminal tile to open it (6 open max).",
+        });
+        return;
+      }
+      usePanes.getState().focus(id);
+    } else {
+      navigate({
+        to: "/t/$serverId/$paneId",
+        params: { serverId: row.server.id, paneId: row.pane.id },
+        search: { target: row.session.target, session: row.session.name },
+      });
+    }
+  }, [rows, stateOf, snap.focusedKey, isDesktop, navigate]);
+
+  // `n` jumps to the next blocked session. Guard against firing while the user is
+  // typing in an input/textarea (the xterm input is a textarea) or a select.
+  const goNextRef = React.useRef(goNextBlocked);
+  goNextRef.current = goNextBlocked;
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "n" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t?.isContentEditable) return;
+      e.preventDefault();
+      goNextRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
@@ -87,7 +135,17 @@ export function ShellRoute() {
               {showNew ? "Close" : "New session"}
             </Button>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={goNextBlocked}
+            disabled={!nextBlockedRow}
+            title="Jump to the next blocked session (n)"
+          >
+            Next blocked ⟶
+          </Button>
           <EnableAlerts />
+          <SettingsPanel />
           <Button variant="ghost" size="sm" onClick={() => signOut().finally(() => navigate({ to: "/login" }))}>
             Sign out
           </Button>
@@ -129,7 +187,7 @@ export function ShellRoute() {
             <Button variant="outline" size="sm" onClick={() => serversQ.refetch()}>Retry</Button>
           </div>
         ) : isDesktop ? (
-          <DesktopShell rows={rows} query={query} onQueryChange={setQuery} stateOf={stateOf} />
+          <DesktopShell servers={servers} rows={rows} query={query} onQueryChange={setQuery} stateOf={stateOf} />
         ) : (
           <SessionList
             rows={rows}
