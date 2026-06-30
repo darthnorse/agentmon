@@ -57,6 +57,19 @@ func TestInstallScriptDefaultsToDedicatedSocket(t *testing.T) {
 	}
 }
 
+func TestInstallScriptDoesNotPromptForHooksWhenPiped(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	// Interactive prompts are unreliable under `curl | sudo bash` (stdin is the pipe, so
+	// a /dev/tty read hits EOF and the keystroke leaks to the shell). The hooks prompt
+	// must gate on stdin being a real terminal and otherwise point at the explicit flag.
+	if !strings.Contains(w.Body.String(), "[ ! -t 0 ]") {
+		t.Fatal("hooks prompt must skip (and guide to --hooks) when stdin is not a terminal")
+	}
+}
+
 func TestBinaryHandlerServesBytesAndChecksum(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/dl/agent-linux-amd64", nil)

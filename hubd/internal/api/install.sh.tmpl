@@ -122,8 +122,12 @@ maybe_install_hooks() {
     if [ ! -d "$home_dir/.claude" ] && ! command -v claude >/dev/null 2>&1; then
       return 0 # no Claude Code on this host → nothing to hook
     fi
-    if [ ! -r /dev/tty ]; then
-      echo "Claude Code detected — re-run with --hooks to enable live agent state (hooks)."
+    # A reliable prompt needs OUR stdin to be the terminal. Under `curl | sudo bash`,
+    # stdin is the pipe — and sudo's pty is fed by that pipe, not the keyboard — so a
+    # /dev/tty prompt reads EOF (skips) while the keystroke leaks to the parent shell.
+    # Detect a non-interactive stdin and point at the explicit flag instead.
+    if [ ! -t 0 ] || [ ! -r /dev/tty ]; then
+      echo "Claude Code detected — re-run with --hooks to install live-state hooks (or --no-hooks to skip)."
       return 0
     fi
     printf 'Claude Code detected. Install AgentMon hooks for live agent state? [y/N] ' > /dev/tty
