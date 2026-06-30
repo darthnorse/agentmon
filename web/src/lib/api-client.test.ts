@@ -134,4 +134,22 @@ describe("api-client", () => {
     expect(init.body).toBe(JSON.stringify({ endpoint: "https://push.example/abc" }));
     expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
   });
+
+  it("createSession POSTs the body to /servers/{id}/sessions with X-CSRF-Token and returns the Session", async () => {
+    const session = {
+      name: "dockmon", server: "s", target: "default", cwd: "/home", command: "",
+      windows: [{ id: "@1", index: "0", name: "w", panes: [{ id: "%1", command: "bash", cwd: "/home" }] }],
+    };
+    const f = mockFetch(201, session);
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    const { createSession } = await import("@/lib/api-client");
+    const res = await createSession("srv 1", { name: "dockmon", cwd: "/home" });
+    expect(res.name).toBe("dockmon");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/servers/srv%201/sessions");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ name: "dockmon", cwd: "/home" }));
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
+  });
 });
