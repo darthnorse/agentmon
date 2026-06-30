@@ -5,6 +5,8 @@
 # enrollment + config); a first run enrolls + installs the systemd unit. With Claude
 # Code present it offers to install the state hooks (or pass --hooks / --no-hooks).
 # Usage: curl <hub>/install.sh | sudo bash [-s -- --hostname=H --user=U --socket=S --hooks|--no-hooks --dry-run]
+# --socket defaults to a dedicated 'agentmon' socket (the agent never sees your default
+# socket); use --socket=default for the standard socket, or --socket=<name> for another.
 set -euo pipefail
 
 HUB_URL="{{.HubURL}}"
@@ -149,7 +151,10 @@ esac
 
 HOST="${HOSTNAME_OVERRIDE:-$(hostname -s)}"
 RUN_USER="${USER_OVERRIDE:-${SUDO_USER:-$(id -un)}}"
-SOCKET="${SOCKET_OVERRIDE:-}"
+# Default to a DEDICATED tmux socket ('agentmon') so the agent never watches the
+# run-user's default socket (where unrelated/sensitive sessions live) unless asked.
+# --socket=default selects the standard default socket; --socket=<name> any other.
+SOCKET="${SOCKET_OVERRIDE:-agentmon}"
 
 # A prior install is recognised by its config + secret files; re-running then just
 # updates the binary (no re-enroll → no 409). To force a clean re-enroll instead,
@@ -172,6 +177,7 @@ echo "  hub:      $HUB_URL"
 echo "  hostname: $HOST"
 echo "  run-as:   $RUN_USER"
 echo "  arch:     $ARCH"
+echo "  socket:   ${SOCKET:-<default>} (tmux -L $SOCKET)"
 echo "  hooks:    $(hooks_plan)"
 if [ "$INSTALLED" = "1" ]; then
   echo "  mode:     update (existing install — binary swap, config preserved)"
@@ -284,3 +290,7 @@ smoke_test
 maybe_install_hooks
 
 echo "✓ $HOST enrolled — pending approval. Approve it in the AgentMon web UI (or 'agentmon-hubd server approve $HOST' on the hub)."
+if [ -z "$SOCKET_OVERRIDE" ]; then
+  echo "  note: the agent watches the dedicated '$SOCKET' socket — run monitored sessions with 'tmux -L $SOCKET ...'"
+  echo "        (to watch your standard default socket instead, reinstall with --socket=default)"
+fi

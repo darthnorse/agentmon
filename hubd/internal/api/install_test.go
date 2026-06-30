@@ -45,6 +45,18 @@ func TestInstallScriptChownsAgentTomlToRunUser(t *testing.T) {
 	}
 }
 
+func TestInstallScriptDefaultsToDedicatedSocket(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	// The agent must default to a dedicated 'agentmon' socket, never the run-user's
+	// default socket (where unrelated/sensitive sessions live), unless --socket overrides.
+	if !strings.Contains(w.Body.String(), `SOCKET="${SOCKET_OVERRIDE:-agentmon}"`) {
+		t.Fatal("install.sh must default the agent socket to the dedicated 'agentmon' socket")
+	}
+}
+
 func TestBinaryHandlerServesBytesAndChecksum(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/dl/agent-linux-amd64", nil)
