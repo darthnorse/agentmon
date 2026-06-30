@@ -1649,6 +1649,13 @@ Deliverables:
    - Which users can create sessions?
    - Which directories are allowed?
    - Which commands/templates are allowed?
+   - **[RESOLVED in M10, 2026-06-29]:** the single v1 user creates (authz
+     `session.create`, trivially allowed); the name is required + constrained to
+     `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` (tmux-safe, validated at hub + agent);
+     `cwd` is optional and restricted to an agent `session_dirs` allow-list
+     (default `$HOME`), symlink-resolved + traversal-blocked; **custom commands
+     are not exposed** (a non-empty `command` is rejected) — sessions start the
+     default shell. See `docs/superpowers/specs/2026-06-29-agentmon-m10-new-session-design.md`.
 
 7. **API key write access**
    - Should terminal write via API key be disabled globally by default?
