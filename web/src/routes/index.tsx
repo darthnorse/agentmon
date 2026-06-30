@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
 import { NewSessionForm } from "@/components/NewSessionForm";
 import { PendingAgents } from "@/components/PendingAgents";
+import { DefaultPasswordBanner } from "@/components/DefaultPasswordBanner";
 import { DesktopShell } from "@/components/DesktopShell";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -153,6 +154,7 @@ export function ShellRoute() {
           <SettingsPanel onSignOut={() => signOut().finally(() => navigate({ to: "/login" }))} />
         </div>
       </header>
+      <DefaultPasswordBanner />
       <PendingAgents />
       {showNew && newServer && (
         <div className="border-b border-border px-4 py-3">

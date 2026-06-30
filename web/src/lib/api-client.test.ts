@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { login, logout, me, listServers, listSessions, renameSession, listPending, approveServer, rejectServer, setCsrfToken, ApiError } from "@/lib/api-client";
+import { login, logout, me, listServers, listSessions, renameSession, listPending, approveServer, rejectServer, changePassword, setCsrfToken, ApiError } from "@/lib/api-client";
 
 function mockFetch(status: number, body: unknown) {
   // A 204/null-body status cannot carry a body in undici → pass null when no body.
@@ -37,6 +37,18 @@ describe("api-client", () => {
     const init = (f.mock.calls[0] as unknown as [string, RequestInit])[1];
     expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBeUndefined();
     expect(init.method).toBe("GET");
+  });
+
+  it("changePassword POSTs {currentPassword,newPassword} with CSRF", async () => {
+    const f = mockFetch(204, undefined);
+    vi.stubGlobal("fetch", f);
+    setCsrfToken("tok");
+    await changePassword("oldpw", "newpassword1");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/auth/password");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ currentPassword: "oldpw", newPassword: "newpassword1" }));
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok");
   });
 
   it("logout (mutation) sends X-CSRF-Token when a token is set", async () => {

@@ -50,6 +50,10 @@ export const login = (username: string, password: string) =>
 
 export const logout = () => request<void>("POST", "/auth/logout");
 
+// Change the logged-in user's password (auto-CSRF). 401 if the current is wrong.
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  request<void>("POST", "/auth/password", { currentPassword, newPassword });
+
 export const me = () => request<SessionInfo>("GET", "/me");
 
 export const listServers = () => request<ServerSummary[]>("GET", "/servers");

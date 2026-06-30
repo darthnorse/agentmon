@@ -37,6 +37,7 @@ interface AuthState {
   session: SessionInfo | null;
   status: AuthStatus;
   setSession(s: SessionInfo): void;
+  clearMustChangePassword(): void;
   clear(): void;
   signIn(username: string, password: string): Promise<void>;
   signOut(): Promise<void>;
@@ -49,6 +50,12 @@ export const useAuth = create<AuthState>((set, get) => ({
   setSession(s) {
     api.setCsrfToken(s.csrfToken);
     set({ session: s, status: "authed" });
+  },
+  // Dismiss the default-password nudge after a successful change (the flag is
+  // login-scoped, so clearing it locally keeps the banner from lingering).
+  clearMustChangePassword() {
+    const s = get().session;
+    if (s?.mustChangePassword) set({ session: { ...s, mustChangePassword: false } });
   },
   clear() {
     api.setCsrfToken("");

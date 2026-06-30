@@ -10,6 +10,7 @@ type RouterDeps struct {
 	Version             string
 	Auth                *authn.Authenticator
 	Login               authn.LoginDeps
+	Password            authn.PasswordDeps
 	TrustForwardedProto bool
 	API                 Deps
 	Enroll              EnrollDeps
@@ -25,6 +26,7 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("POST /api/v1/auth/login", rd.Login.LoginHandler())
 	mux.Handle("POST /api/v1/auth/logout", rd.Auth.RequireAuth(rd.Auth.LogoutHandler(rd.TrustForwardedProto)))
 	mux.Handle("GET /api/v1/me", rd.Auth.RequireAuth(rd.Auth.MeHandler()))
+	mux.Handle("POST /api/v1/auth/password", rd.Auth.RequireAuth(rd.Password.ChangeHandler()))
 
 	mux.Handle("GET /api/v1/servers", rd.Auth.RequireAuth(rd.API.ServersHandler()))
 	// Admit UI (M-admit): literal "pending" is more specific than "{id}", so ServeMux

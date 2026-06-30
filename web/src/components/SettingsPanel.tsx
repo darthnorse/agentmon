@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { EnableAlerts } from "@/components/EnableAlerts";
+import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { pushSupported } from "@/lib/push";
 import { usePrefs } from "@/store/prefs";
 import { reloadApp } from "@/lib/pwa-update";
@@ -116,6 +117,9 @@ export function SettingsPanel({ onSignOut }: { onSignOut?: () => void }) {
             <p className="mt-1 text-xs text-muted-foreground">
               Reloads the app to the latest deployed version (installed PWAs have no pull-to-refresh).
             </p>
+          </div>
+          <div className="mt-3 border-t border-border pt-3">
+            <ChangePasswordForm />
           </div>
           {onSignOut && (
             <div className="mt-3 border-t border-border pt-3">

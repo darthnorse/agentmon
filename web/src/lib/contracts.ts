@@ -17,7 +17,9 @@ export interface ReconnectFrame { type: "reconnect"; status: string; }
 // session-less-server first-paint fallback (see m8-carryover).
 export interface ServerSummary { id: string; name: string; labels: string[]; enabled: boolean; state?: SessionState; }
 // Mirrors the hub's login/me JSON body.
-export interface SessionInfo { principalId: string; username: string; displayName: string; csrfToken: string; }
+export interface SessionInfo { principalId: string; username: string; displayName: string; csrfToken: string; mustChangePassword?: boolean; }
+// POST /api/v1/auth/password body.
+export interface ChangePasswordRequest { currentPassword: string; newPassword: string; }
 // SSE snapshot-entry + delta shape (mirrors hubd api.stateEvent).
 export interface StateEventFrame { server: string; target: string; session: string; state: SessionState; }
 // POST /api/v1/seen body (mirrors hubd api.seenRequest).

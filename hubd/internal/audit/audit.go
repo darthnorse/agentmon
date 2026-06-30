@@ -68,6 +68,11 @@ func (r *Recorder) SessionRename(ctx context.Context, principalID, resource, fro
 		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
 }
 
+func (r *Recorder) PasswordChange(ctx context.Context, principalID, ip, ua string) {
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "auth.password_change",
+		Resource: "user:" + principalID, Result: "allow", IP: ip, UserAgent: ua})
+}
+
 func (r *Recorder) ServerEnroll(ctx context.Context, id, hostname, ip string) {
 	r.write(ctx, db.AuditEntry{Action: "server.enroll",
 		Resource: "server:" + id, Result: "allow", IP: ip, Meta: hostname})

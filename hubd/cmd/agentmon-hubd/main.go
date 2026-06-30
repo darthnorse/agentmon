@@ -63,6 +63,17 @@ func main() {
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)
+
+	// First-run bootstrap: seed a default login ONLY when the DB has no users yet, so
+	// a fresh hub is reachable immediately (the login UI then nudges changing it).
+	if hash, herr := authn.HashPassword(authn.DefaultPassword); herr == nil {
+		if seeded, _ := database.SeedDefaultUser(context.Background(), uuid.NewString(),
+			authn.DefaultUsername, authn.DefaultUsername, hash); seeded {
+			log.Printf("seeded default login %q / %q — change it in the web UI (⚙ Settings) or via 'user set-password'",
+				authn.DefaultUsername, authn.DefaultPassword)
+		}
+	}
+
 	onboard := authn.NewLimiter(enrollMax(cfg), enrollWindow(cfg))
 
 	bcast := state.NewBroadcaster()
@@ -100,6 +111,11 @@ func main() {
 			CookieName:          cfg.SessionCookie.Name,
 			CookieTTL:           cookieTTL(cfg),
 			ExternalOrigin:      cfg.ExternalOrigin,
+			TrustForwardedProto: cfg.TrustForwardedProto,
+		},
+		Password: authn.PasswordDeps{
+			Users:               database,
+			Audit:               rec,
 			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
 		API: api.Deps{
