@@ -4,7 +4,10 @@
 # Re-running on a host that's already installed UPDATES the binary in place (keeps the
 # enrollment + config); a first run enrolls + installs the systemd unit. With Claude
 # Code present it offers to install the state hooks (or pass --hooks / --no-hooks).
-# Usage: curl <hub>/install.sh | sudo bash [-s -- --hostname=H --user=U --socket=S --hooks|--no-hooks --dry-run]
+# Usage: sudo bash -c "$(curl -fsSL <hub>/install.sh)" [-- --hostname=H --user=U --socket=S --hooks|--no-hooks --dry-run]
+#   The bash -c "$(curl ...)" form keeps the script's stdin on your terminal, so the hooks Y/n prompt can
+#   read your answer. `curl ... | sudo bash` also works but can't prompt (stdin is the pipe + sudo's pty),
+#   so it falls back to telling you to re-run with --hooks.
 # --socket defaults to a dedicated 'agentmon' socket (the agent never sees your default
 # socket); use --socket=default for the standard socket, or --socket=<name> for another.
 set -euo pipefail

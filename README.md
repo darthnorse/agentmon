@@ -35,8 +35,8 @@ status *is* navigation, and the thing you most need is "which agent needs me, an
   [`session_dirs`](#agent-agenttoml)), or rename one inline from its terminal header or the session list.
 - **Admit agents from the web** — newly-installed agents show up as a *pending* banner; **Approve** or
   **Reject** them from the dashboard (the trust gate, no CLI needed).
-- **One-command install + upgrade** — `curl <hub>/install.sh | sudo bash` enrolls a new agent, updates an
-  existing one in place, and offers to wire up the Claude Code state hooks.
+- **One-command install + upgrade** — `sudo bash -c "$(curl -fsSL <hub>/install.sh)"` enrolls a new agent,
+  updates an existing one in place, and offers (Y/n) to wire up the Claude Code state hooks.
 - **Per-user preferences** — terminal theme + font size (separately tunable for desktop and mobile), and an
   optional "alert me when a session finishes" toggle.
 
@@ -133,9 +133,14 @@ docker compose exec agentmon-hub /agentmon-hubd user set-password --username you
 The hub serves a templated installer. On each box you want to monitor:
 
 ```bash
-curl <external_origin>/install.sh | sudo bash
-# optional: --hostname=H --user=U --socket=S --hooks|--no-hooks --dry-run
+sudo bash -c "$(curl -fsSL <external_origin>/install.sh)"
+# add overrides after a -- :
+#   sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --user=U --socket=S --hooks|--no-hooks --dry-run
 ```
+
+(Use the `bash -c "$(curl …)"` form rather than `curl … | sudo bash` so the script's input is your
+terminal — that's what lets the hooks **Y/n** prompt below actually read your answer. Piping still works, it
+just can't prompt.)
 
 It downloads the right binary (checksum-verified), enrolls with the hub, and installs + starts the
 `agentmon-agent` systemd unit. `--dry-run` shows exactly what it would do without changing anything. The
@@ -178,13 +183,16 @@ on `PATH`) it asks:
 Claude Code detected. Install AgentMon hooks for live agent state? [y/N]
 ```
 
-The prompt works even through `curl … | sudo bash` (it reads `/dev/tty`). Saying **yes** generates a hook
-token, wires it into `agent.toml`, and merges the hooks into the run-user's global `~/.claude/settings.json`
-— idempotent, so re-running is safe. If Claude Code isn't on the host it's skipped silently. Override the
-prompt with **`--hooks`** (install non-interactively) or **`--no-hooks`** (skip):
+For the prompt to read your answer, the script's stdin must be your terminal — which is exactly why the
+install command uses **`sudo bash -c "$(curl …)"`** rather than `curl … | sudo bash`. (If you *pipe* it,
+the keyboard isn't reachable through the pipe + `sudo`'s pty, so the installer detects that, skips the
+prompt, and tells you to re-run with `--hooks`.) Saying **yes** generates a hook token, wires it into
+`agent.toml`, and merges the hooks into the run-user's global `~/.claude/settings.json` — idempotent, so
+re-running is safe. If Claude Code isn't on the host it's skipped silently. Override the prompt with
+**`--hooks`** (install non-interactively) or **`--no-hooks`** (skip):
 
 ```bash
-curl <external_origin>/install.sh | sudo bash -s -- --hooks       # or --no-hooks
+sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --hooks       # or --no-hooks
 ```
 
 To wire hooks manually (or into a **per-project** `.claude/settings.json`, which the installer doesn't touch):
@@ -271,7 +279,7 @@ first** (so it serves the new agent binary), then the agents.
 - **Agents:** re-run the same installer on each host. It detects the existing install and swaps the binary in
   place — **no re-enroll, config + secrets preserved** — or reports "already up to date":
   ```bash
-  curl <external_origin>/install.sh | sudo bash
+  sudo bash -c "$(curl -fsSL <external_origin>/install.sh)"
   ```
   (To force a clean re-enroll instead — e.g. after wiping the hub — `rm -rf /etc/agentmon` first, then run it.)
 
