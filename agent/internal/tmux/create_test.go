@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -302,5 +303,26 @@ func TestRenameSessionIntegration(t *testing.T) {
 	}
 	if err := RenameSession(context.Background(), ExecRunner, renameItestSocket, "after", "taken"); !errors.Is(err, ErrSessionExists) {
 		t.Fatalf("rename onto existing err = %v, want ErrSessionExists", err)
+	}
+}
+
+func TestKillSessionArgvAndSuccess(t *testing.T) {
+	var gotArgs []string
+	run := func(_ context.Context, args ...string) ([]byte, error) { gotArgs = args; return nil, nil }
+	if err := KillSession(context.Background(), run, "agentmon", "proj"); err != nil {
+		t.Fatalf("KillSession: %v", err)
+	}
+	want := []string{"-L", "agentmon", "kill-session", "-t", "proj"}
+	if strings.Join(gotArgs, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestKillSessionNotFound(t *testing.T) {
+	run := func(_ context.Context, _ ...string) ([]byte, error) {
+		return nil, errors.New("can't find session: nope")
+	}
+	if err := KillSession(context.Background(), run, "", "nope"); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("want ErrNoSession, got %v", err)
 	}
 }

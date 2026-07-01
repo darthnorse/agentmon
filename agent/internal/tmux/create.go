@@ -75,6 +75,22 @@ func RenameSession(ctx context.Context, run Runner, socket, from, to string) err
 	return nil
 }
 
+// KillSession terminates the tmux session `name` on the socket via the arg-array
+// Runner (no shell — the name is a positional -t arg). The socket is the agent's
+// own configured socket, never client input, so this cannot target another socket.
+// An unknown session → ErrNoSession (404). Kills the whole session (all windows).
+func KillSession(ctx context.Context, run Runner, socket, name string) error {
+	out, err := run(ctx, with(socketArgs(socket), "kill-session", "-t", name)...)
+	if err != nil {
+		errb := []byte(err.Error())
+		if isNoSession(out) || isNoSession(errb) {
+			return ErrNoSession
+		}
+		return fmt.Errorf("tmux kill-session: %w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
 // ValidateCwd resolves and authorises a requested working directory against an
 // allow-list of roots (§13.6 directory policy). It returns the cleaned, symlink-
 // resolved absolute path on success, or an error describing the rejection.
