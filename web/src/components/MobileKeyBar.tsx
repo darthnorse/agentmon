@@ -14,7 +14,7 @@ type BarItem =
 
 const BAR: BarItem[] = [
   { kind: "key", key: "tab", label: "Tab" },
-  { kind: "key", key: "nl", label: "Nl" },
+  { kind: "key", key: "nl", label: "⏎ Nl" },
   { kind: "key", key: "esc", label: "Esc" },
   { kind: "key", key: "up", label: "↑" },
   { kind: "key", key: "down", label: "↓" },

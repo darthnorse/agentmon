@@ -27,14 +27,14 @@ describe("MobileKeyBar", () => {
   it("renders the buttons in the requested order (Close pinned first, no Enter)", () => {
     render(<MobileKeyBar controller={makeController()} />);
     const labels = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(labels).toEqual(["⌨▾", "Tab", "Nl", "Esc", "↑", "↓", "←", "→", "Copy", "Paste", "Ctrl", "⇧Tab"]);
+    expect(labels).toEqual(["⌨▾", "Tab", "⏎ Nl", "Esc", "↑", "↓", "←", "→", "Copy", "Paste", "Ctrl", "⇧Tab"]);
     expect(screen.queryByRole("button", { name: "Enter" })).toBeNull();
   });
 
   it("routes each bar key to controller.sendKey and keeps terminal focus", async () => {
     const c = makeController();
     render(<MobileKeyBar controller={c} />);
-    await userEvent.click(screen.getByRole("button", { name: "Nl" }));
+    await userEvent.click(screen.getByRole("button", { name: "⏎ Nl" }));
     expect(c.sendKey).toHaveBeenCalledWith("nl");
     expect(c.focusTerminal).toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "⇧Tab" }));
@@ -63,7 +63,7 @@ describe("MobileKeyBar", () => {
 
   it("keeps the soft keyboard up: a bar key's mousedown is prevented (no focus steal)", () => {
     render(<MobileKeyBar controller={makeController()} />);
-    const nl = screen.getByRole("button", { name: "Nl" });
+    const nl = screen.getByRole("button", { name: "⏎ Nl" });
     const prevented = !fireEvent.mouseDown(nl); // fireEvent returns false when preventDefault was called
     expect(prevented).toBe(true);
   });
