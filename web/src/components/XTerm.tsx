@@ -3,6 +3,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "@/lib/terminal-themes";
+import { keyOverride } from "@/lib/terminal-keys";
 import "@xterm/xterm/css/xterm.css";
 
 export interface XTermHandle {
@@ -77,6 +78,17 @@ export const XTerm = React.forwardRef<
     term.open(hostRef.current!);
     fit.fit();
     term.onData((d) => onDataRef.current(d));
+    // Shift+Enter → soft newline (see lib/terminal-keys): xterm emits CR for both
+    // plain and shifted Enter, so intercept the shifted chord and send LF ourselves
+    // (Claude Code's chat:newline) instead of xterm's default CR. Other Enter chords
+    // fall through to xterm unchanged.
+    term.attachCustomKeyEventHandler((ev) => {
+      const override = keyOverride(ev);
+      if (override === null) return true;
+      ev.preventDefault();
+      onDataRef.current(override);
+      return false;
+    });
     term.onResize(({ cols, rows }) => onResizeRef.current(cols, rows));
     termRef.current = term;
     fitRef.current = fit;
