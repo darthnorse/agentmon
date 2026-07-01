@@ -1,12 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 
+const { closePaneMock } = vi.hoisted(() => ({ closePaneMock: vi.fn() }));
+
 vi.mock("@/lib/api-client", () => ({ killSession: vi.fn().mockResolvedValue(undefined), ApiError: class extends Error { status = 0; } }));
 vi.mock("@/lib/query-client", () => ({ queryClient: { invalidateQueries: vi.fn() } }));
+vi.mock("@/store/panes", () => ({
+  usePanes: { getState: () => ({ closePane: closePaneMock }) },
+  paneKey: (serverId: string, target: string, session: string, paneId: string) => `${serverId}:${target}:${session}:${paneId}`,
+}));
 
 import { killSession } from "@/lib/api-client";
+import { queryClient } from "@/lib/query-client";
 
 function row() {
   return { serverId: "aigallery", serverName: "AG", target: "default", name: "proj", paneId: "%0", state: "idle" as const };
@@ -29,6 +36,10 @@ describe("SessionActionsMenu", () => {
     // modal is up
     await userEvent.click(screen.getByRole("button", { name: /^kill session$/i }));
     expect(killSession).toHaveBeenCalledWith("aigallery", "proj", "default");
+    await waitFor(() => {
+      expect(closePaneMock).toHaveBeenCalledWith("aigallery:default:proj:%0");
+      expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["sessions", "aigallery"] });
+    });
   });
 
   it("enters rename mode from the menu", async () => {
