@@ -15,10 +15,16 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => ({ target: "default", session: "demo-web" }),
   useNavigate: () => vi.fn(),
 }));
+// The header tabs fetch the session list via react-query; stub it empty so the route
+// falls back to a single synthetic active tab for the open session (no provider needed).
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => ({ data: [] }),
+  useQueries: () => [],
+}));
 
 // vi.hoisted: vi.mock is hoisted above plain consts, so the mock fn must be too.
 const { postSeen } = vi.hoisted(() => ({ postSeen: vi.fn(async () => {}) }));
-vi.mock("@/lib/api-client", () => ({ postSeen }));
+vi.mock("@/lib/api-client", () => ({ postSeen, listServers: vi.fn(), listSessions: vi.fn() }));
 
 import { MobileTerminalRoute } from "@/routes/terminal";
 import { useSessionState } from "@/store/session-state";
