@@ -53,7 +53,7 @@ export function GridView() {
               // (which changes p.id) does NOT remount the tile and tear down its
               // WebSocket. p.id still drives focus/close/expand below.
               key={`${p.serverId}:${p.target}:${p.paneId}`}
-              className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border focus-within:border-primary focus-within:ring-2 focus-within:ring-primary"
+              className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
               style={{ display: hidden ? "none" : "flex" }}
             >
               <div className="flex items-center justify-between border-b border-border bg-card px-2 py-1 text-xs">
