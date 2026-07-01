@@ -12,6 +12,7 @@ export interface TerminalController {
   paste(): Promise<void>;
   copy(): Promise<void>;
   dismissKeyboard(): void;
+  focusTerminal(): void;
 }
 
 export function useTerminalSession(target: TerminalTarget) {
@@ -110,6 +111,12 @@ export function useTerminalSession(target: TerminalTarget) {
     },
     dismissKeyboard() {
       xtermRef.current?.blur(); // drops focus on xterm's hidden textarea → soft keyboard closes
+    },
+    // Re-assert focus on xterm's hidden textarea so the soft keyboard stays up
+    // after a key-bar tap. Called within the tap's click gesture, so iOS keeps
+    // (or re-shows) the keyboard. Only dismissKeyboard() ever blurs.
+    focusTerminal() {
+      xtermRef.current?.focus();
     },
   }), [ctrlArmed, send]);
 
