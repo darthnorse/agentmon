@@ -5,17 +5,25 @@ import { MobileKeyBar } from "@/components/MobileKeyBar";
 import { useTerminalSession } from "@/hooks/useTerminalSession";
 
 export function TerminalView({
-  serverId, paneId, target, showKeyBar = false, fontSize, theme,
+  serverId, paneId, target, showKeyBar = false, active, fontSize, theme,
 }: {
   serverId: string;
   paneId: string;
   target: string;
   showKeyBar?: boolean;
+  active?: boolean;
   fontSize?: number;
   theme?: ITheme;
 }) {
   const targetObj = React.useMemo(() => ({ serverId, paneId, target }), [serverId, paneId, target]);
   const { xtermRef, controller, connected, everConnected, handleData, handleResize } = useTerminalSession(targetObj);
+
+  // When this pane becomes the visible/focused one in the mobile pool, hand keyboard
+  // focus to its xterm. Guarded on active===true so existing callers (grid) that pass
+  // no `active` are unaffected.
+  React.useEffect(() => {
+    if (active) xtermRef.current?.focus();
+  }, [active]);
 
   return (
     <div className="relative flex h-full w-full flex-col">
