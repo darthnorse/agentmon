@@ -49,6 +49,9 @@ export interface TerminalGestureDeps {
   // rather than inject clicks into the app, we skip the touch-select gesture there (Mac/iPad
   // users select with a real trackpad + keyboard). Only consulted when mouse tracking is on.
   isMac(): boolean;
+  // TEMP diagnostic hook: trace the gesture pipeline so we can see WHERE mobile select breaks
+  // on-device. Optional; remove once diagnosed.
+  debug?(msg: string): void;
 }
 
 const LONG_PRESS_MS = 450;
@@ -79,12 +82,14 @@ export function createTerminalGesture(deps: TerminalGestureDeps): TerminalGestur
     startX = lastX = t.clientX; startY = lastY = t.clientY;
     mode = "pending";
     clearLp();
+    deps.debug?.("touchstart");
     lpTimer = setTimeout(() => {
       lpTimer = null;
       if (mode !== "pending") return;          // already moved into a scroll
       const force = deps.mouseTracking();
-      if (force && deps.isMac()) return;       // can't force-select on Mac without injecting → skip
+      if (force && deps.isMac()) { deps.debug?.("longpress: SKIP (mac + mouse-tracking)"); return; }
       mode = "select"; forcing = force;
+      deps.debug?.(`longpress: select force=${force}`);
       deps.fireMouse("mousedown", startX, startY, force); // begin a selection at the hold point
     }, LONG_PRESS_MS);
   };
@@ -100,7 +105,7 @@ export function createTerminalGesture(deps: TerminalGestureDeps): TerminalGestur
     }
     if (mode === "pending") {
       if (Math.abs(t.clientY - startY) + Math.abs(t.clientX - startX) < MOVE_CANCEL) return;
-      mode = "scroll"; clearLp();                        // moved before the hold fired → scroll
+      mode = "scroll"; clearLp(); deps.debug?.("scroll");  // moved before the hold fired → scroll
     }
     const dy = startY - t.clientY;
     const cell = (deps.fontSize() || 13) * 1.2;

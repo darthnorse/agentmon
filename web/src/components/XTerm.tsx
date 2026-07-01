@@ -118,10 +118,17 @@ export const XTerm = React.forwardRef<
     // the touch-select on Mac/iPad, which use a trackpad). Mobile-only; desktop uses real mouse
     // events untouched, and a quick swipe still scrolls, so this can't regress them.
     const host = hostRef.current!;
+    // TEMP diagnostic: trace the mobile select pipeline to the console ([sel] …) so we can see
+    // where it breaks on-device (via Safari Web Inspector). Harmless in normal use; remove once
+    // mobile copy is confirmed working.
+    const dbg = (m: string) => { try { console.log("[sel]", m); } catch { /* noop */ } };
     const gesture = createTerminalGesture({
       fireMouse: (type, x, y, force) => {
-        const target = type === "mousedown" ? (document.elementFromPoint(x, y) ?? host) : document;
+        const el = document.elementFromPoint(x, y) as HTMLElement | null;
+        const target = type === "mousedown" ? (el ?? host) : document;
         target.dispatchEvent(selectionMouseEvent(type, x, y, force));
+        if (type === "mouseup") dbg(`mouseup → selection.length=${term.getSelection().length}`);
+        else dbg(`${type} f=${force} elem=${el?.className || el?.nodeName || "null"} mt=${(termRef.current?.modes.mouseTrackingMode ?? "none")}`);
       },
       scrollLines: (n) => term.scrollLines(n),
       fontSize: () => fontSizeRef.current,
@@ -130,6 +137,7 @@ export const XTerm = React.forwardRef<
       mouseTracking: () => (termRef.current?.modes.mouseTrackingMode ?? "none") !== "none",
       // iPadOS reports as Mac (navigator.platform "MacIntel"); matches xterm's own isMac.
       isMac: () => /Mac/i.test(navigator.platform || ""),
+      debug: dbg,
     });
     host.addEventListener("touchstart", gesture.onStart, { passive: true });
     host.addEventListener("touchmove", gesture.onMove, { passive: false });
