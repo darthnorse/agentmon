@@ -1,13 +1,16 @@
+import * as React from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
 import { MobileSessionTabs, buildTabs } from "@/components/MobileSessionTabs";
+import { MobileTerminalStack } from "@/components/MobileTerminalStack";
 import { flattenSessions, type SessionRow } from "@/components/SessionList";
 import { listServers, listSessions, serversKey, sessionsKey } from "@/lib/api-client";
 import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
+import { useMobilePanePool, MOBILE_POOL_CAP } from "@/hooks/useMobilePanePool";
+import { paneIdentity } from "@/lib/pane-identity";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
@@ -22,24 +25,61 @@ export function MobileTerminalRoute() {
   const fontSize = usePrefs((s) => s.fontSizeMobile);
   const theme = themeOf(usePrefs((s) => s.terminalTheme));
 
-  useFocusedSeen({ serverId, target, sessionName: session });
-
-  // Header session tabs: reuse the SAME (cached) session list the inbox loads, so
-  // switching is a cheap in-place navigate rather than a Back → list → tap round-trip.
-  // staleTime keeps arriving-from-the-inbox from re-fetching the list it just loaded.
+  // Session list for the tab strip + eager warming (same cached keys as the inbox).
   const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers, staleTime: 15_000 });
   const servers = serversQ.data ?? [];
   const sessionQs = useQueries({
-    queries: servers.map((s) => ({
-      queryKey: sessionsKey(s.id), queryFn: () => listSessions(s.id), staleTime: 15_000,
-    })),
+    queries: servers.map((s) => ({ queryKey: sessionsKey(s.id), queryFn: () => listSessions(s.id), staleTime: 15_000 })),
   });
   const byServer: Record<string, Session[]> = {};
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
+  const rows = flattenSessions(servers, byServer);
   const snap = useStateSnapshot();
   const stateOf = (row: SessionRow): SessionState =>
     effectiveSessionState(snap, row.server.id, row.session.target, row.session.name, row.session.state);
-  const tabs = buildTabs(flattenSessions(servers, byServer), { serverId, target, session, paneId }, stateOf);
+
+  // Keep-alive pool (route-local → dies on Back). Seed the entered pane, focused.
+  // useLayoutEffect (not useEffect) so the seeded pane is committed BEFORE the first
+  // paint — otherwise the stack renders empty for one frame on entry (blank terminal
+  // region) before the post-paint effect adds it, undercutting the flash-free goal.
+  const pool = useMobilePanePool();
+  React.useLayoutEffect(() => {
+    pool.openAndFocus({ serverId, target, paneId });
+    // Mount-only: the entered pane is fixed for this route mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Eager-warm up to the cap once the session list first arrives (focused always included).
+  const warmedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (warmedRef.current || rows.length === 0) return;
+    warmedRef.current = true;
+    const focusedIdent = paneIdentity(serverId, target, paneId);
+    let warmed = 1; // the seeded/focused pane counts toward the cap
+    for (const r of rows) {
+      if (warmed >= MOBILE_POOL_CAP) break;
+      const rid = paneIdentity(r.server.id, r.session.target, r.pane.id);
+      if (rid === focusedIdent) continue;
+      pool.open({ serverId: r.server.id, target: r.session.target, paneId: r.pane.id });
+      warmed++;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
+
+  // The focused pane drives the header/tabs + seen tracking. Fall back to the URL pane
+  // until the seed effect lands. The focused session NAME comes from the list (so a
+  // rename reflects on refetch); fall back to the URL session name before the list loads.
+  const focused = pool.panes.find(
+    (p) => paneIdentity(p.serverId, p.target, p.paneId) === pool.focusedId,
+  ) ?? { serverId, target, paneId };
+  const focusedRow = rows.find(
+    (r) => paneIdentity(r.server.id, r.session.target, r.pane.id) === paneIdentity(focused.serverId, focused.target, focused.paneId),
+  );
+  const focusedName = focusedRow?.session.name ?? session;
+
+  useFocusedSeen({ serverId: focused.serverId, target: focused.target, sessionName: focusedName });
+
+  const tabs = buildTabs(rows, { serverId: focused.serverId, target: focused.target, session: focusedName, paneId: focused.paneId }, stateOf);
 
   // Size the whole route to the visible viewport so the terminal + key bar stay ABOVE the
   // iOS soft keyboard (which overlays the page rather than shrinking it). Falls back to
@@ -55,26 +95,12 @@ export function MobileTerminalRoute() {
         <Button variant="ghost" size="sm" className="flex-none" onClick={() => navigate({ to: "/" })}>‹ Back</Button>
         <MobileSessionTabs
           tabs={tabs}
-          onSwitch={(tab) =>
-            navigate({
-              to: "/t/$serverId/$paneId",
-              params: { serverId: tab.serverId, paneId: tab.paneId },
-              search: { target: tab.target, session: tab.name },
-              replace: true,
-            })
-          }
-          onRenamed={(to) => navigate({ to: ".", search: (s) => ({ ...s, session: to }), replace: true })}
+          onSwitch={(tab) => pool.openAndFocus({ serverId: tab.serverId, target: tab.target, paneId: tab.paneId })}
+          onRenamed={() => { /* rename reflects via the sessions refetch; URL is only the entry point */ }}
         />
       </header>
       <div className="min-h-0 flex-1">
-        {/* Key by the pane identity so switching sessions (paneId changes) remounts a
-            fresh terminal — otherwise the old session's scrollback + connected state
-            bleed under the new header until the new socket opens. A rename keeps the
-            same paneId, so the WS survives (matching the grid's keying). */}
-        <TerminalView
-          key={`${serverId}:${target}:${paneId}`}
-          serverId={serverId} paneId={paneId} target={target} showKeyBar fontSize={fontSize} theme={theme}
-        />
+        <MobileTerminalStack panes={pool.panes} focusedId={pool.focusedId} fontSize={fontSize} theme={theme} />
       </div>
     </div>
   );
