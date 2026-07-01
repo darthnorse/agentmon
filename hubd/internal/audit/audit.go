@@ -68,6 +68,15 @@ func (r *Recorder) SessionRename(ctx context.Context, principalID, resource, fro
 		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
 }
 
+func (r *Recorder) SessionKill(ctx context.Context, principalID, resource, sessionName, ip, ua string) {
+	meta, err := json.Marshal(map[string]string{"session": sessionName})
+	if err != nil {
+		meta = []byte("{}")
+	}
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "session.kill",
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
+}
+
 func (r *Recorder) PasswordChange(ctx context.Context, principalID, ip, ua string) {
 	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "auth.password_change",
 		Resource: "user:" + principalID, Result: "allow", IP: ip, UserAgent: ua})

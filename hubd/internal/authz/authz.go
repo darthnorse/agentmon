@@ -23,6 +23,7 @@ const (
 	AuditRead     Action = "audit.read"
 	SessionCreate Action = "session.create"
 	SessionRename Action = "session.rename"
+	SessionKill   Action = "session.kill"
 	ServerAdmit   Action = "server.admit"
 )
 

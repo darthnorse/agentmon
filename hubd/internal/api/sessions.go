@@ -230,6 +230,58 @@ func (d Deps) ServerRenameSessionHandler() http.HandlerFunc {
 	}
 }
 
+// ServerKillSessionHandler handles POST /api/v1/servers/{id}/sessions/kill:
+// authorizes session.kill, terminates the tmux session via the agent, audits, and
+// returns 200 {"name": ...}. CSRF is enforced by RequireAuth. Maps the agent's
+// 404 (no such session) / 400.
+func (d Deps) ServerKillSessionHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		p, ok := d.authorizeOr403(w, r, authz.SessionKill, "server:"+id)
+		if !ok {
+			return
+		}
+		var req shared.KillSessionRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCreateSessionBody)).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		if req.Name == "" {
+			writeJSONError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		srv, found, err := d.Reg.Get(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "unknown server")
+			return
+		}
+		target := r.URL.Query().Get("target")
+		auditTarget := target
+		if auditTarget == "" {
+			auditTarget = "default"
+		}
+		if err := d.Agent.KillSession(r.Context(), srv, target, req.Name); err != nil {
+			switch {
+			case errors.Is(err, registry.ErrNoSession):
+				writeJSONError(w, http.StatusNotFound, "no such session")
+			case errors.Is(err, registry.ErrInvalidSession):
+				writeJSONError(w, http.StatusBadRequest, "invalid session request")
+			default:
+				log.Printf("kill-session: agent %s: %v", id, err)
+				writeJSONError(w, http.StatusBadGateway, "agent unavailable")
+			}
+			return
+		}
+		d.Audit.SessionKill(r.Context(), p.ID, shared.SessionID(id, auditTarget, req.Name), req.Name,
+			authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
+		writeJSON(w, http.StatusOK, map[string]string{"name": req.Name})
+	}
+}
+
 func (d Deps) SessionDetailHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")

@@ -177,6 +177,55 @@ func RenameSessionHandler(cfg config.Config, rename SessionRenamer) http.Handler
 	}
 }
 
+// SessionKiller terminates an existing tmux session on the given socket. DI seam
+// for KillSessionHandler (mirrors SessionRenamer): production binds tmux.KillSession
+// + tmux.ExecRunner; tests inject a fake.
+type SessionKiller func(ctx context.Context, socket, name string) error
+
+// KillSessionHandler serves POST /sessions/kill?target=<label>. The body's `name`
+// must be a non-empty existing tmux session name; the target resolves via config
+// (the agent's own socket — never client-controlled). Maps tmux.ErrNoSession→404.
+func KillSessionHandler(cfg config.Config, kill SessionKiller) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxCreateBody)
+		var req shared.KillSessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		// Only non-empty is checked here — no charset constraint. This is deliberate:
+		// the name comes from the agent's own session list and is routed through the
+		// config-scoped socket, and tmux.KillSession pins it with the "=" exact-match
+		// prefix so a glob/`:` in a name can't select a different session (there is no
+		// shell either — the name is a direct argv token). We do NOT ValidateSessionName
+		// here because a session may have been created directly via tmux with a name
+		// outside the create/rename charset, and the operator must still be able to
+		// kill it; exact-match keeps that safe.
+		if req.Name == "" {
+			writeJSONError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		t, ok := cfg.ResolveTarget(r.URL.Query().Get("target"))
+		if !ok {
+			writeJSONError(w, http.StatusNotFound, "unknown target")
+			return
+		}
+		ctx, cancel := withTmuxTimeout(r)
+		defer cancel()
+		if err := kill(ctx, t.SocketName, req.Name); err != nil {
+			if errors.Is(err, tmux.ErrNoSession) {
+				writeJSONError(w, http.StatusNotFound, "no such session")
+				return
+			}
+			log.Printf("sessions: kill failed (target=%q name=%q): %v", t.Label, req.Name, err)
+			writeJSONError(w, http.StatusInternalServerError, "kill failed")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(shared.CreateSessionResponse{Name: req.Name})
+	}
+}
+
 // stampState fills Session.State from the machine's per-pane states (rolled up).
 // A nil machine (hooks disabled) leaves every session StateUnknown.
 func stampState(m *state.Machine, target string, sessions []shared.Session) {

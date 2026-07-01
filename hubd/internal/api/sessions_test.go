@@ -845,3 +845,84 @@ func TestServerRenameSessionDeniesEmptyPrincipal(t *testing.T) {
 		t.Fatalf("empty principal must be 403, got %d", w.Code)
 	}
 }
+
+func TestServerKillSessionForwardsAndAudits(t *testing.T) {
+	var gotName string
+	agent := killFakeAgent(t, func(name string) (int, string) { gotName = name; return 200, `{"name":"proj"}` })
+	defer agent.Close()
+	sink := &recSink{}
+	d := killDeps(agent.URL, sink) // helper below; wires a registry pointing at agent + audit sink
+	rr := doKill(t, d, "aigallery", `{"name":"proj"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rr.Code, rr.Body.String())
+	}
+	if gotName != "proj" {
+		t.Fatalf("agent saw name %q", gotName)
+	}
+	if !contains(sink.actions(), "session.kill") {
+		t.Fatalf("session.kill not audited; saw %v", sink.actions())
+	}
+}
+
+func TestServerKillSessionDenyEmptyPrincipalAudited(t *testing.T) {
+	sink := &recSink{}
+	d := killDeps("http://unused", sink)
+	rr := doKillAs(t, d, authz.Principal{}, "aigallery", `{"name":"proj"}`) // empty principal → deny
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d", rr.Code)
+	}
+}
+
+func TestServerKillSessionNotFoundMaps404(t *testing.T) {
+	agent := killFakeAgent(t, func(string) (int, string) { return 404, `{"error":"no such session"}` })
+	defer agent.Close()
+	d := killDeps(agent.URL, &recSink{})
+	rr := doKill(t, d, "aigallery", `{"name":"gone"}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", rr.Code)
+	}
+}
+
+func TestServerKillSessionEmptyNameIs400(t *testing.T) {
+	d := killDeps("http://unused", &recSink{})
+	rr := doKill(t, d, "aigallery", `{"name":""}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rr.Code)
+	}
+}
+
+// killFakeAgent serves POST /sessions/kill, returning (status, body) from decide(name).
+func killFakeAgent(t *testing.T, decide func(name string) (int, string)) *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions/kill", func(w http.ResponseWriter, r *http.Request) {
+		var req shared.KillSessionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		code, body := decide(req.Name)
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(body))
+	})
+	return httptest.NewServer(mux)
+}
+
+func killDeps(agentURL string, sink audit.Sink) Deps {
+	srv := db.Server{ID: "aigallery", Name: "AG", URL: agentURL, Bearer: "b", Status: "active"}
+	d := testDeps(registry.New(fakeStore{servers: map[string]db.Server{srv.ID: srv}}))
+	d.Audit = audit.NewRecorder(sink)
+	d.Agent = registry.NewClient(2 * time.Second)
+	return d
+}
+
+func doKill(t *testing.T, d Deps, id, body string) *httptest.ResponseRecorder {
+	return doKillAs(t, d, authz.Principal{ID: "u1"}, id, body)
+}
+
+func doKillAs(t *testing.T, d Deps, p authz.Principal, id, body string) *httptest.ResponseRecorder {
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/v1/servers/{id}/sessions/kill", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d.ServerKillSessionHandler()(w, withPrincipal(r, p))
+	}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/servers/"+id+"/sessions/kill", strings.NewReader(body))
+	mux.ServeHTTP(rr, req)
+	return rr
+}

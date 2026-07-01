@@ -133,6 +133,40 @@ func (c *Client) RenameSession(ctx context.Context, srv db.Server, target, from,
 	}
 }
 
+// KillSession terminates session `name` on the agent's target. Maps the agent's
+// 400→ErrInvalidSession, 404→ErrNoSession.
+func (c *Client) KillSession(ctx context.Context, srv db.Server, target, name string) error {
+	u := srv.URL + "/sessions/kill"
+	if target != "" {
+		u += "?target=" + url.QueryEscape(target)
+	}
+	body, err := json.Marshal(shared.KillSessionRequest{Name: name})
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+srv.Bearer)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("dial agent %s: %w", srv.ID, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	case http.StatusBadRequest:
+		return ErrInvalidSession
+	case http.StatusNotFound:
+		return ErrNoSession
+	default:
+		return fmt.Errorf("agent %s kill-session returned %d", srv.ID, resp.StatusCode)
+	}
+}
+
 func (c *Client) State(ctx context.Context, srv db.Server, target string) (shared.AgentState, error) {
 	u := srv.URL + "/state"
 	if target != "" {

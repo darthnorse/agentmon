@@ -87,6 +87,13 @@ type RenameSessionRequest struct {
 	To   string `json:"to"`
 }
 
+// KillSessionRequest is the body of POST /sessions/kill (agent) and
+// POST /api/v1/servers/{id}/sessions/kill (hub). Name is an existing tmux
+// session name on the target socket.
+type KillSessionRequest struct {
+	Name string `json:"name"`
+}
+
 // sessionNameRe is the single name rule enforced at both the hub (browser
 // boundary) and the agent (exec boundary): 1–64 chars, must start with an
 // alphanumeric, then only A–Z a–z 0–9 _ -. This excludes '.' and ':' (tmux

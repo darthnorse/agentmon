@@ -434,6 +434,52 @@ func TestRenameSessionHandlerTimesOutOnHungTmux(t *testing.T) {
 	}
 }
 
+func TestKillSessionHandlerSuccess(t *testing.T) {
+	var gotSocket, gotName string
+	kill := func(_ context.Context, socket, name string) error { gotSocket = socket; gotName = name; return nil }
+	h := KillSessionHandler(testCfg(), kill)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rr.Code, rr.Body.String())
+	}
+	// testCfg's default target has socket_name "" — the agent's own configured socket,
+	// never taken from client input.
+	if gotSocket != "" || gotName != "proj" {
+		t.Fatalf("kill got socket=%q name=%q", gotSocket, gotName)
+	}
+}
+
+func TestKillSessionHandlerEmptyNameIs400(t *testing.T) {
+	kill := func(context.Context, string, string) error { t.Fatal("must not exec"); return nil }
+	h := KillSessionHandler(testCfg(), kill)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":""}`)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rr.Code)
+	}
+}
+
+func TestKillSessionHandlerNotFoundIs404(t *testing.T) {
+	kill := func(context.Context, string, string) error { return tmux.ErrNoSession }
+	h := KillSessionHandler(testCfg(), kill)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"gone"}`)))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", rr.Code)
+	}
+}
+
+func TestKillSessionHandlerUnknownTargetIs404(t *testing.T) {
+	kill := func(context.Context, string, string) error { t.Fatal("must not exec"); return nil }
+	h := KillSessionHandler(testCfg(), kill)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=ghost", strings.NewReader(`{"name":"proj"}`)))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404 for unknown target, got %d", rr.Code)
+	}
+}
+
 func TestRenameSessionHandlerRejects(t *testing.T) {
 	noCall := func(context.Context, string, string, string) error {
 		t.Helper()
