@@ -106,6 +106,18 @@ func (d Deps) PaneRelayHandler() http.HandlerFunc {
 			return
 		}
 
+		// Phase 5: cap concurrent relays per principal (reject-newest). Acquire
+		// before the agent dial so a rejected relay does no wasted work; the
+		// deferred Release runs on EVERY exit path (dial failure, upgrade
+		// failure, or normal relayPanes return), so a slot is never leaked.
+		if d.RelayCap != nil {
+			if !d.RelayCap.Acquire(p.ID) {
+				writeJSONError(w, http.StatusTooManyRequests, "too many terminal sessions")
+				return
+			}
+			defer d.RelayCap.Release(p.ID)
+		}
+
 		srv, found, err := d.Reg.Get(r.Context(), id)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")

@@ -594,3 +594,89 @@ func TestRelayStateFrameDeliveredAndInterleaved(t *testing.T) {
 		t.Fatalf("still-alive echo: mt=%d data=%q err=%v", mt, data, err)
 	}
 }
+
+func TestRelayConcurrencyCapRejectsOverCap(t *testing.T) {
+	d := relayDeps("http://unused", "b", "k", &recSink{})
+	d.RelayCap = authn.NewGauge(1)
+	d.RelayCap.Acquire("u1") // pre-fill the single slot for this principal
+	hub := relayServer(d, authz.Principal{ID: "u1"})
+	defer hub.Close()
+
+	_, resp, err := dialBrowser(t, hub, "/api/v1/servers/aigallery/panes/%253/io?target=default", testOrigin)
+	if err == nil {
+		t.Fatal("expected handshake failure when over the relay cap")
+	}
+	if resp == nil || resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("want 429, got %v", resp)
+	}
+}
+
+func TestRelayConcurrencyCapReleasesOnEarlyReturn(t *testing.T) {
+	// Unknown server → the handler 404s AFTER acquiring the slot; the deferred
+	// Release must return the slot so the principal is not permanently charged.
+	d := relayDeps("http://unused", "b", "k", &recSink{})
+	d.RelayCap = authn.NewGauge(1)
+	hub := relayServer(d, authz.Principal{ID: "u1"})
+	defer hub.Close()
+
+	_, resp, err := dialBrowser(t, hub, "/api/v1/servers/nope/panes/%253/io?target=default", testOrigin)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got resp=%v err=%v", resp, err)
+	}
+	// The Release runs in the handler goroutine after the response is written, so poll.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if d.RelayCap.InUse("u1") == 0 {
+			return // slot released — success
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("slot not released after early-return 404; InUse=%d", d.RelayCap.InUse("u1"))
+}
+
+func TestRelayConcurrencyCapReleasesAfterTeardown(t *testing.T) {
+	rec := &dialRecord{closed: make(chan struct{}, 8)}
+	agent := fakeAgentWS(t, rec)
+	defer agent.Close()
+	d := relayDeps(agent.URL, "b", "k", &recSink{})
+	d.RelayCap = authn.NewGauge(1) // cap 1: the second dial proves release only if the first freed its slot
+	hub := relayServer(d, authz.Principal{ID: "u1"})
+	defer hub.Close()
+
+	c, _, err := dialBrowser(t, hub, "/api/v1/servers/aigallery/panes/%253/io?target=default", testOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, _ = c.ReadMessage() // drain SNAP
+	c.Close()                 // browser goes away → relay tears down
+	select {
+	case <-rec.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent side not torn down")
+	}
+	// Poll for the slot release, then a fresh dial (cap 1) must succeed.
+	deadline := time.Now().Add(2 * time.Second)
+	for d.RelayCap.InUse("u1") != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if d.RelayCap.InUse("u1") != 0 {
+		t.Fatalf("slot not released after teardown; InUse=%d", d.RelayCap.InUse("u1"))
+	}
+}
+
+func TestHubPaneIDReRejectsInjection(t *testing.T) {
+	// Confirm-test: locks the hub's pane-id guard on the file we are editing.
+	good := []string{"%0", "%37", "%1234"}
+	bad := []string{"", "0", "%", "%0\ninject", "%0;x", "%0 %1", "% 0", "%0a", "abc"}
+	for _, s := range good {
+		if !hubPaneIDRe.MatchString(s) {
+			t.Errorf("hubPaneIDRe should accept %q", s)
+		}
+	}
+	for _, s := range bad {
+		if hubPaneIDRe.MatchString(s) {
+			t.Errorf("hubPaneIDRe should reject %q", s)
+		}
+	}
+}
