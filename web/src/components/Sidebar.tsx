@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { matchesQuery } from "@/components/SessionList";
 import { sortBlockedFirst, rollUp } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
-import { SessionNameEditor } from "@/components/SessionNameEditor";
+import { SessionActionsMenu } from "@/components/SessionActionsMenu";
 import { rowActivation } from "@/lib/row-activation";
 
 // Desktop servers→sessions tree. Dots roll up; blocked sorts first. The tree is
@@ -68,11 +68,13 @@ export function Sidebar({
               >
                 <StateDot state={stateOf(row)} />
                 <div className="min-w-0">
-                  <SessionNameEditor
+                  <SessionActionsMenu
                     serverId={row.server.id}
+                    serverName={serverName}
                     target={row.session.target}
                     name={row.session.name}
                     paneId={row.pane.id}
+                    state={stateOf(row)}
                   />
                   <div className="truncate text-xs text-muted-foreground">{row.session.cwd || "—"}</div>
                 </div>

@@ -12,14 +12,18 @@ interface Props {
   /** Called with the new name once the rename succeeds (e.g. to update a URL). */
   onRenamed?: (newName: string) => void;
   className?: string;
+  /** If true, start in edit mode immediately. */
+  autoEdit?: boolean;
+  /** Called after cancel or successful save — lets a parent hide the editor. */
+  onDone?: () => void;
 }
 
 // Inline session-name editor: shows the name + a pencil; click → input, Enter/✓
 // saves, Esc/✕ cancels. On success it renames via the hub, re-keys the open pane
 // (the WS survives — paneId is unchanged), and invalidates the sessions query. Its
 // interactive controls stopPropagation so it can live inside a click-to-open row.
-export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, className }: Props) {
-  const [editing, setEditing] = React.useState(false);
+export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, className, autoEdit, onDone }: Props) {
+  const [editing, setEditing] = React.useState(!!autoEdit);
   const [value, setValue] = React.useState(name);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -34,7 +38,7 @@ export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, c
 
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const startEdit = (e: React.SyntheticEvent) => { stop(e); setValue(name); setError(null); setEditing(true); };
-  const cancel = () => { setEditing(false); setError(null); };
+  const cancel = () => { setEditing(false); setError(null); onDone?.(); };
   const dirtyValid = isValidSessionName(value) && value !== name;
 
   async function save() {
@@ -52,6 +56,7 @@ export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, c
       queryClient.invalidateQueries({ queryKey: ["sessions", serverId] });
       setEditing(false);
       onRenamed?.(value);
+      onDone?.();
     } catch (err) {
       const status = err instanceof ApiError ? err.status : undefined;
       setError(status === 409 ? "A session with that name already exists." : "Rename failed.");
@@ -61,6 +66,7 @@ export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, c
   }
 
   if (!editing) {
+    if (autoEdit) return null;
     return (
       <span className={`inline-flex min-w-0 items-center gap-1 ${className ?? ""}`}>
         <span className="truncate">{name}</span>
