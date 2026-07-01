@@ -194,11 +194,13 @@ func KillSessionHandler(cfg config.Config, kill SessionKiller) http.HandlerFunc 
 			return
 		}
 		// Only non-empty is checked here — no charset constraint. This is deliberate:
-		// unlike rename's `to`, the name comes from the agent's own session list and
-		// is routed through the config-scoped socket, so there is no shell injection
-		// surface (tmux kill-session takes the name as a direct argument, not a shell
-		// word). Rename's ValidateSessionName call is stricter because the `to` value
-		// originates from user-typed input and is embedded in tmux display contexts.
+		// the name comes from the agent's own session list and is routed through the
+		// config-scoped socket, and tmux.KillSession pins it with the "=" exact-match
+		// prefix so a glob/`:` in a name can't select a different session (there is no
+		// shell either — the name is a direct argv token). We do NOT ValidateSessionName
+		// here because a session may have been created directly via tmux with a name
+		// outside the create/rename charset, and the operator must still be able to
+		// kill it; exact-match keeps that safe.
 		if req.Name == "" {
 			writeJSONError(w, http.StatusBadRequest, "name is required")
 			return

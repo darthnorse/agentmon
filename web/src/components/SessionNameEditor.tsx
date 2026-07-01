@@ -66,6 +66,8 @@ export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, c
   }
 
   if (!editing) {
+    // autoEdit mode: once editing ends, onDone hands control back to the parent
+    // (which unmounts this) — render nothing rather than a stray name+pencil.
     if (autoEdit) return null;
     return (
       <span className={`inline-flex min-w-0 items-center gap-1 ${className ?? ""}`}>

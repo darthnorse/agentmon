@@ -79,8 +79,14 @@ func RenameSession(ctx context.Context, run Runner, socket, from, to string) err
 // Runner (no shell — the name is a positional -t arg). The socket is the agent's
 // own configured socket, never client input, so this cannot target another socket.
 // An unknown session → ErrNoSession (404). Kills the whole session (all windows).
+//
+// The name is prefixed with "=" so tmux matches it EXACTLY. Without it, `-t <name>`
+// resolves via tmux's fuzzy target rules (exact → start-of-name prefix → fnmatch
+// pattern), so for this destructive op a stale/renamed name could prefix-match a
+// DIFFERENT live session, and a name containing `*`/`?`/`[` would be treated as a
+// glob (e.g. `-t "*"` matches an arbitrary session). "=" forces literal exact match.
 func KillSession(ctx context.Context, run Runner, socket, name string) error {
-	out, err := run(ctx, with(socketArgs(socket), "kill-session", "-t", name)...)
+	out, err := run(ctx, with(socketArgs(socket), "kill-session", "-t", "="+name)...)
 	if err != nil {
 		errb := []byte(err.Error())
 		if isNoSession(out) || isNoSession(errb) {
