@@ -7,6 +7,7 @@ import { StateDot } from "@/components/StateDot";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
+import { gridLayout } from "@/lib/grid-layout";
 
 // Live tiled grid. EVERY tile stays mounted (its own WS); expand is in-state, so
 // the non-focused tiles are hidden with display:none — sockets + scrollback survive.
@@ -18,6 +19,7 @@ export function GridView() {
   const snap = useStateSnapshot();
   const fontSize = usePrefs((s) => s.fontSizeDesktop);
   const theme = themeOf(usePrefs((s) => s.terminalTheme));
+  const gridMaxColumns = usePrefs((s) => s.gridMaxColumns);
 
   if (panes.length === 0) {
     return (
@@ -27,14 +29,20 @@ export function GridView() {
     );
   }
 
+  const layout = gridLayout(panes.length, gridMaxColumns);
+
   return (
     <div className="relative h-full w-full">
       <div
         className="grid h-full w-full gap-2 p-2"
-        style={{
-          gridTemplateColumns: activeId ? "1fr" : "repeat(auto-fit, minmax(360px, 1fr))",
-          // when expanded, the grid collapses to one cell; hidden tiles take no space
-        }}
+        style={
+          activeId
+            ? { gridTemplateColumns: "1fr" } // expanded: one cell full-screen (unchanged)
+            : {
+                gridTemplateColumns: `repeat(${layout.cols}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${layout.rows}, minmax(0, 1fr))`,
+              }
+        }
       >
         {panes.map((p) => {
           const expanded = activeId === p.id;
@@ -45,7 +53,7 @@ export function GridView() {
               // (which changes p.id) does NOT remount the tile and tear down its
               // WebSocket. p.id still drives focus/close/expand below.
               key={`${p.serverId}:${p.target}:${p.paneId}`}
-              className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border"
+              className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border focus-within:ring-2 focus-within:ring-primary focus-within:ring-inset"
               style={{ display: hidden ? "none" : "flex" }}
             >
               <div className="flex items-center justify-between border-b border-border bg-card px-2 py-1 text-xs">
