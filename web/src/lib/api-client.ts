@@ -88,6 +88,16 @@ export const renameSession = (serverId: string, from: string, to: string, target
     { from, to },
   );
 
+// Kill (terminate) a tmux session. Irreversible; the caller confirms first.
+// Auto-CSRF (mutating). 404 (already gone) is treated as success by the caller.
+export const killSession = (serverId: string, name: string, target?: string) =>
+  request<void>(
+    "POST",
+    `/servers/${encodeURIComponent(serverId)}/sessions/kill` +
+      (target ? `?target=${encodeURIComponent(target)}` : ""),
+    { name },
+  );
+
 // Admit UI: list agents awaiting admission, then approve (→ active) or reject
 // (remove the pending enrollment). approve/reject are mutating (auto-CSRF).
 export const listPending = () => request<PendingServer[]>("GET", "/servers/pending");
