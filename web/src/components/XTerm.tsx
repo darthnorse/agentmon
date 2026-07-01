@@ -35,13 +35,27 @@ export const XTerm = React.forwardRef<
   onDataRef.current = onData;
   onResizeRef.current = onResize;
 
+  // Fit ONLY when the host is actually laid out. A pooled pane rendered display:none (an
+  // eager-warmed pane that isn't focused, or the one just switched away from) has no layout;
+  // iOS Safari's getComputedStyle then reports the host's width:100%/height:100% as the
+  // literal "100%", so FitAddon parses 100px and resizes the terminal to a bogus ~13×6 —
+  // which propagates (onResize → sock.resize) to the REAL tmux pane and permanently wraps
+  // its scrollback narrow. clientWidth/Height are reliably 0 for a hidden element in every
+  // browser, so this guard blocks the bad resize: a hidden pane keeps its last-good size and
+  // the ResizeObserver re-fits it on reveal. (Chrome returns auto→NaN, caught by FitAddon's
+  // own isNaN guard — this only bites iOS Safari, hence the mobile-only report.)
+  const safeFit = React.useCallback((): { cols: number; rows: number } | null => {
+    const host = hostRef.current;
+    const term = termRef.current;
+    const fit = fitRef.current;
+    if (!host || !term || !fit || host.clientWidth === 0 || host.clientHeight === 0) return null;
+    fit.fit();
+    return { cols: term.cols, rows: term.rows };
+  }, []);
+
   React.useImperativeHandle(ref, (): XTermHandle => ({
     write: (b) => termRef.current?.write(b),
-    fit: () => {
-      fitRef.current?.fit();
-      const t = termRef.current;
-      return t ? { cols: t.cols, rows: t.rows } : null;
-    },
+    fit: safeFit,
     focus: () => termRef.current?.focus(),
     blur: () => termRef.current?.blur(),
     appCursor: () => !!termRef.current?.modes.applicationCursorKeysMode,
@@ -76,7 +90,9 @@ export const XTerm = React.forwardRef<
       })
       .catch(() => {});
     term.open(hostRef.current!);
-    fit.fit();
+    termRef.current = term;
+    fitRef.current = fit;
+    safeFit(); // initial fit — a no-op if this pane mounted hidden; the RO refits on reveal
     term.onData((d) => onDataRef.current(d));
     // Shift+Enter → soft newline (see lib/terminal-keys): xterm emits CR for both
     // plain and shifted Enter, so intercept the shifted chord and send LF ourselves
@@ -90,10 +106,8 @@ export const XTerm = React.forwardRef<
       return false;
     });
     term.onResize(({ cols, rows }) => onResizeRef.current(cols, rows));
-    termRef.current = term;
-    fitRef.current = fit;
 
-    const ro = new ResizeObserver(() => { try { fit.fit(); } catch { /* detached */ } });
+    const ro = new ResizeObserver(() => { try { safeFit(); } catch { /* detached */ } });
     ro.observe(hostRef.current!);
 
     // touch swipe = scroll the scrollback (do not let the page scroll)
@@ -134,7 +148,7 @@ export const XTerm = React.forwardRef<
     if (!term) return;
     term.options.fontSize = fontSize;
     term.options.theme = theme;
-    try { fitRef.current?.fit(); } catch { /* detached */ }
+    try { safeFit(); } catch { /* detached */ }
   }, [fontSize, theme]);
 
   return <div ref={hostRef} className="h-full w-full" />;
