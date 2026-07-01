@@ -4,7 +4,7 @@ import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
 import { MobileSessionTabs, buildTabs } from "@/components/MobileSessionTabs";
 import { flattenSessions, type SessionRow } from "@/components/SessionList";
-import { listServers, listSessions } from "@/lib/api-client";
+import { listServers, listSessions, serversKey, sessionsKey } from "@/lib/api-client";
 import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
@@ -27,11 +27,11 @@ export function MobileTerminalRoute() {
   // Header session tabs: reuse the SAME (cached) session list the inbox loads, so
   // switching is a cheap in-place navigate rather than a Back → list → tap round-trip.
   // staleTime keeps arriving-from-the-inbox from re-fetching the list it just loaded.
-  const serversQ = useQuery({ queryKey: ["servers"], queryFn: listServers, staleTime: 15_000 });
+  const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers, staleTime: 15_000 });
   const servers = serversQ.data ?? [];
   const sessionQs = useQueries({
     queries: servers.map((s) => ({
-      queryKey: ["sessions", s.id], queryFn: () => listSessions(s.id), staleTime: 15_000,
+      queryKey: sessionsKey(s.id), queryFn: () => listSessions(s.id), staleTime: 15_000,
     })),
   });
   const byServer: Record<string, Session[]> = {};

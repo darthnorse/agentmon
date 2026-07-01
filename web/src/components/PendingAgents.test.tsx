@@ -14,6 +14,7 @@ vi.mock("@/lib/api-client", () => ({
   listPending: h.listPending,
   approveServer: h.approveServer,
   rejectServer: h.rejectServer,
+  serversKey: () => ["servers"],
 }));
 vi.mock("@/lib/query-client", () => ({ queryClient: { invalidateQueries: h.invalidateQueries } }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

@@ -24,7 +24,10 @@ vi.mock("@tanstack/react-query", () => ({
 
 // vi.hoisted: vi.mock is hoisted above plain consts, so the mock fn must be too.
 const { postSeen } = vi.hoisted(() => ({ postSeen: vi.fn(async () => {}) }));
-vi.mock("@/lib/api-client", () => ({ postSeen, listServers: vi.fn(), listSessions: vi.fn() }));
+vi.mock("@/lib/api-client", () => ({
+  postSeen, listServers: vi.fn(), listSessions: vi.fn(),
+  serversKey: () => ["servers"], sessionsKey: (id: string) => ["sessions", id],
+}));
 
 import { MobileTerminalRoute } from "@/routes/terminal";
 import { useSessionState } from "@/store/session-state";

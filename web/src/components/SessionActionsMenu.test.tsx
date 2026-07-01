@@ -5,7 +5,7 @@ import { SessionActionsMenu } from "./SessionActionsMenu";
 
 const { closePaneMock } = vi.hoisted(() => ({ closePaneMock: vi.fn() }));
 
-vi.mock("@/lib/api-client", () => ({ killSession: vi.fn().mockResolvedValue(undefined), ApiError: class extends Error { status = 0; } }));
+vi.mock("@/lib/api-client", () => ({ killSession: vi.fn().mockResolvedValue(undefined), ApiError: class extends Error { status = 0; }, sessionsKey: (id: string) => ["sessions", id] }));
 vi.mock("@/lib/query-client", () => ({ queryClient: { invalidateQueries: vi.fn() } }));
 vi.mock("@/store/panes", () => ({
   usePanes: { getState: () => ({ closePane: closePaneMock }) },

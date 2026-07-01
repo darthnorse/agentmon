@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { listPending, approveServer, rejectServer } from "@/lib/api-client";
+import { listPending, approveServer, rejectServer, serversKey } from "@/lib/api-client";
 import { queryClient } from "@/lib/query-client";
 import { Button } from "@/components/ui/button";
 import { WarningBanner } from "@/components/WarningBanner";
@@ -43,7 +43,7 @@ function PendingRow({ agent }: { agent: PendingServer }) {
     try {
       await fn();
       queryClient.invalidateQueries({ queryKey: ["pending"] });
-      queryClient.invalidateQueries({ queryKey: ["servers"] }); // a newly-active server appears
+      queryClient.invalidateQueries({ queryKey: serversKey() }); // a newly-active server appears
       toast.success(`${agent.hostname} ${verb === "approve" ? "approved" : "rejected"}`);
     } catch {
       toast.error(`Could not ${verb} ${agent.hostname}`);

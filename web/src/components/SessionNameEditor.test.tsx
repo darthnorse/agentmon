@@ -16,6 +16,7 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/api-client", () => ({
   renameSession: h.renameSession,
   ApiError: h.ApiError,
+  sessionsKey: (id: string) => ["sessions", id],
 }));
 
 import { SessionNameEditor } from "@/components/SessionNameEditor";
