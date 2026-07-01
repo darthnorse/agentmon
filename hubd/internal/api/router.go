@@ -38,6 +38,7 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("GET /api/v1/servers/{id}/sessions", rd.Auth.RequireAuth(rd.API.ServerSessionsHandler()))
 	mux.Handle("POST /api/v1/servers/{id}/sessions", rd.Auth.RequireAuth(rd.API.ServerCreateSessionHandler()))
 	mux.Handle("POST /api/v1/servers/{id}/sessions/rename", rd.Auth.RequireAuth(rd.API.ServerRenameSessionHandler()))
+	mux.Handle("POST /api/v1/servers/{id}/sessions/kill", rd.Auth.RequireAuth(rd.API.ServerKillSessionHandler()))
 	mux.Handle("GET /api/v1/servers/{id}/sessions/{name}", rd.Auth.RequireAuth(rd.API.SessionDetailHandler()))
 	mux.Handle("GET /api/v1/servers/{id}/panes/{paneId}/io", rd.Auth.RequireAuth(rd.API.PaneRelayHandler()))
 	mux.Handle("GET /api/v1/audit", rd.Auth.RequireAuth(rd.API.AuditHandler()))
