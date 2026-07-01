@@ -37,7 +37,7 @@ export function GridView() {
         className="grid h-full w-full gap-2 p-2"
         style={
           activeId
-            ? { gridTemplateColumns: "1fr" } // expanded: one cell full-screen (unchanged)
+            ? { gridTemplateColumns: "1fr" } // expanded: the single visible tile fills the grid
             : {
                 gridTemplateColumns: `repeat(${layout.cols}, minmax(0, 1fr))`,
                 gridTemplateRows: `repeat(${layout.rows}, minmax(0, 1fr))`,
