@@ -75,7 +75,7 @@ export function GridView() {
                   <Button variant="ghost" size="sm" onClick={() => closePane(p.id)} aria-label="Close">✕</Button>
                 </span>
               </div>
-              <div className="min-h-0 flex-1">
+              <div className="min-h-0 flex-1 pl-2" style={{ background: theme.background }}>
                 <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} fontSize={fontSize} theme={theme} />
               </div>
             </div>
