@@ -39,8 +39,11 @@ export function MobileTerminalRoute() {
     effectiveSessionState(snap, row.server.id, row.session.target, row.session.name, row.session.state);
 
   // Keep-alive pool (route-local → dies on Back). Seed the entered pane, focused.
+  // useLayoutEffect (not useEffect) so the seeded pane is committed BEFORE the first
+  // paint — otherwise the stack renders empty for one frame on entry (blank terminal
+  // region) before the post-paint effect adds it, undercutting the flash-free goal.
   const pool = useMobilePanePool();
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     pool.openAndFocus({ serverId, target, paneId });
     // Mount-only: the entered pane is fixed for this route mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
