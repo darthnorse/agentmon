@@ -67,7 +67,7 @@ export function Sidebar({
                 className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 text-left text-sm hover:bg-accent"
               >
                 <StateDot state={stateOf(row)} />
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <SessionActionsMenu
                     serverId={row.server.id}
                     serverName={serverName}
