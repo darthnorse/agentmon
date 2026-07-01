@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "@/lib/terminal-themes";
 import { keyOverride } from "@/lib/terminal-keys";
+import { createTerminalGesture, selectionMouseEvent } from "@/lib/terminal-touch";
 import "@xterm/xterm/css/xterm.css";
 
 export interface XTermHandle {
@@ -35,13 +36,27 @@ export const XTerm = React.forwardRef<
   onDataRef.current = onData;
   onResizeRef.current = onResize;
 
+  // Fit ONLY when the host is actually laid out. A pooled pane rendered display:none (an
+  // eager-warmed pane that isn't focused, or the one just switched away from) has no layout;
+  // iOS Safari's getComputedStyle then reports the host's width:100%/height:100% as the
+  // literal "100%", so FitAddon parses 100px and resizes the terminal to a bogus ~13×6 —
+  // which propagates (onResize → sock.resize) to the REAL tmux pane and permanently wraps
+  // its scrollback narrow. clientWidth/Height are reliably 0 for a hidden element in every
+  // browser, so this guard blocks the bad resize: a hidden pane keeps its last-good size and
+  // the ResizeObserver re-fits it on reveal. (Chrome returns auto→NaN, caught by FitAddon's
+  // own isNaN guard — this only bites iOS Safari, hence the mobile-only report.)
+  const safeFit = React.useCallback((): { cols: number; rows: number } | null => {
+    const host = hostRef.current;
+    const term = termRef.current;
+    const fit = fitRef.current;
+    if (!host || !term || !fit || host.clientWidth === 0 || host.clientHeight === 0) return null;
+    fit.fit();
+    return { cols: term.cols, rows: term.rows };
+  }, []);
+
   React.useImperativeHandle(ref, (): XTermHandle => ({
     write: (b) => termRef.current?.write(b),
-    fit: () => {
-      fitRef.current?.fit();
-      const t = termRef.current;
-      return t ? { cols: t.cols, rows: t.rows } : null;
-    },
+    fit: safeFit,
     focus: () => termRef.current?.focus(),
     blur: () => termRef.current?.blur(),
     appCursor: () => !!termRef.current?.modes.applicationCursorKeysMode,
@@ -76,7 +91,9 @@ export const XTerm = React.forwardRef<
       })
       .catch(() => {});
     term.open(hostRef.current!);
-    fit.fit();
+    termRef.current = term;
+    fitRef.current = fit;
+    safeFit(); // initial fit — a no-op if this pane mounted hidden; the RO refits on reveal
     term.onData((d) => onDataRef.current(d));
     // Shift+Enter → soft newline (see lib/terminal-keys): xterm emits CR for both
     // plain and shifted Enter, so intercept the shifted chord and send LF ourselves
@@ -90,37 +107,37 @@ export const XTerm = React.forwardRef<
       return false;
     });
     term.onResize(({ cols, rows }) => onResizeRef.current(cols, rows));
-    termRef.current = term;
-    fitRef.current = fit;
 
-    const ro = new ResizeObserver(() => { try { fit.fit(); } catch { /* detached */ } });
+    const ro = new ResizeObserver(() => { try { safeFit(); } catch { /* detached */ } });
     ro.observe(hostRef.current!);
 
-    // touch swipe = scroll the scrollback (do not let the page scroll)
+    // Touch gestures (quick drag = scroll, long-press + drag = select) live in
+    // lib/terminal-touch so the state machine is unit-testable. We wire xterm-specific bits:
+    // synthetic mouse dispatch (mousedown at the point, move/up on document), scrollback
+    // scroll, live font size, and the app's mouse-tracking mode. Mobile-only; desktop uses
+    // real mouse events untouched, and a quick swipe still scrolls, so this can't regress them.
     const host = hostRef.current!;
-    let startY: number | null = null;
-    const onStart = (e: TouchEvent) => { if (e.touches.length === 1) startY = e.touches[0].clientY; };
-    const onMove = (e: TouchEvent) => {
-      if (startY === null || e.touches.length !== 1) return;
-      const y = e.touches[0].clientY;
-      const dy = startY - y;
-      const cell = (fontSizeRef.current || 13) * 1.2;
-      if (Math.abs(dy) > 6) {
-        const lines = Math.trunc(dy / cell);
-        if (lines !== 0) { term.scrollLines(lines); startY = y; }
-        e.preventDefault();
-      }
-    };
-    const onEnd = () => { startY = null; };
-    host.addEventListener("touchstart", onStart, { passive: true });
-    host.addEventListener("touchmove", onMove, { passive: false });
-    host.addEventListener("touchend", onEnd, { passive: true });
+    const gesture = createTerminalGesture({
+      fireMouse: (type, x, y) => {
+        const target = type === "mousedown" ? (document.elementFromPoint(x, y) ?? host) : document;
+        target.dispatchEvent(selectionMouseEvent(type, x, y));
+      },
+      scrollLines: (n) => term.scrollLines(n),
+      fontSize: () => fontSizeRef.current,
+      mouseTracking: () => (termRef.current?.modes.mouseTrackingMode ?? "none") !== "none",
+    });
+    host.addEventListener("touchstart", gesture.onStart, { passive: true });
+    host.addEventListener("touchmove", gesture.onMove, { passive: false });
+    host.addEventListener("touchend", gesture.onEnd, { passive: true });
+    host.addEventListener("touchcancel", gesture.onEnd, { passive: true });
 
     return () => {
       ro.disconnect();
-      host.removeEventListener("touchstart", onStart);
-      host.removeEventListener("touchmove", onMove);
-      host.removeEventListener("touchend", onEnd);
+      gesture.teardown();
+      host.removeEventListener("touchstart", gesture.onStart);
+      host.removeEventListener("touchmove", gesture.onMove);
+      host.removeEventListener("touchend", gesture.onEnd);
+      host.removeEventListener("touchcancel", gesture.onEnd);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -134,7 +151,7 @@ export const XTerm = React.forwardRef<
     if (!term) return;
     term.options.fontSize = fontSize;
     term.options.theme = theme;
-    try { fitRef.current?.fit(); } catch { /* detached */ }
+    try { safeFit(); } catch { /* detached */ }
   }, [fontSize, theme]);
 
   return <div ref={hostRef} className="h-full w-full" />;
