@@ -7,12 +7,19 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
 	"agentmon/shared"
 )
+
+// agentTmuxTimeout bounds each tmux-shelling handler so a hung `tmux` invocation
+// cannot pin the request goroutine — the http.Server ReadTimeout only covers
+// reading the request, not the handler's shell-out. A var (not const) so tests
+// can shorten it.
+var agentTmuxTimeout = 10 * time.Second
 
 // Discoverer resolves a target's live session tree. Injected so the handler is
 // testable without a real tmux (production binds tmux.Discover + tmux.ExecRunner).
@@ -29,7 +36,9 @@ func SessionsHandler(cfg config.Config, discover Discoverer, m *state.Machine) h
 			writeJSONError(w, http.StatusNotFound, "unknown target")
 			return
 		}
-		sessions, err := discover(r.Context(), tmux.DiscoverOpts{
+		ctx, cancel := context.WithTimeout(r.Context(), agentTmuxTimeout)
+		defer cancel()
+		sessions, err := discover(ctx, tmux.DiscoverOpts{
 			ServerID:    cfg.ServerID,
 			TargetLabel: t.Label,
 			SocketName:  t.SocketName,
@@ -98,7 +107,9 @@ func CreateSessionHandler(cfg config.Config, create SessionCreator) http.Handler
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := create(r.Context(), t.SocketName, req.Name, cwd); err != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), agentTmuxTimeout)
+		defer cancel()
+		if err := create(ctx, t.SocketName, req.Name, cwd); err != nil {
 			if errors.Is(err, tmux.ErrSessionExists) {
 				writeJSONError(w, http.StatusConflict, "a session with that name already exists")
 				return
@@ -141,7 +152,9 @@ func RenameSessionHandler(cfg config.Config, rename SessionRenamer) http.Handler
 			writeJSONError(w, http.StatusNotFound, "unknown target")
 			return
 		}
-		if err := rename(r.Context(), t.SocketName, req.From, req.To); err != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), agentTmuxTimeout)
+		defer cancel()
+		if err := rename(ctx, t.SocketName, req.From, req.To); err != nil {
 			switch {
 			case errors.Is(err, tmux.ErrSessionExists):
 				writeJSONError(w, http.StatusConflict, "a session with that name already exists")

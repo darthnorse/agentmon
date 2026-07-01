@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/state"
@@ -364,6 +365,50 @@ func TestRenameSessionHandlerValid(t *testing.T) {
 	}
 	if gotSocket != "sock-1" || gotFrom != "old" || gotTo != "new-name" {
 		t.Fatalf("renamer got socket=%q from=%q to=%q", gotSocket, gotFrom, gotTo)
+	}
+}
+
+func TestSessionsHandlerTimesOutOnHungTmux(t *testing.T) {
+	old := agentTmuxTimeout
+	agentTmuxTimeout = 30 * time.Millisecond
+	defer func() { agentTmuxTimeout = old }()
+
+	// A discoverer that blocks until the request context is cancelled — i.e. a hung tmux.
+	slow := func(ctx context.Context, _ tmux.DiscoverOpts) ([]shared.Session, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	h := SessionsHandler(testCfg(), slow, nil)
+	rr := httptest.NewRecorder()
+	start := time.Now()
+	h(rr, httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil))
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("handler did not bound the hung discoverer: took %v", elapsed)
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on discovery timeout, got %d", rr.Code)
+	}
+}
+
+func TestCreateSessionHandlerTimesOutOnHungTmux(t *testing.T) {
+	old := agentTmuxTimeout
+	agentTmuxTimeout = 30 * time.Millisecond
+	defer func() { agentTmuxTimeout = old }()
+
+	slow := func(ctx context.Context, _, _, _ string) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	h := CreateSessionHandler(testCfg(), slow)
+	rr := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":"ok"}`)
+	start := time.Now()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions?target=default", body))
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("create did not bound the hung creator: took %v", elapsed)
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on create timeout, got %d", rr.Code)
 	}
 }
 
