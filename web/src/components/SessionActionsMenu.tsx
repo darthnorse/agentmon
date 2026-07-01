@@ -80,7 +80,7 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
           ⋯
         </button>
         {open && (
-          <div role="menu" className="absolute right-0 top-full z-20 mt-1 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md">
+          <div role="menu" className="absolute right-0 top-full z-20 mt-1 min-w-32 rounded-md border border-border bg-card py-1 shadow-md">
             <button
               type="button"
               role="menuitem"
