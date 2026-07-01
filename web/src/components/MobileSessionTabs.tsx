@@ -2,7 +2,6 @@ import type { SessionState } from "@/lib/contracts";
 import type { SessionRow } from "@/components/SessionList";
 import { StateDot } from "@/components/StateDot";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
-import { paneKey } from "@/store/panes";
 
 // One tab per session (§ mobile session switcher). Kept flat/serializable so the
 // route can build it from the cached session list and unit tests can assert on it.
@@ -26,6 +25,15 @@ export interface CurrentSession {
   paneId: string;
 }
 
+// A tab's identity is (server, target, pane) — deliberately NOT the session name.
+// The name is mutable (rename), and after a rename the URL advances to the new name
+// before the cached session list refetches; matching on the name would then briefly
+// show TWO tabs for one pane (a synthetic new-name tab + the stale old-name row). Keying
+// on the immutable pane identity keeps exactly one active tab across a rename, and lets
+// the terminal survive a rename without a remount — the same discipline the grid uses.
+const tabIdentity = (serverId: string, target: string, paneId: string) =>
+  `${serverId}:${target}:${paneId}`;
+
 // Build the tab list from the flattened session rows. STABLE order (rows are already
 // in server/session order — deliberately NOT blocked-first, so a state change doesn't
 // reshuffle tabs under the user's thumb; the state dot flags attention instead).
@@ -36,22 +44,27 @@ export function buildTabs(
   current: CurrentSession,
   stateOf: (row: SessionRow) => SessionState,
 ): SessionTab[] {
-  const currentKey = paneKey(current.serverId, current.target, current.session, current.paneId);
+  const currentId = tabIdentity(current.serverId, current.target, current.paneId);
+  let matched = false;
   const tabs: SessionTab[] = rows.map((row) => {
-    const key = paneKey(row.server.id, row.session.target, row.session.name, row.pane.id);
+    const key = tabIdentity(row.server.id, row.session.target, row.pane.id);
+    const active = key === currentId;
+    if (active) matched = true;
     return {
       key,
       serverId: row.server.id,
       target: row.session.target,
-      name: row.session.name,
+      // The active tab follows the URL name (source of truth mid-rename); the rest show
+      // their name from the cached list.
+      name: active ? current.session : row.session.name,
       paneId: row.pane.id,
       state: stateOf(row),
-      active: key === currentKey,
+      active,
     };
   });
-  if (!tabs.some((t) => t.active)) {
+  if (!matched) {
     tabs.unshift({
-      key: currentKey,
+      key: currentId,
       serverId: current.serverId,
       target: current.target,
       name: current.session,

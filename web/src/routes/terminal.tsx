@@ -11,7 +11,7 @@ import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
-import type { Session } from "@/lib/contracts";
+import type { Session, SessionState } from "@/lib/contracts";
 
 export interface TerminalSearch { target: string; session: string; }
 
@@ -26,15 +26,18 @@ export function MobileTerminalRoute() {
 
   // Header session tabs: reuse the SAME (cached) session list the inbox loads, so
   // switching is a cheap in-place navigate rather than a Back → list → tap round-trip.
-  const serversQ = useQuery({ queryKey: ["servers"], queryFn: listServers });
+  // staleTime keeps arriving-from-the-inbox from re-fetching the list it just loaded.
+  const serversQ = useQuery({ queryKey: ["servers"], queryFn: listServers, staleTime: 15_000 });
   const servers = serversQ.data ?? [];
   const sessionQs = useQueries({
-    queries: servers.map((s) => ({ queryKey: ["sessions", s.id], queryFn: () => listSessions(s.id) })),
+    queries: servers.map((s) => ({
+      queryKey: ["sessions", s.id], queryFn: () => listSessions(s.id), staleTime: 15_000,
+    })),
   });
   const byServer: Record<string, Session[]> = {};
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
   const snap = useStateSnapshot();
-  const stateOf = (row: SessionRow) =>
+  const stateOf = (row: SessionRow): SessionState =>
     effectiveSessionState(snap, row.server.id, row.session.target, row.session.name, row.session.state);
   const tabs = buildTabs(flattenSessions(servers, byServer), { serverId, target, session, paneId }, stateOf);
 
@@ -64,7 +67,14 @@ export function MobileTerminalRoute() {
         />
       </header>
       <div className="min-h-0 flex-1">
-        <TerminalView serverId={serverId} paneId={paneId} target={target} showKeyBar fontSize={fontSize} theme={theme} />
+        {/* Key by the pane identity so switching sessions (paneId changes) remounts a
+            fresh terminal — otherwise the old session's scrollback + connected state
+            bleed under the new header until the new socket opens. A rename keeps the
+            same paneId, so the WS survives (matching the grid's keying). */}
+        <TerminalView
+          key={`${serverId}:${target}:${paneId}`}
+          serverId={serverId} paneId={paneId} target={target} showKeyBar fontSize={fontSize} theme={theme}
+        />
       </div>
     </div>
   );
