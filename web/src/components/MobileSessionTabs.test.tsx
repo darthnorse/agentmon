@@ -35,6 +35,25 @@ describe("buildTabs", () => {
     const tabs = buildTabs(rows, current, stateOf);
     expect(tabs.find((t) => t.name === "gamma")?.state).toBe("blocked");
   });
+
+  // Rename advances the URL name before the cached session list refetches. Matching on
+  // pane identity (not name) must keep ONE active tab labelled from the URL — never a
+  // synthetic new-name tab alongside a stale old-name row for the same pane.
+  it("keeps a single active tab (no phantom) when the URL name leads the cached list mid-rename", () => {
+    const stale = flattenSessions(servers, { s1: [mkSession("old-name", "@1", "%1")] });
+    const tabs = buildTabs(stale, { serverId: "s1", target: "default", session: "new-name", paneId: "%1" }, idle);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({ active: true, name: "new-name", paneId: "%1" });
+  });
+
+  it("identifies the current session by pane, not by its (mutable) name", () => {
+    // URL name differs from the list's %2 row, but the pane matches → gamma's row stays
+    // the single active tab, labelled from the URL, with no synthetic duplicate.
+    const tabs = buildTabs(rows, { serverId: "s1", target: "default", session: "renamed", paneId: "%2" }, idle);
+    expect(tabs).toHaveLength(3);
+    expect(tabs.filter((t) => t.active).map((t) => t.paneId)).toEqual(["%2"]);
+    expect(tabs.find((t) => t.active)?.name).toBe("renamed");
+  });
 });
 
 describe("MobileSessionTabs", () => {
