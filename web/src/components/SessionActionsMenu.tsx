@@ -5,6 +5,7 @@ import { KillSessionModal } from "@/components/KillSessionModal";
 import { killSession, ApiError } from "@/lib/api-client";
 import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
+import { toast } from "sonner";
 
 interface Props {
   serverId: string;
@@ -47,11 +48,12 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
     try {
       await killSession(serverId, name, target);
     } catch (err) {
-      // 404 = already gone → treat as success; other errors: keep the row, log.
+      // 404 = already gone → treat as success; other errors: toast + keep the row.
       if (!(err instanceof ApiError && err.status === 404)) {
+        toast.error(`Couldn't kill ${name}`);
         setBusy(false);
         setKillOpen(false);
-        return; // (a toast could go here; leaving the row is the safe fallback)
+        return;
       }
     }
     // Drop the session from the list + close any open tile for it.
@@ -61,8 +63,11 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
     setKillOpen(false);
   }
 
+  // The outer span has NO onClick — clicks on the plain name text must bubble to
+  // the sidebar row's open handler. The ⋯ button and menu items each call stop()
+  // themselves, so they are already isolated.
   return (
-    <span className="inline-flex min-w-0 items-center gap-1" onClick={stop}>
+    <span className="inline-flex min-w-0 items-center gap-1">
       <span className="truncate">{name}</span>
       <div className="relative flex-none" ref={ref}>
         <button
@@ -96,7 +101,7 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
         )}
       </div>
       {killOpen && (
-        <KillSessionModal server={serverName} name={name} state={state} onConfirm={() => void doKill()} onClose={() => setKillOpen(false)} />
+        <KillSessionModal server={serverName} name={name} state={state} busy={busy} onConfirm={() => void doKill()} onClose={() => setKillOpen(false)} />
       )}
     </span>
   );

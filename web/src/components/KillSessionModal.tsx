@@ -6,6 +6,7 @@ interface Props {
   server: string;
   name: string;
   state: SessionState;
+  busy?: boolean;
   onConfirm(): void;
   onClose(): void;
 }
@@ -13,8 +14,13 @@ interface Props {
 // Confirmation for the irreversible kill. Escape / backdrop / Cancel closes; the
 // single Kill button confirms. When the session is mid-task (working/blocked) it
 // adds a warning line — a nudge, never a block.
-export function KillSessionModal({ server, name, state, onConfirm, onClose }: Props) {
+export function KillSessionModal({ server, name, state, busy = false, onConfirm, onClose }: Props) {
   const midTask = state === "working" || state === "blocked";
+  const cancelRef = React.useRef<HTMLButtonElement>(null);
+
+  // Focus Cancel (not the destructive button) when the modal opens.
+  React.useEffect(() => { cancelRef.current?.focus(); }, []);
+
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -24,13 +30,16 @@ export function KillSessionModal({ server, name, state, onConfirm, onClose }: Pr
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Kill session"
-      onClick={onClose}
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
     >
-      <div className="w-full max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-base font-semibold">Kill session</h2>
+      <div
+        className="w-full max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="kill-session-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="kill-session-title" className="text-base font-semibold">Kill session</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           Terminate <span className="font-medium text-foreground">{name}</span> on{" "}
           <span className="font-medium text-foreground">{server}</span>? This ends the tmux session
@@ -42,8 +51,8 @@ export function KillSessionModal({ server, name, state, onConfirm, onClose }: Pr
           </p>
         )}
         <div className="mt-4 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="destructive" onClick={onConfirm}>Kill session</Button>
+          <Button ref={cancelRef} variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="destructive" disabled={busy} onClick={onConfirm}>Kill session</Button>
         </div>
       </div>
     </div>
