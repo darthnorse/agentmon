@@ -10,6 +10,7 @@ function resetPrefs() {
     fontSizeMobile: 10,
     terminalTheme: "dark",
     alertOnDone: false,
+    gridMaxColumns: 3,
   });
 }
 
@@ -58,5 +59,21 @@ describe("prefs store", () => {
     expect(s.fontSizeMobile).toBe(16);
     expect(s.terminalTheme).toBe("light");
     expect(s.alertOnDone).toBe(true);
+  });
+});
+
+describe("prefs gridMaxColumns", () => {
+  beforeEach(resetPrefs); // isolate from other blocks' mutations (defaults + clamp)
+
+  it("defaults to 3", () => {
+    expect(usePrefs.getState().gridMaxColumns).toBe(3);
+  });
+  it("setGridMaxColumns clamps to [1,4]", () => {
+    usePrefs.getState().setGridMaxColumns(9);
+    expect(usePrefs.getState().gridMaxColumns).toBe(4);
+    usePrefs.getState().setGridMaxColumns(0);
+    expect(usePrefs.getState().gridMaxColumns).toBe(1);
+    usePrefs.getState().setGridMaxColumns(2);
+    expect(usePrefs.getState().gridMaxColumns).toBe(2);
   });
 });

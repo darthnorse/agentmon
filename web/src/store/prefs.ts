@@ -11,10 +11,12 @@ export interface PrefsState {
   fontSizeMobile: number;
   terminalTheme: ThemeName;
   alertOnDone: boolean;
+  gridMaxColumns: number;
   setFontSizeDesktop(n: number): void;
   setFontSizeMobile(n: number): void;
   setTerminalTheme(t: ThemeName): void;
   setAlertOnDone(v: boolean): void;
+  setGridMaxColumns(n: number): void;
 }
 
 export const usePrefs = create<PrefsState>()(
@@ -24,10 +26,12 @@ export const usePrefs = create<PrefsState>()(
       fontSizeMobile: 10,
       terminalTheme: "dark",
       alertOnDone: false,
+      gridMaxColumns: 3,
       setFontSizeDesktop: (n) => set({ fontSizeDesktop: n }),
       setFontSizeMobile: (n) => set({ fontSizeMobile: n }),
       setTerminalTheme: (t) => set({ terminalTheme: t }),
       setAlertOnDone: (v) => set({ alertOnDone: v }),
+      setGridMaxColumns: (n) => set({ gridMaxColumns: Math.max(1, Math.min(4, Math.floor(n))) }),
     }),
     {
       name: PREFS_STORAGE_KEY,
@@ -37,6 +41,7 @@ export const usePrefs = create<PrefsState>()(
         fontSizeMobile: s.fontSizeMobile,
         terminalTheme: s.terminalTheme,
         alertOnDone: s.alertOnDone,
+        gridMaxColumns: s.gridMaxColumns,
       }),
     },
   ),

@@ -67,9 +67,9 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
   // the sidebar row's open handler. The ⋯ button and menu items each call stop()
   // themselves, so they are already isolated.
   return (
-    <span className="inline-flex min-w-0 items-center gap-1">
+    <span className="flex w-full min-w-0 items-center gap-1">
       <span className="truncate">{name}</span>
-      <div className="relative flex-none" ref={ref}>
+      <div className="relative flex-none ml-auto" ref={ref}>
         <button
           type="button"
           aria-label="Session actions"
@@ -80,7 +80,7 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
           ⋯
         </button>
         {open && (
-          <div role="menu" className="absolute left-0 top-full z-20 mt-1 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md">
+          <div role="menu" className="absolute right-0 top-full z-20 mt-1 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md">
             <button
               type="button"
               role="menuitem"
