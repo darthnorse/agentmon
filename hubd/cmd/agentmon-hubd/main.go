@@ -103,6 +103,8 @@ func main() {
 		NowRFC3339: func() string { return time.Now().UTC().Format(time.RFC3339) },
 	})
 
+	relayCap := authn.NewGauge(32) // Phase 5: ≤32 concurrent terminal relays per principal
+
 	router := api.NewRouter(api.RouterDeps{
 		Version:             version,
 		Auth:                auth,
@@ -140,6 +142,7 @@ func main() {
 			Push:                database,
 			VAPIDPublic:         vapid.Public,
 			Presence:            presence,
+			RelayCap:            relayCap,
 		},
 		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
 
 	"agentmon/agent/internal/api"
 	"agentmon/agent/internal/config"
@@ -18,6 +19,21 @@ import (
 )
 
 var version = "dev"
+
+// newAgentServer builds the agent's HTTP server with Slowloris/hygiene timeouts.
+// These mirror the hub's (hubd/cmd/agentmon-hubd/main.go) and are verified
+// WS-safe there: after the pane-IO Upgrade the conn is hijacked, so ReadTimeout
+// no longer applies. There is deliberately NO WriteTimeout — a global write
+// deadline would kill the long-lived terminal WS mid-stream.
+func newAgentServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+}
 
 func main() {
 	if len(os.Args) > 1 {
@@ -93,5 +109,6 @@ func main() {
 	}
 
 	log.Printf("agentmon-agent %s listening on %s (server %s)", version, cfg.Listen, cfg.ServerID)
-	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
+	srv := newAgentServer(cfg.Listen, mux)
+	log.Fatal(srv.ListenAndServe())
 }
