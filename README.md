@@ -281,7 +281,23 @@ first** (so it serves the new agent binary), then the agents.
   ```bash
   sudo bash -c "$(curl -fsSL <external_origin>/install.sh)"
   ```
-  (To force a clean re-enroll instead — e.g. after wiping the hub — `rm -rf /etc/agentmon` first, then run it.)
+  Updating restarts the agent service, but **your monitored tmux sessions survive it** — the installer sets
+  `KillMode=process` on the unit, so a restart signals only the agent process, never the tmux server it
+  watches (whose sessions live in the same cgroup). (To force a clean re-enroll instead — e.g. after wiping
+  the hub — `rm -rf /etc/agentmon` first, then run it.)
+
+**Updating several hosts at once** — a shell loop over SSH (uses your existing keys). Each entry is
+whatever `ssh <entry>` reaches that agent by — connect as **root** (`root@host`) or as a user with
+**passwordless `sudo`**. The remote command elevates with `sudo` only when it isn't already root, so it
+also works on minimal root environments (e.g. Proxmox VMs) where `sudo` isn't installed:
+```bash
+HOSTS=(root@host1 root@host2 alias3)
+for h in "${HOSTS[@]}"; do
+  echo "=== $h ==="
+  ssh "$h" 'SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo; $SUDO bash -c "$(curl -fsSL <external_origin>/install.sh)"' \
+    || echo "  !! $h FAILED"
+done
+```
 
 ---
 
