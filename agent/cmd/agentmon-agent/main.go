@@ -75,6 +75,9 @@ func main() {
 	renameSession := func(ctx context.Context, socket, from, to string) error {
 		return tmux.RenameSession(ctx, tmux.ExecRunner, socket, from, to)
 	}
+	killSession := func(ctx context.Context, socket, name string) error {
+		return tmux.KillSession(ctx, tmux.ExecRunner, socket, name)
+	}
 
 	machine := state.New(nil)
 
@@ -84,6 +87,7 @@ func main() {
 	mux.Handle("GET /sessions", api.RequireBearer(cfg.HubToken, api.SessionsHandler(cfg, discover, machine)))
 	mux.Handle("POST /sessions", api.RequireBearer(cfg.HubToken, api.CreateSessionHandler(cfg, createSession)))
 	mux.Handle("POST /sessions/rename", api.RequireBearer(cfg.HubToken, api.RenameSessionHandler(cfg, renameSession)))
+	mux.Handle("POST /sessions/kill", api.RequireBearer(cfg.HubToken, api.KillSessionHandler(cfg, killSession)))
 	mux.Handle("GET /state", api.RequireBearer(cfg.HubToken, api.StateHandler(cfg, machine)))
 
 	paneIO := &api.PaneIO{
