@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renameSession, ApiError } from "@/lib/api-client";
+import { renameSession, ApiError, sessionsKey } from "@/lib/api-client";
 import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { isValidSessionName, SESSION_NAME_HINT } from "@/lib/session-name";
@@ -53,7 +53,7 @@ export function SessionNameEditor({ serverId, target, name, paneId, onRenamed, c
     try {
       await renameSession(serverId, name, value, target);
       usePanes.getState().renamePane(paneKey(serverId, target, name, paneId), value);
-      queryClient.invalidateQueries({ queryKey: ["sessions", serverId] });
+      queryClient.invalidateQueries({ queryKey: sessionsKey(serverId) });
       setEditing(false);
       onRenamed?.(value);
       onDone?.();

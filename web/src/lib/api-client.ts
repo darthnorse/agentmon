@@ -67,6 +67,13 @@ export const listSessions = (serverId: string, target?: string) =>
 
 export const postSeen = (req: SeenRequest) => request<void>("POST", "/seen", req);
 
+// React Query cache keys for the server/session lists. Every fetch AND invalidation
+// (inbox, mobile terminal header, rename, kill, pending-approval) addresses the cache
+// through these, so the keys are the single source of truth — a hand-written key that
+// drifted from the fetch key would silently break cache sharing or no-op an invalidate.
+export const serversKey = () => ["servers"] as const;
+export const sessionsKey = (serverId: string) => ["sessions", serverId] as const;
+
 // Create a tmux session (M10). The hub re-lists after create and returns the full
 // Session so the web can open the new terminal atomically. Auto-CSRF (mutating).
 // An empty target lets the hub/agent resolve the default target (v1 single-target).

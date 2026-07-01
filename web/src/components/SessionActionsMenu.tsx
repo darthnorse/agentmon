@@ -2,7 +2,7 @@ import * as React from "react";
 import type { SessionState } from "@/lib/contracts";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
 import { KillSessionModal } from "@/components/KillSessionModal";
-import { killSession, ApiError } from "@/lib/api-client";
+import { killSession, ApiError, sessionsKey } from "@/lib/api-client";
 import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { toast } from "sonner";
@@ -58,7 +58,7 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
     }
     // Drop the session from the list + close any open tile for it.
     usePanes.getState().closePane(paneKey(serverId, target, name, paneId));
-    queryClient.invalidateQueries({ queryKey: ["sessions", serverId] });
+    queryClient.invalidateQueries({ queryKey: sessionsKey(serverId) });
     setBusy(false);
     setKillOpen(false);
   }

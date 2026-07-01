@@ -2,7 +2,7 @@ import * as React from "react";
 import { toast } from "sonner";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { listServers, listSessions } from "@/lib/api-client";
+import { listServers, listSessions, serversKey, sessionsKey } from "@/lib/api-client";
 import { useAuth } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
@@ -27,12 +27,12 @@ export function ShellRoute() {
   const [newServerId, setNewServerId] = React.useState("");
   const isDesktop = useMediaQuery("(min-width: 1024px)");
 
-  const serversQ = useQuery({ queryKey: ["servers"], queryFn: listServers });
+  const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
   const servers = serversQ.data ?? [];
 
   const sessionQs = useQueries({
     queries: servers.map((s) => ({
-      queryKey: ["sessions", s.id],
+      queryKey: sessionsKey(s.id),
       queryFn: () => listSessions(s.id),
     })),
   });
@@ -74,7 +74,7 @@ export function ShellRoute() {
     // No pane to open (e.g. the post-create re-list hadn't observed it yet) — still
     // confirm the create so the action never silently no-ops; the list refresh shows it.
     if (!opened && !pane) toast(`Session “${session.name}” created`);
-    queryClient.invalidateQueries({ queryKey: ["sessions", serverId] });
+    queryClient.invalidateQueries({ queryKey: sessionsKey(serverId) });
     setShowNew(false);
   };
 
