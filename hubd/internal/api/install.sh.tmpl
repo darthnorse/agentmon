@@ -211,6 +211,22 @@ fi
 
 [ "$(id -u)" = "0" ] || die "must run as root (use sudo)"
 
+# The agentmon tmux server runs INSIDE the agent service's cgroup (the agent, or a
+# session created via POST /sessions, starts it). Under the default
+# KillMode=control-group, a `systemctl stop`/`restart` — including this installer's
+# binary swap below — kills the WHOLE cgroup: the tmux server AND every monitored
+# session. Install a KillMode=process drop-in and reload it BEFORE any (re)start so
+# even an existing control-group host is protected on this very run (and forever after).
+ensure_killmode() {
+  install -d -m 0755 /etc/systemd/system/agentmon-agent.service.d
+  cat > /etc/systemd/system/agentmon-agent.service.d/killmode.conf <<'KMEOF'
+[Service]
+KillMode=process
+KMEOF
+  systemctl daemon-reload 2>/dev/null || true
+}
+ensure_killmode
+
 # ── Update path: existing install → swap the binary in place, keep everything else.
 if [ "$INSTALLED" = "1" ]; then
   if [ -x /usr/local/bin/agentmon-agent ] && \

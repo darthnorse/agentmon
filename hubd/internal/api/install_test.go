@@ -57,6 +57,36 @@ func TestInstallScriptDefaultsToDedicatedSocket(t *testing.T) {
 	}
 }
 
+func TestInstallScriptUnitUsesKillModeProcess(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	// The agentmon tmux server runs inside the agent service's cgroup, so the installer
+	// MUST set KillMode=process — otherwise the default control-group KillMode makes a
+	// `systemctl stop`/`restart` (e.g. this installer's binary swap) kill the tmux server
+	// and every monitored session. Match the DIRECTIVE on its own line (leading+trailing
+	// newline) so a comment containing the substring can't make this pass vacuously.
+	if !strings.Contains(body, "\nKillMode=process\n") {
+		t.Fatal("install.sh must set KillMode=process so restarts/updates don't kill the tmux server + sessions")
+	}
+	// The fix must be CALLED, not just defined — assert the bare call on its own line
+	// (`\nensure_killmode\n`), distinct from the `ensure_killmode() {` definition, so
+	// the KillMode=process text sitting inside the function body can't pass vacuously.
+	kmCall := strings.Index(body, "\nensure_killmode\n")
+	if kmCall < 0 {
+		t.Fatal("install.sh must CALL ensure_killmode (apply the KillMode drop-in), not just define it")
+	}
+	// ...and it must run BEFORE the update path's in-place binary swap + restart, so an
+	// existing control-group host is protected on the very run that swaps the binary.
+	// "Updating the agent binary in place" is unique to that real update path.
+	swap := strings.Index(body, "Updating the agent binary in place")
+	if swap < 0 || kmCall > swap {
+		t.Fatalf("ensure_killmode must run before the in-place binary swap/restart (call=%d swap=%d)", kmCall, swap)
+	}
+}
+
 func TestInstallScriptDoesNotPromptForHooksWhenPiped(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/install.sh", nil)
