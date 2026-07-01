@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { TERMINAL_THEMES } from "@/lib/terminal-themes";
 import { keyOverride } from "@/lib/terminal-keys";
+import { createTerminalGesture, selectionMouseEvent } from "@/lib/terminal-touch";
 import "@xterm/xterm/css/xterm.css";
 
 export interface XTermHandle {
@@ -110,81 +111,33 @@ export const XTerm = React.forwardRef<
     const ro = new ResizeObserver(() => { try { safeFit(); } catch { /* detached */ } });
     ro.observe(hostRef.current!);
 
-    // Touch gestures on the terminal:
-    //   • a quick vertical drag scrolls the scrollback (don't let the page scroll);
-    //   • a long-press (~450ms held still) then drag SELECTS text.
-    // xterm's selection is mouse-only — it binds no touch/pointer listeners — and our scroll
-    // preventDefault otherwise suppresses the mouse events iOS would synthesize, so drag-select
-    // never reaches xterm. We bridge the long-press drag to synthetic mouse events
-    // (mousedown → mousemove* → mouseup) that drive xterm's SelectionService; then the key
-    // bar's Copy (controller.copy → getSelection) copies it. Mobile-only; desktop uses real
-    // mouse events untouched, and a quick swipe still scrolls, so this can't regress either.
+    // Touch gestures (quick drag = scroll, long-press + drag = select) live in
+    // lib/terminal-touch so the state machine is unit-testable. We wire xterm-specific bits:
+    // synthetic mouse dispatch (mousedown at the point, move/up on document), scrollback
+    // scroll, live font size, and the app's mouse-tracking mode. Mobile-only; desktop uses
+    // real mouse events untouched, and a quick swipe still scrolls, so this can't regress them.
     const host = hostRef.current!;
-    const LONG_PRESS_MS = 450;
-    const MOVE_CANCEL = 10; // px of travel that turns a still-pending hold into a scroll
-    let startX = 0, startY = 0, lastX = 0, lastY = 0;
-    let panMode: "pending" | "scroll" | "select" | null = null;
-    let lpTimer: ReturnType<typeof setTimeout> | null = null;
-    const clearLp = () => { if (lpTimer !== null) { clearTimeout(lpTimer); lpTimer = null; } };
-    const fireMouse = (type: "mousedown" | "mousemove" | "mouseup", x: number, y: number) => {
-      const target = type === "mousedown" ? (document.elementFromPoint(x, y) ?? host) : document;
-      target.dispatchEvent(new MouseEvent(type, {
-        bubbles: true, cancelable: true, view: window,
-        clientX: x, clientY: y, button: 0, buttons: type === "mouseup" ? 0 : 1,
-      }));
-    };
-
-    const onStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) { panMode = null; clearLp(); return; }
-      const t = e.touches[0];
-      startX = lastX = t.clientX; startY = lastY = t.clientY;
-      panMode = "pending";
-      clearLp();
-      lpTimer = setTimeout(() => {
-        lpTimer = null;
-        if (panMode !== "pending") return;     // already moved into a scroll
-        panMode = "select";
-        fireMouse("mousedown", startX, startY); // begin an xterm selection at the hold point
-      }, LONG_PRESS_MS);
-    };
-    const onMove = (e: TouchEvent) => {
-      if (panMode === null || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      lastX = t.clientX; lastY = t.clientY;
-      if (panMode === "select") {
-        fireMouse("mousemove", t.clientX, t.clientY); // xterm extends the selection
-        e.preventDefault();
-        return;
-      }
-      if (panMode === "pending") {
-        if (Math.abs(t.clientY - startY) + Math.abs(t.clientX - startX) < MOVE_CANCEL) return;
-        panMode = "scroll"; clearLp();                // moved before the hold fired → scroll
-      }
-      const dy = startY - t.clientY;
-      const cell = (fontSizeRef.current || 13) * 1.2;
-      if (Math.abs(dy) > 6) {
-        const lines = Math.trunc(dy / cell);
-        if (lines !== 0) { term.scrollLines(lines); startY = t.clientY; }
-      }
-      e.preventDefault();
-    };
-    const onEnd = () => {
-      clearLp();
-      if (panMode === "select") fireMouse("mouseup", lastX, lastY); // finalize the selection
-      panMode = null;
-    };
-    host.addEventListener("touchstart", onStart, { passive: true });
-    host.addEventListener("touchmove", onMove, { passive: false });
-    host.addEventListener("touchend", onEnd, { passive: true });
-    host.addEventListener("touchcancel", onEnd, { passive: true });
+    const gesture = createTerminalGesture({
+      fireMouse: (type, x, y) => {
+        const target = type === "mousedown" ? (document.elementFromPoint(x, y) ?? host) : document;
+        target.dispatchEvent(selectionMouseEvent(type, x, y));
+      },
+      scrollLines: (n) => term.scrollLines(n),
+      fontSize: () => fontSizeRef.current,
+      mouseTracking: () => (termRef.current?.modes.mouseTrackingMode ?? "none") !== "none",
+    });
+    host.addEventListener("touchstart", gesture.onStart, { passive: true });
+    host.addEventListener("touchmove", gesture.onMove, { passive: false });
+    host.addEventListener("touchend", gesture.onEnd, { passive: true });
+    host.addEventListener("touchcancel", gesture.onEnd, { passive: true });
 
     return () => {
       ro.disconnect();
-      clearLp();
-      host.removeEventListener("touchstart", onStart);
-      host.removeEventListener("touchmove", onMove);
-      host.removeEventListener("touchend", onEnd);
-      host.removeEventListener("touchcancel", onEnd);
+      gesture.teardown();
+      host.removeEventListener("touchstart", gesture.onStart);
+      host.removeEventListener("touchmove", gesture.onMove);
+      host.removeEventListener("touchend", gesture.onEnd);
+      host.removeEventListener("touchcancel", gesture.onEnd);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
