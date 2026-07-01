@@ -112,19 +112,24 @@ export const XTerm = React.forwardRef<
     ro.observe(hostRef.current!);
 
     // Touch gestures (quick drag = scroll, long-press + drag = select) live in
-    // lib/terminal-touch so the state machine is unit-testable. We wire xterm-specific bits:
-    // synthetic mouse dispatch (mousedown at the point, move/up on document), scrollback
-    // scroll, live font size, and the app's mouse-tracking mode. Mobile-only; desktop uses
-    // real mouse events untouched, and a quick swipe still scrolls, so this can't regress them.
+    // lib/terminal-touch so the state machine is unit-testable. We wire the xterm-specific bits:
+    // synthetic mouse dispatch, scrollback scroll, live font size, whether the app has mouse
+    // tracking on (→ force-select with shiftKey), and whether the platform is Mac-class (→ skip
+    // the touch-select on Mac/iPad, which use a trackpad). Mobile-only; desktop uses real mouse
+    // events untouched, and a quick swipe still scrolls, so this can't regress them.
     const host = hostRef.current!;
     const gesture = createTerminalGesture({
-      fireMouse: (type, x, y) => {
+      fireMouse: (type, x, y, force) => {
         const target = type === "mousedown" ? (document.elementFromPoint(x, y) ?? host) : document;
-        target.dispatchEvent(selectionMouseEvent(type, x, y));
+        target.dispatchEvent(selectionMouseEvent(type, x, y, force));
       },
       scrollLines: (n) => term.scrollLines(n),
       fontSize: () => fontSizeRef.current,
+      // Force-select (shiftKey) only when the running app has mouse tracking on, else a plain
+      // synthetic click is forwarded to the app instead of selecting.
       mouseTracking: () => (termRef.current?.modes.mouseTrackingMode ?? "none") !== "none",
+      // iPadOS reports as Mac (navigator.platform "MacIntel"); matches xterm's own isMac.
+      isMac: () => /Mac/i.test(navigator.platform || ""),
     });
     host.addEventListener("touchstart", gesture.onStart, { passive: true });
     host.addEventListener("touchmove", gesture.onMove, { passive: false });
