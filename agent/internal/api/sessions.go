@@ -21,6 +21,12 @@ import (
 // can shorten it.
 var agentTmuxTimeout = 10 * time.Second
 
+// withTmuxTimeout derives the per-request context that bounds a tmux shell-out
+// (see agentTmuxTimeout). The caller must defer the returned cancel.
+func withTmuxTimeout(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), agentTmuxTimeout)
+}
+
 // Discoverer resolves a target's live session tree. Injected so the handler is
 // testable without a real tmux (production binds tmux.Discover + tmux.ExecRunner).
 type Discoverer func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error)
@@ -36,7 +42,7 @@ func SessionsHandler(cfg config.Config, discover Discoverer, m *state.Machine) h
 			writeJSONError(w, http.StatusNotFound, "unknown target")
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), agentTmuxTimeout)
+		ctx, cancel := withTmuxTimeout(r)
 		defer cancel()
 		sessions, err := discover(ctx, tmux.DiscoverOpts{
 			ServerID:    cfg.ServerID,
@@ -107,7 +113,7 @@ func CreateSessionHandler(cfg config.Config, create SessionCreator) http.Handler
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), agentTmuxTimeout)
+		ctx, cancel := withTmuxTimeout(r)
 		defer cancel()
 		if err := create(ctx, t.SocketName, req.Name, cwd); err != nil {
 			if errors.Is(err, tmux.ErrSessionExists) {
@@ -152,7 +158,7 @@ func RenameSessionHandler(cfg config.Config, rename SessionRenamer) http.Handler
 			writeJSONError(w, http.StatusNotFound, "unknown target")
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), agentTmuxTimeout)
+		ctx, cancel := withTmuxTimeout(r)
 		defer cancel()
 		if err := rename(ctx, t.SocketName, req.From, req.To); err != nil {
 			switch {

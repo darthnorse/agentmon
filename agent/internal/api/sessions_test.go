@@ -412,6 +412,28 @@ func TestCreateSessionHandlerTimesOutOnHungTmux(t *testing.T) {
 	}
 }
 
+func TestRenameSessionHandlerTimesOutOnHungTmux(t *testing.T) {
+	old := agentTmuxTimeout
+	agentTmuxTimeout = 30 * time.Millisecond
+	defer func() { agentTmuxTimeout = old }()
+
+	slow := func(ctx context.Context, _, _, _ string) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	h := RenameSessionHandler(testCfg(), slow)
+	rr := httptest.NewRecorder()
+	body := strings.NewReader(`{"from":"a","to":"b"}`)
+	start := time.Now()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/rename?target=default", body))
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("rename did not bound the hung renamer: took %v", elapsed)
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on rename timeout, got %d", rr.Code)
+	}
+}
+
 func TestRenameSessionHandlerRejects(t *testing.T) {
 	noCall := func(context.Context, string, string, string) error {
 		t.Helper()

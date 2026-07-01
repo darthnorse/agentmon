@@ -36,11 +36,13 @@ func (g *Gauge) Acquire(key string) bool {
 func (g *Gauge) Release(key string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.inuse[key] <= 1 {
-		delete(g.inuse, key)
-		return
+	if g.inuse[key] <= 0 {
+		return // not held: nothing to release
 	}
 	g.inuse[key]--
+	if g.inuse[key] == 0 {
+		delete(g.inuse, key) // evict the zeroed key so the map stays bounded
+	}
 }
 
 // InUse returns the number of slots currently held for key (0 if none).
