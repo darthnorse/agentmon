@@ -111,10 +111,11 @@ completed by the time the handler shells out).
    ```
    Values are identical to the hub's, verified WS-safe there in production.
 
-2. Bound each **plain-HTTP** tmux-shelling agent handler with a per-request context so a hung
-   `tmux` cannot pin the goroutine. In `SessionsHandler` (discovery — the named "hung tmux ties
-   up `/sessions`" gap), `CreateSessionHandler`, `RenameSessionHandler`, and `StateHandler`,
-   derive:
+2. Bound each **plain-HTTP tmux-shelling** agent handler with a per-request context so a hung
+   `tmux` cannot pin the goroutine. Those are `SessionsHandler` (discovery — the named "hung
+   tmux ties up `/sessions`" gap), `CreateSessionHandler`, and `RenameSessionHandler`.
+   (`StateHandler` is excluded — it reads the in-memory state machine via `m.Snapshot`, no
+   tmux shell-out, so a timeout would be a no-op.) In each, derive:
    ```go
    ctx, cancel := context.WithTimeout(r.Context(), agentTmuxTimeout) // 10s
    defer cancel()
