@@ -2,6 +2,7 @@ import type { SessionState } from "@/lib/contracts";
 import type { SessionRow } from "@/components/SessionList";
 import { StateDot } from "@/components/StateDot";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
+import { paneIdentity } from "@/lib/pane-identity";
 
 // One tab per session (§ mobile session switcher). Kept flat/serializable so the
 // route can build it from the cached session list and unit tests can assert on it.
@@ -31,8 +32,6 @@ export interface CurrentSession {
 // show TWO tabs for one pane (a synthetic new-name tab + the stale old-name row). Keying
 // on the immutable pane identity keeps exactly one active tab across a rename, and lets
 // the terminal survive a rename without a remount — the same discipline the grid uses.
-const tabIdentity = (serverId: string, target: string, paneId: string) =>
-  `${serverId}:${target}:${paneId}`;
 
 // Build the tab list from the flattened session rows. STABLE order (rows are already
 // in server/session order — deliberately NOT blocked-first, so a state change doesn't
@@ -44,10 +43,10 @@ export function buildTabs(
   current: CurrentSession,
   stateOf: (row: SessionRow) => SessionState,
 ): SessionTab[] {
-  const currentId = tabIdentity(current.serverId, current.target, current.paneId);
+  const currentId = paneIdentity(current.serverId, current.target, current.paneId);
   let matched = false;
   const tabs: SessionTab[] = rows.map((row) => {
-    const key = tabIdentity(row.server.id, row.session.target, row.pane.id);
+    const key = paneIdentity(row.server.id, row.session.target, row.pane.id);
     const active = key === currentId;
     if (active) matched = true;
     return {
