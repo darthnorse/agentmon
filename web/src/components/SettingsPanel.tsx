@@ -32,6 +32,8 @@ export function SettingsPanel({ onSignOut }: { onSignOut?: () => void }) {
   const setFontSizeMobile = usePrefs((s) => s.setFontSizeMobile);
   const setTerminalTheme = usePrefs((s) => s.setTerminalTheme);
   const setAlertOnDone = usePrefs((s) => s.setAlertOnDone);
+  const gridMaxColumns = usePrefs((s) => s.gridMaxColumns);
+  const setGridMaxColumns = usePrefs((s) => s.setGridMaxColumns);
 
   // Close on outside click / Escape so the popover behaves like a menu.
   React.useEffect(() => {
@@ -93,6 +95,21 @@ export function SettingsPanel({ onSignOut }: { onSignOut?: () => void }) {
             >
               {THEMES.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="mb-3">
+            <label htmlFor="settings-grid-cols" className="mb-1 block text-xs font-medium text-muted-foreground">
+              Grid columns
+            </label>
+            <select
+              id="settings-grid-cols"
+              value={gridMaxColumns}
+              onChange={(e) => setGridMaxColumns(Number(e.target.value))}
+              className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            >
+              {[1, 2, 3, 4].map((n) => (
+                <option key={n} value={n}>{n}</option>
               ))}
             </select>
           </div>
