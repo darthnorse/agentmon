@@ -63,6 +63,8 @@ describe("prefs store", () => {
 });
 
 describe("prefs gridMaxColumns", () => {
+  beforeEach(resetPrefs); // isolate from other blocks' mutations (defaults + clamp)
+
   it("defaults to 3", () => {
     expect(usePrefs.getState().gridMaxColumns).toBe(3);
   });
