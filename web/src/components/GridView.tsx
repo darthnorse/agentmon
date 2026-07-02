@@ -26,10 +26,18 @@ export function GridView() {
   const windowSwitchShortcut = usePrefs((s) => s.windowSwitchShortcut);
   const isMac = isMacPlatform();
   const [activeWindowId, setActiveWindowId] = React.useState<string | null>(null);
+  // Bumped on every chord jump so the target terminal refocuses even when it is already
+  // the active tile (e.g. focus had left the grid) — a bare setActiveWindowId to the same
+  // id is a no-op then, so the nonce forces TerminalView's focus effect to re-run.
+  const [focusNonce, setFocusNonce] = React.useState(0);
+  const jumpToTile = React.useCallback((id: string) => {
+    setActiveWindowId(id);
+    setFocusNonce((n) => n + 1);
+  }, []);
 
   // On a jump: focus the target tile; if a tile is currently expanded, the hook has
-  // already moved the expansion. setActiveWindowId drives TerminalView's `active` focus.
-  useWindowSwitchShortcuts(setActiveWindowId);
+  // already moved the expansion. jumpToTile drives TerminalView's `active`/`focusNonce` focus.
+  useWindowSwitchShortcuts(jumpToTile);
 
   if (panes.length === 0) {
     return (
@@ -102,7 +110,7 @@ export function GridView() {
                 </span>
               </div>
               <div className="min-h-0 flex-1 pl-2" style={{ background: theme.background }}>
-                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} active={activeWindowId === p.id} fontSize={fontSize} theme={theme} />
+                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} active={activeWindowId === p.id} focusNonce={focusNonce} fontSize={fontSize} theme={theme} />
               </div>
             </div>
           );

@@ -56,6 +56,15 @@ describe("TerminalView", () => {
     expect(focus).not.toHaveBeenCalled();
   });
 
+  it("refocuses on a focusNonce bump even when active stays true (repeated window-switch chord)", () => {
+    const { rerender } = render(
+      <TerminalView serverId="s1" paneId="%0" target="default" active={true} focusNonce={0} />,
+    );
+    expect(focus).toHaveBeenCalledTimes(1); // initial focus on becoming active
+    rerender(<TerminalView serverId="s1" paneId="%0" target="default" active={true} focusNonce={1} />);
+    expect(focus).toHaveBeenCalledTimes(2); // nonce change forces a refocus though active is unchanged
+  });
+
   it("mounts the terminal and opens a socket; shows the key bar when the keyboard is up", () => {
     // The key bar only renders while the soft keyboard is up — simulate that (visible
     // viewport much shorter than the layout viewport).
