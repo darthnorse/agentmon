@@ -46,10 +46,12 @@ export function useWindowSwitchShortcuts(onFocusTile: (paneId: string) => void):
   }, []);
 }
 
-// An editable element that is NOT the xterm terminal textarea.
+// An editable element that is NOT the xterm terminal textarea. SELECT is included so
+// the chord doesn't fire while a native dropdown (e.g. a Settings <select>) is focused,
+// matching the editable-field guard used by the 'n' shortcut in routes/index.tsx.
 function isEditableNonTerminal(el: HTMLElement | null): boolean {
   if (!el) return false;
   if (el.closest(".xterm")) return false; // the terminal itself — allow the chord
   const tag = el.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }

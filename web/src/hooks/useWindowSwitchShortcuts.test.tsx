@@ -49,14 +49,26 @@ describe("useWindowSwitchShortcuts", () => {
     expect(ev.defaultPrevented).toBe(true);
   });
 
-  it("ignores the chord while a non-terminal input is focused", () => {
+  it("ignores the chord while a non-terminal input is focused (and lets the key through)", () => {
     const input = document.createElement("input");
     document.body.appendChild(input);
     input.focus();
     const onFocus = vi.fn();
     renderHook(() => useWindowSwitchShortcuts(onFocus));
-    press({ code: "Digit1", ctrlKey: true });
+    const ev = press({ code: "Digit1", ctrlKey: true });
     expect(onFocus).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false); // the input must still receive the keystroke
+  });
+
+  it("ignores the chord while a native <select> is focused", () => {
+    const select = document.createElement("select");
+    document.body.appendChild(select);
+    select.focus();
+    const onFocus = vi.fn();
+    renderHook(() => useWindowSwitchShortcuts(onFocus));
+    const ev = press({ code: "Digit1", ctrlKey: true });
+    expect(onFocus).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
   });
 
   it("moves the expanded tile when one is expanded", () => {

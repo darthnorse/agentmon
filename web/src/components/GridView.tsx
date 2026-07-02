@@ -24,7 +24,7 @@ export function GridView() {
   const theme = themeOf(usePrefs((s) => s.terminalTheme));
   const gridMaxColumns = usePrefs((s) => s.gridMaxColumns);
   const windowSwitchShortcut = usePrefs((s) => s.windowSwitchShortcut);
-  const isMac = React.useMemo(() => isMacPlatform(), []);
+  const isMac = isMacPlatform();
   const [activeWindowId, setActiveWindowId] = React.useState<string | null>(null);
 
   // On a jump: focus the target tile; if a tile is currently expanded, the hook has
@@ -65,7 +65,13 @@ export function GridView() {
               key={`${p.serverId}:${p.target}:${p.paneId}`}
               className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
               style={{ display: hidden ? "none" : "flex" }}
-              onFocusCapture={() => setActiveWindowId(p.id)}
+              // Sync the keyboard-focus target ONLY when focus actually lands in the
+              // terminal — never for header controls (expand/close buttons, the rename
+              // input). Otherwise focusing e.g. the rename input would flip `active`
+              // true and TerminalView's focus effect would yank focus into the terminal.
+              onFocusCapture={(e) => {
+                if ((e.target as HTMLElement).closest(".xterm")) setActiveWindowId(p.id);
+              }}
             >
               <div className="flex items-center justify-between border-b border-border bg-card px-2 py-1 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5">
