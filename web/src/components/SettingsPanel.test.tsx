@@ -11,7 +11,7 @@ function resetPrefs() {
     fontSizeMobile: 10,
     terminalTheme: "dark",
     alertOnDone: false,
-    windowSwitchShortcut: "cmdCtrl",
+    windowSwitchShortcut: "alt",
   });
 }
 
@@ -59,8 +59,9 @@ describe("SettingsPanel", () => {
   it("changes the window switch shortcut in the store", async () => {
     render(<SettingsPanel />);
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.selectOptions(screen.getByLabelText("Window switch shortcut"), "alt");
-    expect(usePrefs.getState().windowSwitchShortcut).toBe("alt");
+    // Default is "alt"; select a different option so onChange actually fires.
+    await userEvent.selectOptions(screen.getByLabelText("Window switch shortcut"), "off");
+    expect(usePrefs.getState().windowSwitchShortcut).toBe("off");
   });
 
   it("reflects the current store value in the window shortcut select", async () => {

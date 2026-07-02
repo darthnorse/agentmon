@@ -1,7 +1,7 @@
 import * as React from "react";
 import { usePrefs } from "@/store/prefs";
 import { usePanes } from "@/store/panes";
-import { windowIndexFor, isMacPlatform } from "@/lib/window-shortcuts";
+import { windowIndexFor } from "@/lib/window-shortcuts";
 
 // Installs a single capture-phase keydown listener that maps the configured number
 // chord (see lib/window-shortcuts) to "focus the Nth open grid tile". Capture phase +
@@ -13,8 +13,6 @@ export function useWindowSwitchShortcuts(onFocusTile: (paneId: string) => void):
   cb.current = onFocusTile;
 
   React.useEffect(() => {
-    const isMac = isMacPlatform();
-
     const handler = (ev: KeyboardEvent) => {
       const scheme = usePrefs.getState().windowSwitchShortcut;
       if (scheme === "off") return;
@@ -24,7 +22,7 @@ export function useWindowSwitchShortcuts(onFocusTile: (paneId: string) => void):
       // so it is NOT treated as an editable field here.
       if (isEditableNonTerminal(document.activeElement as HTMLElement | null)) return;
 
-      const n = windowIndexFor(ev, scheme, isMac);
+      const n = windowIndexFor(ev, scheme);
       if (n === null) return;
 
       // The chord belongs to the app: stop it before xterm and suppress the browser

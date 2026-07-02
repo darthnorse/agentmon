@@ -126,7 +126,6 @@ export function SettingsPanel({ onSignOut }: { onSignOut?: () => void }) {
               onChange={(e) => setWindowSwitchShortcut(e.target.value as ShortcutScheme)}
               className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
             >
-              <option value="cmdCtrl">Cmd / Ctrl + number</option>
               <option value="alt">Alt / Option + number</option>
               <option value="off">Off</option>
             </select>
