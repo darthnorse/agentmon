@@ -6,6 +6,7 @@ import { pushSupported } from "@/lib/push";
 import { usePrefs } from "@/store/prefs";
 import { reloadApp } from "@/lib/pwa-update";
 import type { ThemeName } from "@/lib/terminal-themes";
+import type { ShortcutScheme } from "@/lib/window-shortcuts";
 
 const FONT_MIN = 8;
 const FONT_MAX = 24;
@@ -34,6 +35,8 @@ export function SettingsPanel({ onSignOut }: { onSignOut?: () => void }) {
   const setAlertOnDone = usePrefs((s) => s.setAlertOnDone);
   const gridMaxColumns = usePrefs((s) => s.gridMaxColumns);
   const setGridMaxColumns = usePrefs((s) => s.setGridMaxColumns);
+  const windowSwitchShortcut = usePrefs((s) => s.windowSwitchShortcut);
+  const setWindowSwitchShortcut = usePrefs((s) => s.setWindowSwitchShortcut);
 
   // Close on outside click / Escape so the popover behaves like a menu.
   React.useEffect(() => {
@@ -111,6 +114,21 @@ export function SettingsPanel({ onSignOut }: { onSignOut?: () => void }) {
               {[1, 2, 3, 4].map((n) => (
                 <option key={n} value={n}>{n}</option>
               ))}
+            </select>
+          </div>
+          <div className="mb-3">
+            <label htmlFor="settings-window-shortcut" className="mb-1 block text-xs font-medium text-muted-foreground">
+              Window switch shortcut
+            </label>
+            <select
+              id="settings-window-shortcut"
+              value={windowSwitchShortcut}
+              onChange={(e) => setWindowSwitchShortcut(e.target.value as ShortcutScheme)}
+              className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="cmdCtrl">Cmd / Ctrl + number</option>
+              <option value="alt">Alt / Option + number</option>
+              <option value="off">Off</option>
             </select>
           </div>
           <label className="flex items-center gap-2">

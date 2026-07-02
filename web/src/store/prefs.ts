@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ThemeName } from "@/lib/terminal-themes";
+import type { ShortcutScheme } from "@/lib/window-shortcuts";
 
 export const PREFS_STORAGE_KEY = "agentmon-prefs";
 
@@ -12,11 +13,13 @@ export interface PrefsState {
   terminalTheme: ThemeName;
   alertOnDone: boolean;
   gridMaxColumns: number;
+  windowSwitchShortcut: ShortcutScheme;
   setFontSizeDesktop(n: number): void;
   setFontSizeMobile(n: number): void;
   setTerminalTheme(t: ThemeName): void;
   setAlertOnDone(v: boolean): void;
   setGridMaxColumns(n: number): void;
+  setWindowSwitchShortcut(v: ShortcutScheme): void;
 }
 
 export const usePrefs = create<PrefsState>()(
@@ -27,11 +30,13 @@ export const usePrefs = create<PrefsState>()(
       terminalTheme: "dark",
       alertOnDone: false,
       gridMaxColumns: 3,
+      windowSwitchShortcut: "cmdCtrl",
       setFontSizeDesktop: (n) => set({ fontSizeDesktop: n }),
       setFontSizeMobile: (n) => set({ fontSizeMobile: n }),
       setTerminalTheme: (t) => set({ terminalTheme: t }),
       setAlertOnDone: (v) => set({ alertOnDone: v }),
       setGridMaxColumns: (n) => set({ gridMaxColumns: Math.max(1, Math.min(4, Math.floor(n))) }),
+      setWindowSwitchShortcut: (v) => set({ windowSwitchShortcut: v }),
     }),
     {
       name: PREFS_STORAGE_KEY,
@@ -42,6 +47,7 @@ export const usePrefs = create<PrefsState>()(
         terminalTheme: s.terminalTheme,
         alertOnDone: s.alertOnDone,
         gridMaxColumns: s.gridMaxColumns,
+        windowSwitchShortcut: s.windowSwitchShortcut,
       }),
     },
   ),
