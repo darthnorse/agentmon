@@ -1,3 +1,4 @@
+import * as React from "react";
 import { usePanes } from "@/store/panes";
 import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,8 @@ import { SessionNameEditor } from "@/components/SessionNameEditor";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
 import { gridLayout } from "@/lib/grid-layout";
+import { useWindowSwitchShortcuts } from "@/hooks/useWindowSwitchShortcuts";
+import { chordLabel, isMacPlatform } from "@/lib/window-shortcuts";
 
 // Live tiled grid. EVERY tile stays mounted (its own WS); expand is in-state, so
 // the non-focused tiles are hidden with display:none — sockets + scrollback survive.
@@ -20,6 +23,13 @@ export function GridView() {
   const fontSize = usePrefs((s) => s.fontSizeDesktop);
   const theme = themeOf(usePrefs((s) => s.terminalTheme));
   const gridMaxColumns = usePrefs((s) => s.gridMaxColumns);
+  const windowSwitchShortcut = usePrefs((s) => s.windowSwitchShortcut);
+  const isMac = React.useMemo(() => isMacPlatform(), []);
+  const [activeWindowId, setActiveWindowId] = React.useState<string | null>(null);
+
+  // On a jump: focus the target tile; if a tile is currently expanded, the hook has
+  // already moved the expansion. setActiveWindowId drives TerminalView's `active` focus.
+  useWindowSwitchShortcuts(setActiveWindowId);
 
   if (panes.length === 0) {
     return (
@@ -44,7 +54,7 @@ export function GridView() {
               }
         }
       >
-        {panes.map((p) => {
+        {panes.map((p, i) => {
           const expanded = activeId === p.id;
           const hidden = activeId !== null && !expanded;
           return (
@@ -55,9 +65,19 @@ export function GridView() {
               key={`${p.serverId}:${p.target}:${p.paneId}`}
               className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
               style={{ display: hidden ? "none" : "flex" }}
+              onFocusCapture={() => setActiveWindowId(p.id)}
             >
               <div className="flex items-center justify-between border-b border-border bg-card px-2 py-1 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5">
+                  {windowSwitchShortcut !== "off" && i < 9 && (
+                    <span
+                      className="flex-none rounded border border-border px-1 text-[10px] leading-none text-muted-foreground"
+                      title={chordLabel(windowSwitchShortcut, isMac, i + 1)}
+                      aria-hidden="true"
+                    >
+                      {i + 1}
+                    </span>
+                  )}
                   <StateDot state={effectiveSessionState(snap, p.serverId, p.target, p.session, p.state)} />
                   <button className="min-w-0 flex-none truncate text-left text-muted-foreground hover:underline"
                     onClick={() => (expanded ? collapse() : focus(p.id))}
@@ -76,7 +96,7 @@ export function GridView() {
                 </span>
               </div>
               <div className="min-h-0 flex-1 pl-2" style={{ background: theme.background }}>
-                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} fontSize={fontSize} theme={theme} />
+                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} active={activeWindowId === p.id} fontSize={fontSize} theme={theme} />
               </div>
             </div>
           );
