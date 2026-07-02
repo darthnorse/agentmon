@@ -118,10 +118,29 @@ export const XTerm = React.forwardRef<
     // the touch-select on Mac/iPad, which use a trackpad). Mobile-only; desktop uses real mouse
     // events untouched, and a quick swipe still scrolls, so this can't regress them.
     const host = hostRef.current!;
-    // TEMP diagnostic: trace the mobile select pipeline to the console ([sel] …) so we can see
-    // where it breaks on-device (via Safari Web Inspector). Harmless in normal use; remove once
-    // mobile copy is confirmed working.
-    const dbg = (m: string) => { try { console.log("[sel]", m); } catch { /* noop */ } };
+    // TEMP diagnostic: trace the mobile select pipeline. On touch devices we ALSO paint the last
+    // few messages as an on-screen overlay (so no Mac/Web-Inspector is needed to read it), plus
+    // console.log for anyone who has it. pointer-events:none so taps still reach the terminal.
+    // Remove this whole block once mobile copy is confirmed working.
+    let dbgEl: HTMLDivElement | null = null;
+    const dbgLines: string[] = [];
+    if (typeof window !== "undefined" && "ontouchstart" in window) {
+      dbgEl = document.createElement("div");
+      dbgEl.style.cssText =
+        "position:absolute;top:0;left:0;right:0;z-index:60;font:10px/1.35 monospace;color:#0f0;" +
+        "background:rgba(0,0,0,.8);padding:2px 4px;pointer-events:none;white-space:pre-wrap;" +
+        "word-break:break-all;max-height:45%;overflow:hidden";
+      dbgEl.textContent = "sel-trace: long-press+drag on text…";
+      host.appendChild(dbgEl);
+    }
+    const dbg = (m: string) => {
+      try { console.log("[sel]", m); } catch { /* noop */ }
+      if (dbgEl) {
+        dbgLines.push(m);
+        if (dbgLines.length > 8) dbgLines.shift();
+        dbgEl.textContent = dbgLines.join("\n");
+      }
+    };
     const gesture = createTerminalGesture({
       fireMouse: (type, x, y, force) => {
         const el = document.elementFromPoint(x, y) as HTMLElement | null;
@@ -147,6 +166,7 @@ export const XTerm = React.forwardRef<
     return () => {
       ro.disconnect();
       gesture.teardown();
+      dbgEl?.remove();
       host.removeEventListener("touchstart", gesture.onStart);
       host.removeEventListener("touchmove", gesture.onMove);
       host.removeEventListener("touchend", gesture.onEnd);
