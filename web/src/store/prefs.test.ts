@@ -81,14 +81,18 @@ describe("prefs gridMaxColumns", () => {
 describe("prefs: windowSwitchShortcut", () => {
   beforeEach(() => {
     localStorage.clear();
-    usePrefs.setState({ windowSwitchShortcut: "cmdCtrl" });
+    usePrefs.setState({ windowSwitchShortcut: "alt" });
+  });
+
+  it("defaults to alt", () => {
+    expect(usePrefs.getState().windowSwitchShortcut).toBe("alt");
   });
 
   it("updates via the setter", () => {
-    usePrefs.getState().setWindowSwitchShortcut("alt");
-    expect(usePrefs.getState().windowSwitchShortcut).toBe("alt");
     usePrefs.getState().setWindowSwitchShortcut("off");
     expect(usePrefs.getState().windowSwitchShortcut).toBe("off");
+    usePrefs.getState().setWindowSwitchShortcut("alt");
+    expect(usePrefs.getState().windowSwitchShortcut).toBe("alt");
   });
 
   it("persists the choice to localStorage", () => {

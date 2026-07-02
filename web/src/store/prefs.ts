@@ -30,7 +30,7 @@ export const usePrefs = create<PrefsState>()(
       terminalTheme: "dark",
       alertOnDone: false,
       gridMaxColumns: 3,
-      windowSwitchShortcut: "cmdCtrl",
+      windowSwitchShortcut: "alt",
       setFontSizeDesktop: (n) => set({ fontSizeDesktop: n }),
       setFontSizeMobile: (n) => set({ fontSizeMobile: n }),
       setTerminalTheme: (t) => set({ terminalTheme: t }),

@@ -17,17 +17,17 @@ function press(over: Partial<KeyboardEventInit> = {}) {
 describe("useWindowSwitchShortcuts", () => {
   beforeEach(() => {
     localStorage.clear();
-    usePrefs.setState({ windowSwitchShortcut: "cmdCtrl" });
+    usePrefs.setState({ windowSwitchShortcut: "alt" });
     usePanes.setState({ panes: [pane("p1"), pane("p2"), pane("p3")], focusedId: null });
     document.body.innerHTML = "";
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   });
   afterEach(() => cleanup()); // unmount the hook → remove its document listener between tests
 
-  it("focuses the Nth tile and consumes the event (Ctrl+2, non-Mac jsdom)", () => {
+  it("focuses the Nth tile and consumes the event (Alt+2)", () => {
     const onFocus = vi.fn();
     renderHook(() => useWindowSwitchShortcuts(onFocus));
-    const ev = press({ code: "Digit2", ctrlKey: true });
+    const ev = press({ code: "Digit2", altKey: true });
     expect(onFocus).toHaveBeenCalledWith("s:t:sess:p2");
     expect(ev.defaultPrevented).toBe(true);
   });
@@ -36,7 +36,7 @@ describe("useWindowSwitchShortcuts", () => {
     usePrefs.setState({ windowSwitchShortcut: "off" });
     const onFocus = vi.fn();
     renderHook(() => useWindowSwitchShortcuts(onFocus));
-    const ev = press({ code: "Digit2", ctrlKey: true });
+    const ev = press({ code: "Digit2", altKey: true });
     expect(onFocus).not.toHaveBeenCalled();
     expect(ev.defaultPrevented).toBe(false);
   });
@@ -44,7 +44,7 @@ describe("useWindowSwitchShortcuts", () => {
   it("consumes but no-ops a number past the open tile count", () => {
     const onFocus = vi.fn();
     renderHook(() => useWindowSwitchShortcuts(onFocus));
-    const ev = press({ code: "Digit8", ctrlKey: true });
+    const ev = press({ code: "Digit8", altKey: true });
     expect(onFocus).not.toHaveBeenCalled();
     expect(ev.defaultPrevented).toBe(true);
   });
@@ -55,7 +55,7 @@ describe("useWindowSwitchShortcuts", () => {
     input.focus();
     const onFocus = vi.fn();
     renderHook(() => useWindowSwitchShortcuts(onFocus));
-    const ev = press({ code: "Digit1", ctrlKey: true });
+    const ev = press({ code: "Digit1", altKey: true });
     expect(onFocus).not.toHaveBeenCalled();
     expect(ev.defaultPrevented).toBe(false); // the input must still receive the keystroke
   });
@@ -66,7 +66,7 @@ describe("useWindowSwitchShortcuts", () => {
     select.focus();
     const onFocus = vi.fn();
     renderHook(() => useWindowSwitchShortcuts(onFocus));
-    const ev = press({ code: "Digit1", ctrlKey: true });
+    const ev = press({ code: "Digit1", altKey: true });
     expect(onFocus).not.toHaveBeenCalled();
     expect(ev.defaultPrevented).toBe(false);
   });
@@ -75,7 +75,7 @@ describe("useWindowSwitchShortcuts", () => {
     usePanes.setState({ focusedId: "s:t:sess:p1" });
     const onFocus = vi.fn();
     renderHook(() => useWindowSwitchShortcuts(onFocus));
-    press({ code: "Digit3", ctrlKey: true });
+    press({ code: "Digit3", altKey: true });
     expect(usePanes.getState().focusedId).toBe("s:t:sess:p3");
   });
 });
