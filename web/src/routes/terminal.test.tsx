@@ -87,6 +87,7 @@ describe("MobileTerminalRoute", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close alpha" }));
     expect(navigateSpy).not.toHaveBeenCalled(); // neighbor exists → stay in the route
     expect(screen.getByTestId("tv-%1")).toBeInTheDocument(); // beta (the neighbor) still mounted
+    expect(screen.queryByTestId("tv-%0")).toBeNull(); // alpha (the closed pane) unmounted → socket freed
   });
 
   it("closing the last open tab navigates home", async () => {

@@ -97,20 +97,18 @@ export function MobileTerminalRoute() {
   // last open tab returns to the session list.
   const handleClose = (tab: SessionTab) => {
     const closingId = paneIdentity(tab.serverId, tab.target, tab.paneId);
+    const closeIt = () => { removeOpenTab(closingId); pool.close(closingId); };
     if (tab.active) {
       const neighbor = nextFocusAfterClose(tabs, closingId);
       if (neighbor) {
         pool.openAndFocus({ serverId: neighbor.serverId, target: neighbor.target, paneId: neighbor.paneId });
-        removeOpenTab(closingId);
-        pool.close(closingId);
+        closeIt();
       } else {
-        removeOpenTab(closingId);
-        pool.close(closingId);
+        closeIt();
         navigate({ to: "/" }); // closed the last tab → back to the session list
       }
     } else {
-      removeOpenTab(closingId);
-      pool.close(closingId);
+      closeIt();
     }
   };
 

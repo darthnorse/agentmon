@@ -2,6 +2,7 @@ import type { SessionState } from "@/lib/contracts";
 import type { SessionRow } from "@/components/SessionList";
 import type { OpenTab } from "@/store/mobile-open-tabs";
 import { StateDot } from "@/components/StateDot";
+import { cn } from "@/lib/utils";
 import { paneIdentity } from "@/lib/pane-identity";
 
 // One tab per session (§ mobile session switcher). Kept flat/serializable so the
@@ -108,10 +109,10 @@ export function MobileSessionTabs({
         <span
           key={tab.key}
           aria-current={tab.active ? "page" : undefined}
-          className={
-            "flex flex-none items-center gap-1 rounded-md px-2 py-1 text-xs " +
-            (tab.active ? "bg-accent font-semibold" : "text-muted-foreground")
-          }
+          className={cn(
+            "flex flex-none items-center gap-1 rounded-md px-2 py-1 text-xs",
+            tab.active ? "bg-accent font-semibold" : "text-muted-foreground",
+          )}
         >
           {tab.active ? (
             <span className="flex min-w-0 items-center gap-1">
@@ -132,7 +133,7 @@ export function MobileSessionTabs({
             type="button"
             aria-label={`Close ${tab.name}`}
             onClick={() => onClose(tab)}
-            className="ml-0.5 flex-none rounded px-1 leading-none text-muted-foreground hover:text-foreground"
+            className="ml-0.5 flex-none inline-flex h-8 w-8 items-center justify-center rounded leading-none text-muted-foreground hover:text-foreground"
           >
             ×
           </button>
