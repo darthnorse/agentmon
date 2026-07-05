@@ -18,7 +18,6 @@ interface MobileOpenTabsState {
   open: OpenTab[]; // ordered = tab render order (insertion order)
   add(t: OpenTab): void; // append if absent (idempotent)
   remove(id: string): void; // remove by paneIdentity
-  has(id: string): boolean;
 }
 
 const idOf = (t: OpenTab) => paneIdentity(t.serverId, t.target, t.paneId);
@@ -27,12 +26,11 @@ const idOf = (t: OpenTab) => paneIdentity(t.serverId, t.target, t.paneId);
 // table is a later add). Drives the mobile tab bar and pane warming.
 export const useMobileOpenTabs = create<MobileOpenTabsState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       open: [],
       add: (t) =>
         set((s) => (s.open.some((x) => idOf(x) === idOf(t)) ? s : { open: [...s.open, t] })),
       remove: (id) => set((s) => ({ open: s.open.filter((x) => idOf(x) !== id) })),
-      has: (id) => get().open.some((x) => idOf(x) === id),
     }),
     {
       name: OPEN_TABS_STORAGE_KEY,

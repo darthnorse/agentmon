@@ -33,12 +33,6 @@ describe("useMobileOpenTabs", () => {
     expect(useMobileOpenTabs.getState().open.map((x) => x.paneId)).toEqual(["%1"]);
   });
 
-  it("has reflects membership", () => {
-    useMobileOpenTabs.getState().add(t("%0"));
-    expect(useMobileOpenTabs.getState().has(id("%0"))).toBe(true);
-    expect(useMobileOpenTabs.getState().has(id("%9"))).toBe(false);
-  });
-
   it("persists the open set to localStorage", () => {
     useMobileOpenTabs.getState().add(t("%0"));
     expect(localStorage.getItem(OPEN_TABS_STORAGE_KEY)).toContain("%0");

@@ -96,4 +96,13 @@ describe("MobileTerminalRoute", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close alpha" }));
     expect(navigateSpy).toHaveBeenCalledWith({ to: "/" });
   });
+
+  it("does not warm a stale open-set entry that is not a live session", () => {
+    // %stale is persisted in the open set but absent from the live rows (%0/%1). It must NOT
+    // be warmed into the pool — no hidden TerminalView, no relay socket for a dead pane.
+    useMobileOpenTabs.getState().add({ serverId: "s1", target: "default", paneId: "%stale" });
+    render(<MobileTerminalRoute />);
+    expect(screen.getByTestId("tv-%0")).toBeInTheDocument(); // entered pane still seeded
+    expect(screen.queryByTestId("tv-%stale")).toBeNull(); // stale entry skipped (no socket)
+  });
 });

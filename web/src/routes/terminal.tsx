@@ -54,23 +54,27 @@ export function MobileTerminalRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Eager-warm the open set into the pool (up to the cap) — open-set entries carry the pane
-  // parts directly, so warming does NOT wait for the live session list. Focused pane counts first.
+  // Eager-warm the open set into the pool (up to the cap), but only entries that resolve to a
+  // LIVE session row — mirroring the tab bar — so a stale/dead persisted entry (session killed
+  // elsewhere, server offline, tmux restart with reused pane ids) never opens a socket or steals a
+  // pool slot from a real tab. The focused/entered pane is seeded separately (mount effect above),
+  // so first paint is unaffected; this runs once the session list is present.
   const warmedRef = React.useRef(false);
   React.useEffect(() => {
-    if (warmedRef.current || openTabs.length === 0) return;
+    if (warmedRef.current || openTabs.length === 0 || rows.length === 0) return;
     warmedRef.current = true;
     const focusedIdent = paneIdentity(serverId, target, paneId);
+    const liveIdents = new Set(rows.map((r) => paneIdentity(r.server.id, r.session.target, r.pane.id)));
     let warmed = 1; // the seeded/focused pane counts toward the cap
     for (const t of openTabs) {
       if (warmed >= MOBILE_POOL_CAP) break;
       const tid = paneIdentity(t.serverId, t.target, t.paneId);
-      if (tid === focusedIdent) continue;
+      if (tid === focusedIdent || !liveIdents.has(tid)) continue; // skip focused (seeded) + stale (not live)
       pool.open({ serverId: t.serverId, target: t.target, paneId: t.paneId });
       warmed++;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openTabs.length]);
+  }, [openTabs.length, rows.length]);
 
   // The focused pane drives the header/tabs + seen tracking. Fall back to the URL pane
   // until the seed effect lands. The focused session NAME comes from the list (so a
@@ -96,7 +100,7 @@ export function MobileTerminalRoute() {
   // tmux session keeps running. Closing the active tab focuses a neighbor first; closing the
   // last open tab returns to the session list.
   const handleClose = (tab: SessionTab) => {
-    const closingId = paneIdentity(tab.serverId, tab.target, tab.paneId);
+    const closingId = tab.key; // buildTabs sets key === paneIdentity(serverId, target, paneId)
     const closeIt = () => { removeOpenTab(closingId); pool.close(closingId); };
     if (tab.active) {
       const neighbor = nextFocusAfterClose(tabs, closingId);
