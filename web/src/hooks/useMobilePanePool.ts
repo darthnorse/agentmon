@@ -20,7 +20,8 @@ export interface PoolState {
 
 export type PoolAction =
   | { type: "open"; pane: PoolPane; focus: boolean }
-  | { type: "focus"; id: string };
+  | { type: "focus"; id: string }
+  | { type: "close"; id: string };
 
 const idOf = (p: PoolPane) => paneIdentity(p.serverId, p.target, p.paneId);
 
@@ -52,6 +53,15 @@ export function poolReducer(state: PoolState, action: PoolAction): PoolState {
       if (!state.panes.some((p) => idOf(p) === action.id)) return state; // absent → no-op
       return { ...state, focusedId: action.id, lru: [...state.lru.filter((x) => x !== action.id), action.id] };
     }
+    case "close": {
+      if (!state.panes.some((p) => idOf(p) === action.id)) return state; // absent → no-op
+      return {
+        panes: state.panes.filter((p) => idOf(p) !== action.id),
+        lru: state.lru.filter((x) => x !== action.id),
+        // The route re-focuses a neighbor explicitly; a null focus for one render is safe.
+        focusedId: state.focusedId === action.id ? null : state.focusedId,
+      };
+    }
   }
 }
 
@@ -64,6 +74,7 @@ export function useMobilePanePool() {
       open: (p: PoolPane) => dispatch({ type: "open", pane: p, focus: false }),
       openAndFocus: (p: PoolPane) => dispatch({ type: "open", pane: p, focus: true }),
       focus: (id: string) => dispatch({ type: "focus", id }),
+      close: (id: string) => dispatch({ type: "close", id }),
     }),
     [state],
   );
