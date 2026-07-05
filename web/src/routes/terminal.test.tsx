@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -23,7 +23,7 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateSpy,
 }));
 // The header tabs + eager-warm fetch the session list via react-query; stub two
-// sessions on one server so switching tabs has a real second pane to focus.
+// sessions on one server so a second pane exists to open/switch to.
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: [{ id: "s1", name: "host-1", labels: [], enabled: true }] }),
   useQueries: () => [{
@@ -42,7 +42,18 @@ vi.mock("@/lib/api-client", () => ({
 
 import { MobileTerminalRoute } from "@/routes/terminal";
 import { useSessionState } from "@/store/session-state";
+import { useMobileOpenTabs } from "@/store/mobile-open-tabs";
 import { stateKey } from "@/lib/state";
+
+// The mobile tab bar is driven by the explicit, persisted open set (NOT the full live-session
+// list). The entered pane (%0/alpha, from the URL params) is added to the set on mount; any OTHER
+// tab must be opened explicitly. localStorage persists the set, so reset it between tests.
+const beta = { serverId: "s1", target: "default", paneId: "%1" };
+
+beforeEach(() => {
+  localStorage.clear();
+  useMobileOpenTabs.setState({ open: [] });
+});
 
 describe("MobileTerminalRoute", () => {
   it("passes params/search into a key-bar TerminalView and shows the session header", () => {
@@ -61,10 +72,37 @@ describe("MobileTerminalRoute", () => {
 
   it("switches tabs in-state without navigating", async () => {
     navigateSpy.mockClear();
-    render(<MobileTerminalRoute />);
+    useMobileOpenTabs.getState().add(beta); // beta opened earlier → in the tab bar
+    render(<MobileTerminalRoute />); // mount adds alpha (%0), focused; open set = [beta, alpha]
     await userEvent.click(screen.getByText("beta")); // the inactive tab
     expect(navigateSpy).not.toHaveBeenCalled(); // in-state focus, not a route change
-    // both panes are now mounted (keep-alive): two mocked terminals present
+    // both panes are mounted (keep-alive): two mocked terminals present
     expect(screen.getAllByTestId(/^tv/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("closing the active tab with another open focuses a neighbor, no navigation", async () => {
+    navigateSpy.mockClear();
+    useMobileOpenTabs.getState().add(beta); // a second open tab to fall back to
+    render(<MobileTerminalRoute />); // open set = [beta, alpha]; alpha (%0) is active
+    await userEvent.click(screen.getByRole("button", { name: "Close alpha" }));
+    expect(navigateSpy).not.toHaveBeenCalled(); // neighbor exists → stay in the route
+    expect(screen.getByTestId("tv-%1")).toBeInTheDocument(); // beta (the neighbor) still mounted
+    expect(screen.queryByTestId("tv-%0")).toBeNull(); // alpha (the closed pane) unmounted → socket freed
+  });
+
+  it("closing the last open tab navigates home", async () => {
+    navigateSpy.mockClear();
+    render(<MobileTerminalRoute />); // open set = [alpha] only (just the entered pane)
+    await userEvent.click(screen.getByRole("button", { name: "Close alpha" }));
+    expect(navigateSpy).toHaveBeenCalledWith({ to: "/" });
+  });
+
+  it("does not warm a stale open-set entry that is not a live session", () => {
+    // %stale is persisted in the open set but absent from the live rows (%0/%1). It must NOT
+    // be warmed into the pool — no hidden TerminalView, no relay socket for a dead pane.
+    useMobileOpenTabs.getState().add({ serverId: "s1", target: "default", paneId: "%stale" });
+    render(<MobileTerminalRoute />);
+    expect(screen.getByTestId("tv-%0")).toBeInTheDocument(); // entered pane still seeded
+    expect(screen.queryByTestId("tv-%stale")).toBeNull(); // stale entry skipped (no socket)
   });
 });

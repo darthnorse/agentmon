@@ -2,7 +2,7 @@ import * as React from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { MobileSessionTabs, buildTabs } from "@/components/MobileSessionTabs";
+import { MobileSessionTabs, buildTabs, nextFocusAfterClose, type SessionTab } from "@/components/MobileSessionTabs";
 import { MobileTerminalStack } from "@/components/MobileTerminalStack";
 import { flattenSessions, type SessionRow } from "@/components/SessionList";
 import { listServers, listSessions, serversKey, sessionsKey } from "@/lib/api-client";
@@ -13,6 +13,7 @@ import { useMobilePanePool, MOBILE_POOL_CAP } from "@/hooks/useMobilePanePool";
 import { paneIdentity } from "@/lib/pane-identity";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { usePrefs } from "@/store/prefs";
+import { useMobileOpenTabs } from "@/store/mobile-open-tabs";
 import { themeOf } from "@/lib/terminal-themes";
 import type { Session, SessionState } from "@/lib/contracts";
 
@@ -43,28 +44,37 @@ export function MobileTerminalRoute() {
   // paint — otherwise the stack renders empty for one frame on entry (blank terminal
   // region) before the post-paint effect adds it, undercutting the flash-free goal.
   const pool = useMobilePanePool();
+  const openTabs = useMobileOpenTabs((s) => s.open);
+  const addOpenTab = useMobileOpenTabs((s) => s.add);
+  const removeOpenTab = useMobileOpenTabs((s) => s.remove);
   React.useLayoutEffect(() => {
+    addOpenTab({ serverId, target, paneId }); // entering = open/reopen (idempotent)
     pool.openAndFocus({ serverId, target, paneId });
     // Mount-only: the entered pane is fixed for this route mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Eager-warm up to the cap once the session list first arrives (focused always included).
+  // Eager-warm the open set into the pool (up to the cap), but only entries that resolve to a
+  // LIVE session row — mirroring the tab bar — so a stale/dead persisted entry (session killed
+  // elsewhere, server offline, tmux restart with reused pane ids) never opens a socket or steals a
+  // pool slot from a real tab. The focused/entered pane is seeded separately (mount effect above),
+  // so first paint is unaffected; this runs once the session list is present.
   const warmedRef = React.useRef(false);
   React.useEffect(() => {
-    if (warmedRef.current || rows.length === 0) return;
+    if (warmedRef.current || openTabs.length === 0 || rows.length === 0) return;
     warmedRef.current = true;
     const focusedIdent = paneIdentity(serverId, target, paneId);
+    const liveIdents = new Set(rows.map((r) => paneIdentity(r.server.id, r.session.target, r.pane.id)));
     let warmed = 1; // the seeded/focused pane counts toward the cap
-    for (const r of rows) {
+    for (const t of openTabs) {
       if (warmed >= MOBILE_POOL_CAP) break;
-      const rid = paneIdentity(r.server.id, r.session.target, r.pane.id);
-      if (rid === focusedIdent) continue;
-      pool.open({ serverId: r.server.id, target: r.session.target, paneId: r.pane.id });
+      const tid = paneIdentity(t.serverId, t.target, t.paneId);
+      if (tid === focusedIdent || !liveIdents.has(tid)) continue; // skip focused (seeded) + stale (not live)
+      pool.open({ serverId: t.serverId, target: t.target, paneId: t.paneId });
       warmed++;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows.length]);
+  }, [openTabs.length, rows.length]);
 
   // The focused pane drives the header/tabs + seen tracking. Fall back to the URL pane
   // until the seed effect lands. The focused session NAME comes from the list (so a
@@ -79,12 +89,32 @@ export function MobileTerminalRoute() {
 
   useFocusedSeen({ serverId: focused.serverId, target: focused.target, sessionName: focusedName });
 
-  const tabs = buildTabs(rows, { serverId: focused.serverId, target: focused.target, session: focusedName, paneId: focused.paneId }, stateOf);
+  const tabs = buildTabs(openTabs, rows, { serverId: focused.serverId, target: focused.target, session: focusedName, paneId: focused.paneId }, stateOf);
 
   // Size the whole route to the visible viewport so the terminal + key bar stay ABOVE the
   // iOS soft keyboard (which overlays the page rather than shrinking it). Falls back to
   // h-full where visualViewport is unavailable.
   const { height: vvHeight } = useVisualViewport();
+
+  // Close = remove from the open set + drop the pane from the pool (frees the socket). The
+  // tmux session keeps running. Closing the active tab focuses a neighbor first; closing the
+  // last open tab returns to the session list.
+  const handleClose = (tab: SessionTab) => {
+    const closingId = tab.key; // buildTabs sets key === paneIdentity(serverId, target, paneId)
+    const closeIt = () => { removeOpenTab(closingId); pool.close(closingId); };
+    if (tab.active) {
+      const neighbor = nextFocusAfterClose(tabs, closingId);
+      if (neighbor) {
+        pool.openAndFocus({ serverId: neighbor.serverId, target: neighbor.target, paneId: neighbor.paneId });
+        closeIt();
+      } else {
+        closeIt();
+        navigate({ to: "/" }); // closed the last tab → back to the session list
+      }
+    } else {
+      closeIt();
+    }
+  };
 
   return (
     <div className="flex h-full flex-col" style={{ height: vvHeight ? `${vvHeight}px` : undefined }}>
@@ -96,7 +126,7 @@ export function MobileTerminalRoute() {
         <MobileSessionTabs
           tabs={tabs}
           onSwitch={(tab) => pool.openAndFocus({ serverId: tab.serverId, target: tab.target, paneId: tab.paneId })}
-          onRenamed={() => { /* rename reflects via the sessions refetch; URL is only the entry point */ }}
+          onClose={handleClose}
         />
       </header>
       <div className="min-h-0 flex-1">
