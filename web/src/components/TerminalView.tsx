@@ -6,6 +6,7 @@ import { useTerminalSession } from "@/hooks/useTerminalSession";
 
 export function TerminalView({
   serverId, paneId, target, showKeyBar = false, active, focusNonce, fontSize, theme,
+  ended, onClose,
 }: {
   serverId: string;
   paneId: string;
@@ -15,6 +16,10 @@ export function TerminalView({
   focusNonce?: number;
   fontSize?: number;
   theme?: ITheme;
+  // The pane is confirmed gone (absent from a successful sessions fetch). Display-
+  // only: the socket keeps its slow retry so a recycled pane id self-heals.
+  ended?: boolean;
+  onClose?: () => void;
 }) {
   const targetObj = React.useMemo(() => ({ serverId, paneId, target }), [serverId, paneId, target]);
   const { xtermRef, controller, connected, everConnected, handleData, handleResize, retryNow } =
@@ -37,9 +42,20 @@ export function TerminalView({
   return (
     <div className="relative flex h-full w-full flex-col">
       {!connected && (
-        <div className="absolute left-0 right-0 top-0 z-10 bg-destructive px-2 py-1 text-center text-xs font-semibold text-destructive-foreground">
-          {everConnected ? "disconnected — reconnecting…" : "connecting…"}
-        </div>
+        ended ? (
+          <div className="absolute left-0 right-0 top-0 z-10 flex items-center justify-center gap-3 bg-muted px-2 py-1 text-center text-xs font-semibold text-muted-foreground">
+            <span>session ended</span>
+            {onClose && (
+              <button type="button" className="underline underline-offset-2" onClick={onClose}>
+                close
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="absolute left-0 right-0 top-0 z-10 bg-destructive px-2 py-1 text-center text-xs font-semibold text-destructive-foreground">
+            {everConnected ? "disconnected — reconnecting…" : "connecting…"}
+          </div>
+        )
       )}
       <div className="min-h-0 flex-1">
         <XTerm ref={xtermRef} onData={handleData} onResize={handleResize} fontSize={fontSize} theme={theme} />

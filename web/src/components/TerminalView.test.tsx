@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 
 // xterm.js needs a real canvas/WebGL; mock the DOM wrapper to a smoke double.
 // The imperative handle exposes a module-level `focus` spy (via useImperativeHandle)
@@ -90,5 +90,28 @@ describe("TerminalView", () => {
     expect(retryNow).not.toHaveBeenCalled();
     rerender(<TerminalView serverId="s" paneId="%1" target="default" active={true} />);
     expect(retryNow).toHaveBeenCalled();
+  });
+
+  it("shows 'session ended' + close instead of the reconnect banner when ended", () => {
+    const onClose = vi.fn();
+    render(
+      <TerminalView serverId="s" paneId="%1" target="default" ended onClose={onClose} />,
+    );
+    expect(screen.getByText("session ended")).toBeInTheDocument();
+    expect(screen.queryByText(/connecting|reconnecting/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the normal connecting banner when not ended", () => {
+    render(<TerminalView serverId="s" paneId="%1" target="default" />);
+    expect(screen.getByText("connecting…")).toBeInTheDocument();
+    expect(screen.queryByText("session ended")).toBeNull();
+  });
+
+  it("omits the close button when no onClose is provided", () => {
+    render(<TerminalView serverId="s" paneId="%1" target="default" ended />);
+    expect(screen.getByText("session ended")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "close" })).toBeNull();
   });
 });
