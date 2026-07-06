@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { usePanes, GRID_TILE_CAP } from "@/store/panes";
+import { onReconnectKick } from "@/lib/reconnect-kick";
+import { paneIdentity } from "@/lib/pane-identity";
 
 const mk = (n: number) => ({
   serverId: "s", paneId: `%${n}`, target: "default", session: `sess${n}`, serverName: "aigallery",
@@ -77,5 +79,24 @@ describe("panes store", () => {
     usePanes.getState().collapse();
     expect(usePanes.getState().focusedId).toBeNull();
     expect(usePanes.getState().panes).toHaveLength(1);
+  });
+
+  it("re-opening an already-open pane kicks its reconnect (no new tile)", () => {
+    usePanes.getState().openPane(mk(0));
+    const kicked = vi.fn();
+    const off = onReconnectKick(paneIdentity("s", "default", "%0"), kicked);
+    const r = usePanes.getState().openPane(mk(0)); // dedupe path
+    expect(r.ok).toBe(true);
+    expect(usePanes.getState().panes).toHaveLength(1);
+    expect(kicked).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("first open does NOT kick (a fresh socket dials by itself)", () => {
+    const kicked = vi.fn();
+    const off = onReconnectKick(paneIdentity("s", "default", "%0"), kicked);
+    usePanes.getState().openPane(mk(0));
+    expect(kicked).not.toHaveBeenCalled();
+    off();
   });
 });

@@ -7,12 +7,15 @@ import type { PoolPane } from "@/hooks/useMobilePanePool";
 // socket + scrollback survive), only the focused one is shown. Mirrors GridView's
 // keep-mounted trick so switching is instant with no reconnect and no cross-session bleed.
 export function MobileTerminalStack({
-  panes, focusedId, fontSize, theme,
+  panes, focusedId, fontSize, theme, endedIds, onClosePane,
 }: {
   panes: PoolPane[];
   focusedId: string | null;
   fontSize: number;
   theme: ITheme;
+  // paneIdentity ids confirmed gone (fresh sessions fetch without the pane).
+  endedIds?: Set<string>;
+  onClosePane?: (id: string) => void;
 }) {
   return (
     <div className="relative h-full w-full">
@@ -34,6 +37,8 @@ export function MobileTerminalStack({
               active={active}
               fontSize={fontSize}
               theme={theme}
+              ended={endedIds?.has(id)}
+              onClose={onClosePane ? () => onClosePane(id) : undefined}
             />
           </div>
         );

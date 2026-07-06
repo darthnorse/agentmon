@@ -4,6 +4,8 @@ import type { XTermHandle } from "@/components/XTerm";
 import { useSessionState } from "@/store/session-state";
 import { normalizeState, stateKey } from "@/lib/state";
 import * as keys from "@/lib/keybar";
+import { onReconnectKick } from "@/lib/reconnect-kick";
+import { paneIdentity } from "@/lib/pane-identity";
 
 export interface TerminalController {
   sendKey(k: keys.BarKey): void;
@@ -40,6 +42,8 @@ export function useTerminalSession(target: TerminalTarget) {
     sockRef.current?.resize(cols, rows);
   }, []);
 
+  const retryNow = React.useCallback(() => sockRef.current?.retryNow(), []);
+
   React.useEffect(() => {
     const sock = new TerminalSocket(target, {
       onData: (b) => xtermRef.current?.write(b),
@@ -72,7 +76,13 @@ export function useTerminalSession(target: TerminalTarget) {
     });
     sockRef.current = sock;
     sock.open();
-    return () => { sock.dispose(); sockRef.current = null; };
+    // Re-open/focus of this pane elsewhere in the UI (panes-store dedupe, tile
+    // activation) must not leave this socket asleep in reconnect backoff.
+    const offKick = onReconnectKick(
+      paneIdentity(target.serverId, target.target, target.paneId),
+      () => sock.retryNow(),
+    );
+    return () => { offKick(); sock.dispose(); sockRef.current = null; };
     // re-create only when the pane target changes
   }, [target.serverId, target.paneId, target.target]);
 
@@ -120,5 +130,5 @@ export function useTerminalSession(target: TerminalTarget) {
     },
   }), [ctrlArmed, send]);
 
-  return { xtermRef, controller, connected, everConnected, handleData, handleResize };
+  return { xtermRef, controller, connected, everConnected, handleData, handleResize, retryNow };
 }

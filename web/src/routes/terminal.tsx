@@ -10,7 +10,7 @@ import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import { useMobilePanePool, MOBILE_POOL_CAP } from "@/hooks/useMobilePanePool";
-import { paneIdentity } from "@/lib/pane-identity";
+import { paneIdentity, liveIdentSet, paneEnded, readyServerSet } from "@/lib/pane-identity";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { usePrefs } from "@/store/prefs";
 import { useMobileOpenTabs } from "@/store/mobile-open-tabs";
@@ -54,6 +54,19 @@ export function MobileTerminalRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Hoisted pane-liveness (shared by warming and the "session ended" banner).
+  const liveIdents = React.useMemo(() => liveIdentSet(rows), [rows]);
+  const readyServers = React.useMemo(() => readyServerSet(servers, sessionQs), [servers, sessionQs]);
+  const endedIds = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const p of pool.panes) {
+      if (paneEnded(readyServers, liveIdents, p.serverId, p.target, p.paneId)) {
+        out.add(paneIdentity(p.serverId, p.target, p.paneId));
+      }
+    }
+    return out;
+  }, [pool.panes, readyServers, liveIdents]);
+
   // Eager-warm the open set into the pool (up to the cap), but only entries that resolve to a
   // LIVE session row — mirroring the tab bar — so a stale/dead persisted entry (session killed
   // elsewhere, server offline, tmux restart with reused pane ids) never opens a socket or steals a
@@ -64,7 +77,6 @@ export function MobileTerminalRoute() {
     if (warmedRef.current || openTabs.length === 0 || rows.length === 0) return;
     warmedRef.current = true;
     const focusedIdent = paneIdentity(serverId, target, paneId);
-    const liveIdents = new Set(rows.map((r) => paneIdentity(r.server.id, r.session.target, r.pane.id)));
     let warmed = 1; // the seeded/focused pane counts toward the cap
     for (const t of openTabs) {
       if (warmed >= MOBILE_POOL_CAP) break;
@@ -99,21 +111,35 @@ export function MobileTerminalRoute() {
   // Close = remove from the open set + drop the pane from the pool (frees the socket). The
   // tmux session keeps running. Closing the active tab focuses a neighbor first; closing the
   // last open tab returns to the session list.
+  // The one raw removal both close paths share: open-set entry + pool slot (frees
+  // the socket). Kept single so the two paths below can never drift.
+  const dropPane = (id: string) => { removeOpenTab(id); pool.close(id); };
   const handleClose = (tab: SessionTab) => {
     const closingId = tab.key; // buildTabs sets key === paneIdentity(serverId, target, paneId)
-    const closeIt = () => { removeOpenTab(closingId); pool.close(closingId); };
     if (tab.active) {
       const neighbor = nextFocusAfterClose(tabs, closingId);
       if (neighbor) {
         pool.openAndFocus({ serverId: neighbor.serverId, target: neighbor.target, paneId: neighbor.paneId });
-        closeIt();
+        dropPane(closingId);
       } else {
-        closeIt();
+        dropPane(closingId);
         navigate({ to: "/" }); // closed the last tab → back to the session list
       }
     } else {
-      closeIt();
+      dropPane(closingId);
     }
+  };
+
+  // Ended-banner close: identical to closing the pane's tab; fall back to a direct
+  // removal for the (edge) pooled pane that has no tab row.
+  const handleClosePane = (id: string) => {
+    const tab = tabs.find((t) => t.key === id);
+    if (tab) {
+      handleClose(tab);
+      return;
+    }
+    dropPane(id);
+    if (pool.focusedId === id) navigate({ to: "/" });
   };
 
   return (
@@ -130,7 +156,9 @@ export function MobileTerminalRoute() {
         />
       </header>
       <div className="min-h-0 flex-1">
-        <MobileTerminalStack panes={pool.panes} focusedId={pool.focusedId} fontSize={fontSize} theme={theme} />
+        <MobileTerminalStack panes={pool.panes} focusedId={pool.focusedId}
+          fontSize={fontSize} theme={theme}
+          endedIds={endedIds} onClosePane={handleClosePane} />
       </div>
     </div>
   );

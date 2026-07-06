@@ -1,9 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 
 vi.mock("@/components/TerminalView", () => ({
   TerminalView: (p: any) => (
-    <div data-testid={`tv-${p.paneId}`} data-active={String(!!p.active)} data-keybar={String(!!p.showKeyBar)} />
+    <div data-testid={`tv-${p.paneId}`} data-active={String(!!p.active)} data-keybar={String(!!p.showKeyBar)}>
+      {p.ended ? (
+        <div>
+          session ended <button onClick={p.onClose}>close</button>
+        </div>
+      ) : null}
+    </div>
   ),
 }));
 
@@ -34,5 +40,23 @@ describe("MobileTerminalStack", () => {
     const wrappers = Array.from(container.querySelectorAll("[data-pane-wrapper]")) as HTMLElement[];
     const visible = wrappers.filter((w) => w.style.display !== "none");
     expect(visible).toHaveLength(1);
+  });
+
+  it("threads ended + onClose(paneIdentity) through to the pane's TerminalView", () => {
+    const onClosePane = vi.fn();
+    render(
+      <MobileTerminalStack
+        panes={[{ serverId: "s", target: "default", paneId: "%0" }] as any}
+        focusedId="s:default:%0"
+        fontSize={14}
+        theme={{} as any}
+        endedIds={new Set(["s:default:%0"])}
+        onClosePane={onClosePane}
+      />,
+    );
+    // With the real TerminalView (or a props-recording mock) the ended banner is on:
+    expect(screen.getByText("session ended")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "close" }));
+    expect(onClosePane).toHaveBeenCalledWith("s:default:%0");
   });
 });

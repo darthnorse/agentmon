@@ -27,20 +27,24 @@ type fakePane struct {
 	inputs   chan []byte
 	resizes  chan [2]int
 	closed   chan struct{}
+	attached chan struct{}
 }
 
 func newFakePane() *fakePane {
-	return &fakePane{
+	f := &fakePane{
 		out: make(chan []byte, 8), done: make(chan struct{}),
 		inputs: make(chan []byte, 8), resizes: make(chan [2]int, 8),
-		closed: make(chan struct{}),
+		closed: make(chan struct{}), attached: make(chan struct{}),
 	}
+	close(f.attached) // attached-by-default: pre-existing tests assume no gate
+	return f
 }
-func (f *fakePane) OutputChan() <-chan []byte   { return f.out }
-func (f *fakePane) DoneChan() <-chan struct{}   { return f.done }
-func (f *fakePane) SendInput(b []byte) error    { f.inputs <- append([]byte(nil), b...); return nil }
-func (f *fakePane) Resize(c, r int) error       { f.resizes <- [2]int{c, r}; return nil }
-func (f *fakePane) Close()                      { close(f.closed) }
+func (f *fakePane) OutputChan() <-chan []byte     { return f.out }
+func (f *fakePane) DoneChan() <-chan struct{}     { return f.done }
+func (f *fakePane) AttachedChan() <-chan struct{} { return f.attached }
+func (f *fakePane) SendInput(b []byte) error      { f.inputs <- append([]byte(nil), b...); return nil }
+func (f *fakePane) Resize(c, r int) error         { f.resizes <- [2]int{c, r}; return nil }
+func (f *fakePane) Close()                        { close(f.closed) }
 
 func testTarget() config.Config {
 	return config.Config{
@@ -54,6 +58,14 @@ func testTarget() config.Config {
 // buildHandler wires a PaneIO whose tmux seams are fakes, returning the fake pane
 // so the test can drive output.
 func buildHandler(t *testing.T, fake *fakePane) http.Handler {
+	return buildHandlerCapture(t, fake, func(ctx context.Context, socket, pane string, lines int) ([]byte, error) {
+		return []byte("SCROLLBACK"), nil
+	})
+}
+
+// buildHandlerCapture is buildHandler with an injectable Capture, so tests can
+// observe exactly when the scrollback snapshot runs relative to attach.
+func buildHandlerCapture(t *testing.T, fake *fakePane, capture func(context.Context, string, string, int) ([]byte, error)) http.Handler {
 	t.Helper()
 	cfg := testTarget()
 	h := &PaneIO{
@@ -65,13 +77,9 @@ func buildHandler(t *testing.T, fake *fakePane) http.Handler {
 			// not the raw 0x1f byte — mimic real tmux output here.
 			return []byte("%3\\037$1\n"), nil
 		},
-		Capture: func(ctx context.Context, socket, pane string, lines int) ([]byte, error) {
-			return []byte("SCROLLBACK"), nil
-		},
-		NewClient: func(ctx context.Context, socket, session, pane string) (PaneConn, error) {
-			return fake, nil
-		},
-		Tune: func(ctx context.Context, socket, session string) {},
+		Capture:   capture,
+		NewClient: func(ctx context.Context, socket, session, pane string) (PaneConn, error) { return fake, nil },
+		Tune:      func(ctx context.Context, socket, session string) {},
 	}
 	// A ServeMux is required so {paneId} path values are populated; the handler
 	// reads r.PathValue("paneId"). A bare handler would see an empty pane id.
@@ -276,5 +284,73 @@ func TestPaneWSDoneChanTearsDownAndClosesPane(t *testing.T) {
 		// expected: pane closed
 	case <-time.After(2 * time.Second):
 		t.Fatal("pane was never Close()d after teardown")
+	}
+}
+
+// The scrollback snapshot must not run until the control-mode attach completes —
+// a byte written to the pane after capture-pane but before the attach lands is in
+// NEITHER the snapshot NOR the %output stream (lost → blank terminal).
+func TestSnapshotGatedOnAttach(t *testing.T) {
+	fake := newFakePane()
+	fake.attached = make(chan struct{}) // attach pending
+	captureCalled := make(chan struct{})
+	srv := httptest.NewServer(buildHandlerCapture(t, fake,
+		func(ctx context.Context, socket, pane string, lines int) ([]byte, error) {
+			close(captureCalled)
+			return []byte("SNAP"), nil
+		}))
+	defer srv.Close()
+
+	conn, _, err := dial(t, srv, "ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	select {
+	case <-captureCalled:
+		t.Fatal("capture ran before the attach handshake completed")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(fake.attached)
+	select {
+	case <-captureCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("capture never ran after attach completed")
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(msg) != "SNAP" {
+		t.Fatalf("first frame = %q, want SNAP", msg)
+	}
+}
+
+// A control client that never confirms attach must degrade to the old behavior
+// (capture after attachWait), not block the terminal open.
+func TestSnapshotAttachTimeoutFallsBack(t *testing.T) {
+	old := attachWait
+	attachWait = 100 * time.Millisecond
+	defer func() { attachWait = old }()
+
+	fake := newFakePane()
+	fake.attached = make(chan struct{}) // never closes
+	srv := httptest.NewServer(buildHandler(t, fake))
+	defer srv.Close()
+
+	conn, _, err := dial(t, srv, "ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(msg) != "SCROLLBACK" {
+		t.Fatalf("first frame = %q, want SCROLLBACK", msg)
 	}
 }

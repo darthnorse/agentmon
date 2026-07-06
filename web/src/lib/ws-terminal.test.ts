@@ -172,4 +172,40 @@ describe("TerminalSocket", () => {
     expect(FakeWS.instances[0].binaryType).toBe("arraybuffer");
     sock.dispose();
   });
+
+  it("retryNow cancels the backoff timer, reopens immediately, and resets attempt", () => {
+    const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open();
+    FakeWS.instances[0].fireOpen();
+    FakeWS.instances[0].close(); // unexpected close → schedules reconnect (1200ms)
+    expect(FakeWS.instances).toHaveLength(1);
+    sock.retryNow();
+    expect(FakeWS.instances).toHaveLength(2); // no timer wait
+    // attempt was reset: the NEXT failure schedules the base delay again, not 2400ms.
+    FakeWS.instances[1].close();
+    vi.advanceTimersByTime(1199);
+    expect(FakeWS.instances).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(FakeWS.instances).toHaveLength(3);
+    sock.dispose();
+  });
+
+  it("retryNow is a no-op while a socket exists (connected or connecting)", () => {
+    const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open(); // connecting (never fired open)
+    sock.retryNow();
+    expect(FakeWS.instances).toHaveLength(1);
+    FakeWS.instances[0].fireOpen(); // connected
+    sock.retryNow();
+    expect(FakeWS.instances).toHaveLength(1);
+    sock.dispose();
+  });
+
+  it("retryNow is a no-op after dispose", () => {
+    const sock = new TerminalSocket(target, { onData: () => {} }, { WebSocketCtor: FakeWS as any, loc });
+    sock.open();
+    sock.dispose();
+    sock.retryNow();
+    expect(FakeWS.instances).toHaveLength(1);
+  });
 });

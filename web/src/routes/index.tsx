@@ -17,6 +17,7 @@ import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
 import { nextBlocked } from "@/lib/focus-next";
+import { liveIdentSet, readyServerSet } from "@/lib/pane-identity";
 import type { Session, SessionState } from "@/lib/contracts";
 
 export function ShellRoute() {
@@ -40,6 +41,13 @@ export function ShellRoute() {
   const byServer: Record<string, Session[]> = {};
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
   const rows = flattenSessions(servers, byServer);
+
+  // Pane-liveness for the "session ended" banner: a pane counts as gone ONLY when
+  // its server's sessions query has succeeded (readyServers) and the fresh list
+  // does not contain the pane. Query errors / not-yet-loaded → unknown → keep the
+  // ordinary reconnecting banner.
+  const readyServers = React.useMemo(() => readyServerSet(servers, sessionQs), [servers, sessionQs]);
+  const livePaneIds = React.useMemo(() => liveIdentSet(rows), [rows]);
 
   const snap = useStateSnapshot();
   const stateOf = (row: SessionRow): SessionState =>
@@ -74,6 +82,14 @@ export function ShellRoute() {
     // No pane to open (e.g. the post-create re-list hadn't observed it yet) — still
     // confirm the create so the action never silently no-ops; the list refresh shows it.
     if (!opened && !pane) toast(`Session “${session.name}” created`);
+    // Seed the cache with the session the hub just returned BEFORE invalidating:
+    // the new tile mounts on this render, and until the refetch lands the stale
+    // list would count its pane as gone (readyServers ✓, livePaneIds ✗) and flash
+    // a false "session ended" banner. The refetch then reconciles.
+    queryClient.setQueryData<Session[]>(sessionsKey(serverId), (old) => [
+      ...(old ?? []).filter((s) => !(s.name === session.name && s.target === session.target)),
+      session,
+    ]);
     queryClient.invalidateQueries({ queryKey: sessionsKey(serverId) });
     setShowNew(false);
   };
@@ -192,7 +208,8 @@ export function ShellRoute() {
             <Button variant="outline" size="sm" onClick={() => serversQ.refetch()}>Retry</Button>
           </div>
         ) : isDesktop ? (
-          <DesktopShell servers={servers} rows={rows} query={query} onQueryChange={setQuery} stateOf={stateOf} />
+          <DesktopShell servers={servers} rows={rows} query={query} onQueryChange={setQuery}
+            stateOf={stateOf} livePaneIds={livePaneIds} readyServers={readyServers} />
         ) : (
           <SessionList
             rows={rows}

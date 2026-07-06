@@ -68,3 +68,45 @@ func TestNewControlClientRejectsInvalidPane(t *testing.T) {
 		}
 	}
 }
+
+// TestReadLoopSignalsAttached: AttachedChan closes on the FIRST %end (the attach
+// reply terminator) and only once; %begin alone must not signal.
+func TestReadLoopSignalsAttached(t *testing.T) {
+	cmd := exec.Command("sleep", "30") // inert process so the deferred Wait can reap
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	c := &ControlClient{
+		pane: "%0", cmd: cmd,
+		quit: make(chan struct{}), Output: make(chan []byte, 8),
+		Done: make(chan struct{}), attached: make(chan struct{}),
+	}
+	pr, pw := io.Pipe()
+	go c.readLoop(pr)
+
+	if _, err := pw.Write([]byte("%begin 1 0 0\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.AttachedChan():
+		t.Fatal("attached signalled on begin — must wait for end")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, err := pw.Write([]byte("%end 1 0 0\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.AttachedChan():
+	case <-time.After(time.Second):
+		t.Fatal("attached not signalled after end")
+	}
+	// A second %end must not re-close (would panic).
+	if _, err := pw.Write([]byte("%end 2 1 0\n")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	pw.Close()
+	_ = cmd.Process.Kill()
+	<-c.Done
+}
