@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { SessionState } from "@/lib/contracts";
+import { kickReconnect } from "@/lib/reconnect-kick";
+import { paneIdentity } from "@/lib/pane-identity";
 
 export const GRID_TILE_CAP = 6; // client-side soft cap on simultaneously-live tiles
 
@@ -39,7 +41,13 @@ export const usePanes = create<PanesState>((set, get) => ({
   openPane(p) {
     const id = idOf(p);
     const existing = get().panes.find((x) => x.id === id);
-    if (existing) return { ok: true }; // already open → no-op, do NOT change focusedId
+    if (existing) {
+      // Already open → no-op on the grid, but the tile's socket may be asleep in
+      // reconnect backoff (e.g. a recreated same-named session reuses pane %0 after
+      // a tmux server restart) — kick it so the tile comes alive immediately.
+      kickReconnect(paneIdentity(p.serverId, p.target, p.paneId));
+      return { ok: true }; // do NOT change focusedId
+    }
     if (get().panes.length >= GRID_TILE_CAP) return { ok: false, reason: "cap" };
     set((s) => ({ panes: [...s.panes, { ...p, id }] })); // grid-first: leave focusedId as-is
     return { ok: true };
