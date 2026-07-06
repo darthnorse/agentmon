@@ -7,13 +7,15 @@ import type { SessionRow } from "@/components/SessionList";
 import type { SeenRequest, ServerSummary, SessionState } from "@/lib/contracts";
 
 export function DesktopShell({
-  servers, rows, query, onQueryChange, stateOf,
+  servers, rows, query, onQueryChange, stateOf, livePaneIds, readyServers,
 }: {
   servers: ServerSummary[];
   rows: SessionRow[];
   query: string;
   onQueryChange(q: string): void;
   stateOf(row: SessionRow): SessionState;
+  livePaneIds?: Set<string>;
+  readyServers?: Set<string>;
 }) {
   const openPane = usePanes((s) => s.openPane);
   const panes = usePanes((s) => s.panes);
@@ -50,7 +52,7 @@ export function DesktopShell({
             {notice}
           </div>
         )}
-        <GridView />
+        <GridView livePaneIds={livePaneIds} readyServers={readyServers} />
       </main>
     </div>
   );

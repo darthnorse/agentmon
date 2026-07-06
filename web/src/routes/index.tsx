@@ -17,6 +17,7 @@ import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
 import { nextBlocked } from "@/lib/focus-next";
+import { liveIdentSet } from "@/lib/pane-identity";
 import type { Session, SessionState } from "@/lib/contracts";
 
 export function ShellRoute() {
@@ -40,6 +41,16 @@ export function ShellRoute() {
   const byServer: Record<string, Session[]> = {};
   servers.forEach((s, i) => { byServer[s.id] = (sessionQs[i]?.data as Session[]) ?? []; });
   const rows = flattenSessions(servers, byServer);
+
+  // Pane-liveness for the "session ended" banner: a pane counts as gone ONLY when
+  // its server's sessions query has succeeded (readyServers) and the fresh list
+  // does not contain the pane. Query errors / not-yet-loaded → unknown → keep the
+  // ordinary reconnecting banner.
+  const readyServers = React.useMemo(
+    () => new Set(servers.filter((_, i) => sessionQs[i]?.isSuccess).map((s) => s.id)),
+    [servers, sessionQs],
+  );
+  const livePaneIds = React.useMemo(() => liveIdentSet(rows), [rows]);
 
   const snap = useStateSnapshot();
   const stateOf = (row: SessionRow): SessionState =>
@@ -192,7 +203,8 @@ export function ShellRoute() {
             <Button variant="outline" size="sm" onClick={() => serversQ.refetch()}>Retry</Button>
           </div>
         ) : isDesktop ? (
-          <DesktopShell servers={servers} rows={rows} query={query} onQueryChange={setQuery} stateOf={stateOf} />
+          <DesktopShell servers={servers} rows={rows} query={query} onQueryChange={setQuery}
+            stateOf={stateOf} livePaneIds={livePaneIds} readyServers={readyServers} />
         ) : (
           <SessionList
             rows={rows}

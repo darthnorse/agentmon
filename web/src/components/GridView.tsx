@@ -1,5 +1,6 @@
 import * as React from "react";
 import { usePanes } from "@/store/panes";
+import { paneIdentity } from "@/lib/pane-identity";
 import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
 import { useStateSnapshot } from "@/store/session-state";
@@ -14,7 +15,10 @@ import { chordLabel, isMacPlatform } from "@/lib/window-shortcuts";
 
 // Live tiled grid. EVERY tile stays mounted (its own WS); expand is in-state, so
 // the non-focused tiles are hidden with display:none — sockets + scrollback survive.
-export function GridView() {
+export function GridView({ livePaneIds, readyServers }: {
+  livePaneIds?: Set<string>;
+  readyServers?: Set<string>;
+} = {}) {
   const { panes, focusedId, focus, collapse, closePane } = usePanes();
   // Guard against a stale focusedId pointing at a removed pane — fall back to grid view.
   const focused = panes.find((p) => p.id === focusedId);
@@ -65,6 +69,10 @@ export function GridView() {
         {panes.map((p, i) => {
           const expanded = activeId === p.id;
           const hidden = activeId !== null && !expanded;
+          // Confirmed-gone only on fresh data; TerminalView further requires the
+          // socket to be disconnected, so a stale list can never mask a live pane.
+          const ended = !!readyServers?.has(p.serverId) &&
+            !!livePaneIds && !livePaneIds.has(paneIdentity(p.serverId, p.target, p.paneId));
           return (
             <div
               // Key by the session-independent pane identity so a session RENAME
@@ -110,7 +118,10 @@ export function GridView() {
                 </span>
               </div>
               <div className="min-h-0 flex-1 pl-2" style={{ background: theme.background }}>
-                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target} active={activeWindowId === p.id} focusNonce={focusNonce} fontSize={fontSize} theme={theme} />
+                <TerminalView serverId={p.serverId} paneId={p.paneId} target={p.target}
+                  active={activeWindowId === p.id} focusNonce={focusNonce}
+                  fontSize={fontSize} theme={theme}
+                  ended={ended} onClose={() => closePane(p.id)} />
               </div>
             </div>
           );
