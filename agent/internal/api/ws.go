@@ -114,6 +114,13 @@ func (h *PaneIO) Handler() http.HandlerFunc {
 		// capture-pane runs but before the attach lands would be in NEITHER the
 		// snapshot NOR the %output stream (lost → blank terminal until the next
 		// output). After the handshake, post-capture bytes always stream.
+		//
+		// Accepted trade-off: a byte written between attach and the capture-pane
+		// round-trip lands in BOTH the snapshot and the buffered %output, so it can
+		// render twice on a chatty pane. The pre-gate code had this same duplication
+		// mode whenever attach won the race, plus the loss mode; the gate removes
+		// loss without adding anything new. A clean cutover needs the capture
+		// serialized through the control stream — deliberately out of scope.
 		select {
 		case <-cc.AttachedChan():
 		case <-cc.DoneChan():

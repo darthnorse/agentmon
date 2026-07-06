@@ -1,6 +1,6 @@
 import * as React from "react";
 import { usePanes } from "@/store/panes";
-import { paneIdentity } from "@/lib/pane-identity";
+import { paneIdentity, paneEnded } from "@/lib/pane-identity";
 import { TerminalView } from "@/components/TerminalView";
 import { Button } from "@/components/ui/button";
 import { useStateSnapshot } from "@/store/session-state";
@@ -71,8 +71,7 @@ export function GridView({ livePaneIds, readyServers }: {
           const hidden = activeId !== null && !expanded;
           // Confirmed-gone only on fresh data; TerminalView further requires the
           // socket to be disconnected, so a stale list can never mask a live pane.
-          const ended = !!readyServers?.has(p.serverId) &&
-            !!livePaneIds && !livePaneIds.has(paneIdentity(p.serverId, p.target, p.paneId));
+          const ended = paneEnded(readyServers, livePaneIds, p.serverId, p.target, p.paneId);
           return (
             <div
               // Key by the session-independent pane identity so a session RENAME

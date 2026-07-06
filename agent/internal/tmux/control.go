@@ -39,8 +39,9 @@ type ControlClient struct {
 	Done chan struct{}
 	// attached closes when the attach-session handshake's reply block terminates
 	// (first %end/%error): from that point on, every pane write is guaranteed to be
-	// delivered as %output, so a snapshot taken AFTER this cannot leave a gap
-	// (bytes written pre-attach are in the snapshot; post-attach in the stream).
+	// delivered as %output, so a snapshot taken AFTER this cannot leave a gap.
+	// (Bytes written between attach and the snapshot appear in both — accepted
+	// duplication trade-off, see the gate in api/ws.go.)
 	attachOnce sync.Once
 	attached   chan struct{}
 }

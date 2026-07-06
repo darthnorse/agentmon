@@ -10,7 +10,7 @@ import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import { useMobilePanePool, MOBILE_POOL_CAP } from "@/hooks/useMobilePanePool";
-import { paneIdentity, liveIdentSet } from "@/lib/pane-identity";
+import { paneIdentity, liveIdentSet, paneEnded, readyServerSet } from "@/lib/pane-identity";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { usePrefs } from "@/store/prefs";
 import { useMobileOpenTabs } from "@/store/mobile-open-tabs";
@@ -56,15 +56,13 @@ export function MobileTerminalRoute() {
 
   // Hoisted pane-liveness (shared by warming and the "session ended" banner).
   const liveIdents = React.useMemo(() => liveIdentSet(rows), [rows]);
-  const readyServers = React.useMemo(
-    () => new Set(servers.filter((_, i) => sessionQs[i]?.isSuccess).map((s) => s.id)),
-    [servers, sessionQs],
-  );
+  const readyServers = React.useMemo(() => readyServerSet(servers, sessionQs), [servers, sessionQs]);
   const endedIds = React.useMemo(() => {
     const out = new Set<string>();
     for (const p of pool.panes) {
-      const id = paneIdentity(p.serverId, p.target, p.paneId);
-      if (readyServers.has(p.serverId) && !liveIdents.has(id)) out.add(id);
+      if (paneEnded(readyServers, liveIdents, p.serverId, p.target, p.paneId)) {
+        out.add(paneIdentity(p.serverId, p.target, p.paneId));
+      }
     }
     return out;
   }, [pool.panes, readyServers, liveIdents]);
@@ -113,33 +111,34 @@ export function MobileTerminalRoute() {
   // Close = remove from the open set + drop the pane from the pool (frees the socket). The
   // tmux session keeps running. Closing the active tab focuses a neighbor first; closing the
   // last open tab returns to the session list.
+  // The one raw removal both close paths share: open-set entry + pool slot (frees
+  // the socket). Kept single so the two paths below can never drift.
+  const dropPane = (id: string) => { removeOpenTab(id); pool.close(id); };
   const handleClose = (tab: SessionTab) => {
     const closingId = tab.key; // buildTabs sets key === paneIdentity(serverId, target, paneId)
-    const closeIt = () => { removeOpenTab(closingId); pool.close(closingId); };
     if (tab.active) {
       const neighbor = nextFocusAfterClose(tabs, closingId);
       if (neighbor) {
         pool.openAndFocus({ serverId: neighbor.serverId, target: neighbor.target, paneId: neighbor.paneId });
-        closeIt();
+        dropPane(closingId);
       } else {
-        closeIt();
+        dropPane(closingId);
         navigate({ to: "/" }); // closed the last tab → back to the session list
       }
     } else {
-      closeIt();
+      dropPane(closingId);
     }
   };
 
   // Ended-banner close: identical to closing the pane's tab; fall back to a direct
-  // pool/open-set removal for the (edge) pooled pane that has no tab row.
+  // removal for the (edge) pooled pane that has no tab row.
   const handleClosePane = (id: string) => {
     const tab = tabs.find((t) => t.key === id);
     if (tab) {
       handleClose(tab);
       return;
     }
-    removeOpenTab(id);
-    pool.close(id);
+    dropPane(id);
     if (pool.focusedId === id) navigate({ to: "/" });
   };
 

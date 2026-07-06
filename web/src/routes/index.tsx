@@ -17,7 +17,7 @@ import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
 import { nextBlocked } from "@/lib/focus-next";
-import { liveIdentSet } from "@/lib/pane-identity";
+import { liveIdentSet, readyServerSet } from "@/lib/pane-identity";
 import type { Session, SessionState } from "@/lib/contracts";
 
 export function ShellRoute() {
@@ -46,10 +46,7 @@ export function ShellRoute() {
   // its server's sessions query has succeeded (readyServers) and the fresh list
   // does not contain the pane. Query errors / not-yet-loaded → unknown → keep the
   // ordinary reconnecting banner.
-  const readyServers = React.useMemo(
-    () => new Set(servers.filter((_, i) => sessionQs[i]?.isSuccess).map((s) => s.id)),
-    [servers, sessionQs],
-  );
+  const readyServers = React.useMemo(() => readyServerSet(servers, sessionQs), [servers, sessionQs]);
   const livePaneIds = React.useMemo(() => liveIdentSet(rows), [rows]);
 
   const snap = useStateSnapshot();
