@@ -78,7 +78,7 @@ export function GridView({ livePaneIds, readyServers }: {
               // Key by the session-independent pane identity so a session RENAME
               // (which changes p.id) does NOT remount the tile and tear down its
               // WebSocket. p.id still drives focus/close/expand below.
-              key={`${p.serverId}:${p.target}:${p.paneId}`}
+              key={paneIdentity(p.serverId, p.target, p.paneId)}
               className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
               style={{ display: hidden ? "none" : "flex" }}
               // Sync the keyboard-focus target ONLY when focus actually lands in the
