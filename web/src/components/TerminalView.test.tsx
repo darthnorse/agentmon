@@ -30,9 +30,10 @@ vi.mock("@/components/XTerm", async () => {
 // Avoid opening a real socket in jsdom.
 const open = vi.fn();
 const dispose = vi.fn();
+const retryNow = vi.fn();
 vi.mock("@/lib/ws-terminal", async (orig) => {
   const mod = await (orig as any)();
-  return { ...mod, TerminalSocket: class { constructor() {} open = open; dispose = dispose; send() {} resize() {} } };
+  return { ...mod, TerminalSocket: class { constructor() {} open = open; dispose = dispose; send() {} resize() {} retryNow = retryNow; } };
 });
 
 import { TerminalView } from "@/components/TerminalView";
@@ -79,5 +80,15 @@ describe("TerminalView", () => {
     unmount();
     expect(dispose).toHaveBeenCalled(); // cleans up the socket
     vi.unstubAllGlobals();
+  });
+
+  it("kicks the socket to reconnect when the tile becomes active", () => {
+    retryNow.mockClear();
+    const { rerender } = render(
+      <TerminalView serverId="s" paneId="%1" target="default" active={false} />,
+    );
+    expect(retryNow).not.toHaveBeenCalled();
+    rerender(<TerminalView serverId="s" paneId="%1" target="default" active={true} />);
+    expect(retryNow).toHaveBeenCalled();
   });
 });

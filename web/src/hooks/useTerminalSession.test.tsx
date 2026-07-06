@@ -3,6 +3,7 @@ import { renderHook } from "@testing-library/react";
 
 // Capture the handlers passed to TerminalSocket so we can drive onState directly.
 let captured: { onState?: (f: { session: string; state: string }) => void } | null = null;
+const retryNowSpy = vi.fn();
 vi.mock("@/lib/ws-terminal", async (orig) => {
   const mod = (await orig()) as object;
   return {
@@ -15,6 +16,7 @@ vi.mock("@/lib/ws-terminal", async (orig) => {
       dispose() {}
       send() {}
       resize() {}
+      retryNow = retryNowSpy;
     },
   };
 });
@@ -22,6 +24,8 @@ vi.mock("@/lib/ws-terminal", async (orig) => {
 import { useTerminalSession } from "@/hooks/useTerminalSession";
 import { useSessionState } from "@/store/session-state";
 import { stateKey } from "@/lib/state";
+import { kickReconnect } from "@/lib/reconnect-kick";
+import { paneIdentity } from "@/lib/pane-identity";
 
 const target = { serverId: "s", target: "default", paneId: "%1" };
 const key = stateKey("s", "default", "api");
@@ -47,5 +51,19 @@ describe("useTerminalSession onState gating (M11)", () => {
     useSessionState.getState().setFocusedKey(key);
     captured!.onState!({ session: "api", state: "blocked" });
     expect(useSessionState.getState().live.get(key)).toBe("blocked");
+  });
+});
+
+describe("useTerminalSession reconnect kick", () => {
+  it("a kick for this pane's identity calls retryNow; unmount unsubscribes", () => {
+    retryNowSpy.mockClear();
+    const { unmount } = renderHook(() => useTerminalSession(target));
+    kickReconnect(paneIdentity(target.serverId, target.target, target.paneId));
+    expect(retryNowSpy).toHaveBeenCalledTimes(1);
+    kickReconnect(paneIdentity("other", "default", "%9"));
+    expect(retryNowSpy).toHaveBeenCalledTimes(1); // different pane → not ours
+    unmount();
+    kickReconnect(paneIdentity(target.serverId, target.target, target.paneId));
+    expect(retryNowSpy).toHaveBeenCalledTimes(1); // unsubscribed
   });
 });
