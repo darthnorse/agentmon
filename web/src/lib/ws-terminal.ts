@@ -135,6 +135,22 @@ export class TerminalSocket {
     }
   }
 
+  // Reconnect NOW instead of waiting out the backoff. Called when someone re-opens
+  // or focuses this pane (kick bus / tile activation) and on tab-visibility wake:
+  // user intent means the pane is probably alive again (e.g. a recreated session
+  // reusing a recycled pane id), so a stale multi-second timer must not make the
+  // terminal look dead. No-op when a socket already exists — never drop a live or
+  // in-flight connection.
+  retryNow(): void {
+    if (this.disposed || this.ws !== null) return;
+    this.attempt = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.open();
+  }
+
   private scheduleReconnect(): void {
     if (this.disposed || this.reconnectTimer) return;
     const delay = nextDelay(this.attempt++);
@@ -145,13 +161,6 @@ export class TerminalSocket {
   }
 
   private onVisibility(): void {
-    if (this.disposed) return;
-    if (document.visibilityState === "visible" && this.ws === null) {
-      if (this.reconnectTimer) {
-        clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-      }
-      this.open(); // wake → reconnect immediately
-    }
+    if (document.visibilityState === "visible") this.retryNow(); // wake → reconnect immediately
   }
 }
