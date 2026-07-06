@@ -85,6 +85,14 @@ export function ShellRoute() {
     // No pane to open (e.g. the post-create re-list hadn't observed it yet) — still
     // confirm the create so the action never silently no-ops; the list refresh shows it.
     if (!opened && !pane) toast(`Session “${session.name}” created`);
+    // Seed the cache with the session the hub just returned BEFORE invalidating:
+    // the new tile mounts on this render, and until the refetch lands the stale
+    // list would count its pane as gone (readyServers ✓, livePaneIds ✗) and flash
+    // a false "session ended" banner. The refetch then reconciles.
+    queryClient.setQueryData<Session[]>(sessionsKey(serverId), (old) => [
+      ...(old ?? []).filter((s) => !(s.name === session.name && s.target === session.target)),
+      session,
+    ]);
     queryClient.invalidateQueries({ queryKey: sessionsKey(serverId) });
     setShowNew(false);
   };
