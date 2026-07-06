@@ -10,7 +10,7 @@ import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import { useMobilePanePool, MOBILE_POOL_CAP } from "@/hooks/useMobilePanePool";
-import { paneIdentity } from "@/lib/pane-identity";
+import { paneIdentity, liveIdentSet } from "@/lib/pane-identity";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { usePrefs } from "@/store/prefs";
 import { useMobileOpenTabs } from "@/store/mobile-open-tabs";
@@ -54,6 +54,21 @@ export function MobileTerminalRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Hoisted pane-liveness (shared by warming and the "session ended" banner).
+  const liveIdents = React.useMemo(() => liveIdentSet(rows), [rows]);
+  const readyServers = React.useMemo(
+    () => new Set(servers.filter((_, i) => sessionQs[i]?.isSuccess).map((s) => s.id)),
+    [servers, sessionQs],
+  );
+  const endedIds = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const p of pool.panes) {
+      const id = paneIdentity(p.serverId, p.target, p.paneId);
+      if (readyServers.has(p.serverId) && !liveIdents.has(id)) out.add(id);
+    }
+    return out;
+  }, [pool.panes, readyServers, liveIdents]);
+
   // Eager-warm the open set into the pool (up to the cap), but only entries that resolve to a
   // LIVE session row — mirroring the tab bar — so a stale/dead persisted entry (session killed
   // elsewhere, server offline, tmux restart with reused pane ids) never opens a socket or steals a
@@ -64,7 +79,6 @@ export function MobileTerminalRoute() {
     if (warmedRef.current || openTabs.length === 0 || rows.length === 0) return;
     warmedRef.current = true;
     const focusedIdent = paneIdentity(serverId, target, paneId);
-    const liveIdents = new Set(rows.map((r) => paneIdentity(r.server.id, r.session.target, r.pane.id)));
     let warmed = 1; // the seeded/focused pane counts toward the cap
     for (const t of openTabs) {
       if (warmed >= MOBILE_POOL_CAP) break;
@@ -116,6 +130,19 @@ export function MobileTerminalRoute() {
     }
   };
 
+  // Ended-banner close: identical to closing the pane's tab; fall back to a direct
+  // pool/open-set removal for the (edge) pooled pane that has no tab row.
+  const handleClosePane = (id: string) => {
+    const tab = tabs.find((t) => t.key === id);
+    if (tab) {
+      handleClose(tab);
+      return;
+    }
+    removeOpenTab(id);
+    pool.close(id);
+    if (pool.focusedId === id) navigate({ to: "/" });
+  };
+
   return (
     <div className="flex h-full flex-col" style={{ height: vvHeight ? `${vvHeight}px` : undefined }}>
       <header
@@ -130,7 +157,9 @@ export function MobileTerminalRoute() {
         />
       </header>
       <div className="min-h-0 flex-1">
-        <MobileTerminalStack panes={pool.panes} focusedId={pool.focusedId} fontSize={fontSize} theme={theme} />
+        <MobileTerminalStack panes={pool.panes} focusedId={pool.focusedId}
+          fontSize={fontSize} theme={theme}
+          endedIds={endedIds} onClosePane={handleClosePane} />
       </div>
     </div>
   );
