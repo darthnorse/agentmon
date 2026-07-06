@@ -21,11 +21,17 @@ import (
 // (spec §13.4).
 var wsUpgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 
+// attachWait bounds how long the handler waits for the control-mode attach
+// handshake before capturing anyway — a slow attach must degrade to the old
+// racy-but-working behavior, never block the terminal open. Var so tests shorten it.
+var attachWait = 2 * time.Second
+
 // PaneConn is the slice of *tmux.ControlClient the WS handler needs; injected so
 // the handler is unit-testable without a real tmux.
 type PaneConn interface {
 	OutputChan() <-chan []byte
 	DoneChan() <-chan struct{}
+	AttachedChan() <-chan struct{}
 	SendInput([]byte) error
 	Resize(cols, rows int) error
 	Close()
@@ -103,6 +109,19 @@ func (h *PaneIO) Handler() http.HandlerFunc {
 			return
 		}
 		defer cc.Close()
+
+		// Gate the snapshot on attach completion: a byte written to the pane after
+		// capture-pane runs but before the attach lands would be in NEITHER the
+		// snapshot NOR the %output stream (lost → blank terminal until the next
+		// output). After the handshake, post-capture bytes always stream.
+		select {
+		case <-cc.AttachedChan():
+		case <-cc.DoneChan():
+			return // control client died before attaching
+		case <-ctx.Done():
+			return
+		case <-time.After(attachWait):
+		}
 
 		// 1) scrollback bootstrap before any live output. Deadline so a stalled
 		// client cannot block the handler on this pre-pump write.
