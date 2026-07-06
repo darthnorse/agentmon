@@ -37,6 +37,12 @@ type ControlClient struct {
 	// Done closes when the control client exits (%exit or process death), after
 	// the tmux process has been reaped.
 	Done chan struct{}
+	// attached closes when the attach-session handshake's reply block terminates
+	// (first %end/%error): from that point on, every pane write is guaranteed to be
+	// delivered as %output, so a snapshot taken AFTER this cannot leave a gap
+	// (bytes written pre-attach are in the snapshot; post-attach in the stream).
+	attachOnce sync.Once
+	attached   chan struct{}
 }
 
 // paneIDRe matches a tmux pane id ("%0", "%37"). The pane string is interpolated
@@ -76,14 +82,15 @@ func NewControlClient(ctx context.Context, socket, session, pane string) (*Contr
 	}
 
 	c := &ControlClient{
-		socket:  socket,
-		session: session,
-		pane:    pane,
-		cmd:     cmd,
-		stdin:   stdin,
-		quit:    make(chan struct{}),
-		Output:  make(chan []byte, 256),
-		Done:    make(chan struct{}),
+		socket:   socket,
+		session:  session,
+		pane:     pane,
+		cmd:      cmd,
+		stdin:    stdin,
+		quit:     make(chan struct{}),
+		Output:   make(chan []byte, 256),
+		Done:     make(chan struct{}),
+		attached: make(chan struct{}),
 	}
 	go c.readLoop(stdout)
 	return c, nil
@@ -119,6 +126,7 @@ func (c *ControlClient) readLoop(stdout io.Reader) {
 				inBlock = true
 			case hasPrefix(line, "%end"), hasPrefix(line, "%error"):
 				inBlock = false
+				c.markAttached()
 			case hasPrefix(line, "%exit"):
 				return
 				// %window-*, %layout-change, %session-changed etc: ignored for
@@ -133,6 +141,20 @@ func (c *ControlClient) readLoop(stdout io.Reader) {
 		}
 	}
 }
+
+// markAttached signals AttachedChan exactly once, on the first %end/%error — the
+// reply terminator of the implicit attach-session command. nil-safe: hand-built
+// test clients may not populate the channel.
+func (c *ControlClient) markAttached() {
+	if c.attached == nil {
+		return
+	}
+	c.attachOnce.Do(func() { close(c.attached) })
+}
+
+// AttachedChan closes once the control-mode attach handshake has completed. Callers
+// should also watch DoneChan — a client that dies pre-attach never signals this.
+func (c *ControlClient) AttachedChan() <-chan struct{} { return c.attached }
 
 // SendInput injects raw bytes into the pane as keystrokes via `send-keys -H`.
 // Verified: this delivers exact bytes (incl. a lone 0x1b and UTF-8) to the pty,
@@ -238,8 +260,8 @@ func encodeSendKeys(pane string, b []byte) []string {
 
 // OutputChan / DoneChan expose the client's channels behind read-only types so it
 // satisfies api.PaneConn without the api package importing concrete fields.
-func (c *ControlClient) OutputChan() <-chan []byte  { return c.Output }
-func (c *ControlClient) DoneChan() <-chan struct{}  { return c.Done }
+func (c *ControlClient) OutputChan() <-chan []byte { return c.Output }
+func (c *ControlClient) DoneChan() <-chan struct{} { return c.Done }
 
 func isOctal(c byte) bool { return c >= '0' && c <= '7' }
 
