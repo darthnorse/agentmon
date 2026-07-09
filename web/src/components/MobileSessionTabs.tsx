@@ -4,6 +4,8 @@ import type { OpenTab } from "@/store/mobile-open-tabs";
 import { StateDot } from "@/components/StateDot";
 import { cn } from "@/lib/utils";
 import { paneIdentity } from "@/lib/pane-identity";
+import { ProviderTag } from "@/components/ProviderTag";
+import { providerOf, type Provider } from "@/lib/provider";
 
 // One tab per session (§ mobile session switcher). Kept flat/serializable so the
 // route can build it from the cached session list and unit tests can assert on it.
@@ -15,6 +17,7 @@ export interface SessionTab {
   paneId: string;
   state: SessionState;
   active: boolean;
+  provider?: Provider;
 }
 
 // The session currently open in the terminal (from the URL) — always shown as the
@@ -68,6 +71,7 @@ export function buildTabs(
       paneId: row.pane.id,
       state: stateOf(row),
       active,
+      provider: providerOf(row.session.command),
     });
   }
   if (!matched) {
@@ -118,6 +122,7 @@ export function MobileSessionTabs({
             <span className="flex min-w-0 items-center gap-1">
               <StateDot state={tab.state} />
               <span className="max-w-[8rem] truncate">{tab.name}</span>
+              <ProviderTag provider={tab.provider} />
             </span>
           ) : (
             <button
@@ -127,6 +132,7 @@ export function MobileSessionTabs({
             >
               <StateDot state={tab.state} />
               <span className="max-w-[8rem] truncate">{tab.name}</span>
+              <ProviderTag provider={tab.provider} />
             </button>
           )}
           <button

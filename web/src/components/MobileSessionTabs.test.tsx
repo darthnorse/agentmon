@@ -63,6 +63,22 @@ describe("buildTabs", () => {
     expect(tabs.filter((t) => t.active).map((t) => t.paneId)).toEqual(["%2"]);
     expect(tabs.find((t) => t.active)?.name).toBe("renamed");
   });
+
+  it("threads the provider from the resolved row into each tab", () => {
+    const tabs = buildTabs(openAll, rows, current, idle);
+    expect(tabs.map((t) => t.provider)).toEqual(["claude", "claude", "claude"]);
+  });
+
+  it("gives the synthetic first-paint tab no provider", () => {
+    const tabs = buildTabs([], [], current, idle);
+    expect(tabs[0].provider).toBeUndefined();
+  });
+
+  it("renders the tag inside a tab", () => {
+    const tabs = buildTabs([open("%0")], rows, current, idle);
+    render(<MobileSessionTabs tabs={tabs} onSwitch={() => {}} onClose={() => {}} />);
+    expect(screen.getAllByText("claude").length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("nextFocusAfterClose", () => {
