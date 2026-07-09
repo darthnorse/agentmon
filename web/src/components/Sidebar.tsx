@@ -6,6 +6,7 @@ import { sortBlockedFirst, rollUp } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
 import { SessionActionsMenu } from "@/components/SessionActionsMenu";
 import { rowActivation } from "@/lib/row-activation";
+import { providerOf } from "@/lib/provider";
 
 // Desktop servers→sessions tree. Dots roll up; blocked sorts first. The tree is
 // seeded from the full `servers` list so a session-less server still renders (its
@@ -57,7 +58,6 @@ export function Sidebar({
         {groups.map(({ id, serverName, list, serverState }) => (
           <div key={id}>
             <div className="flex items-center gap-2 px-3 py-1">
-              <StateDot state={serverState} />
               <span className="text-xs font-semibold uppercase text-muted-foreground">{serverName}</span>
             </div>
             {list.map((row) => (
@@ -75,6 +75,7 @@ export function Sidebar({
                     name={row.session.name}
                     paneId={row.pane.id}
                     state={stateOf(row)}
+                    provider={providerOf(row.session.command)}
                   />
                   <div className="truncate text-xs text-muted-foreground">{row.session.cwd || "—"}</div>
                 </div>
