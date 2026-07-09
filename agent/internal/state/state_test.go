@@ -117,6 +117,40 @@ func TestPaneAndRollup(t *testing.T) {
 	}
 }
 
+func TestReconcileRemovesOnlyAbsentOlderPanesForTarget(t *testing.T) {
+	base := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	m := New(nil)
+	m.Apply(Event{Target: "dev", Pane: "%live", Name: "Stop", At: base})
+	m.Apply(Event{Target: "dev", Pane: "%gone", Name: "PermissionRequest", At: base})
+	m.Apply(Event{Target: "dev", Pane: "%raced", Name: "SessionStart", At: base.Add(2 * time.Second)})
+	m.Apply(Event{Target: "other", Pane: "%other", Name: "Stop", At: base})
+
+	m.Reconcile("dev", []string{"%live"}, base.Add(time.Second))
+
+	if _, ok := m.Pane("dev", "%live"); !ok {
+		t.Fatal("live pane was pruned")
+	}
+	if _, ok := m.Pane("dev", "%gone"); ok {
+		t.Fatal("absent pane older than discovery was not pruned")
+	}
+	if _, ok := m.Pane("dev", "%raced"); !ok {
+		t.Fatal("hook arriving during discovery was pruned")
+	}
+	if _, ok := m.Pane("other", "%other"); !ok {
+		t.Fatal("pane from another target was pruned")
+	}
+}
+
+func TestReconcileEmptyDiscoveryClearsTarget(t *testing.T) {
+	m := New(fixedNow())
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "Stop"})
+	m.Apply(Event{Target: "dev", Pane: "%1", Name: "PermissionRequest"})
+	m.Reconcile("dev", nil, fixedNow()().Add(time.Second))
+	if got := m.Snapshot("dev"); len(got) != 0 {
+		t.Fatalf("snapshot after empty discovery = %+v", got)
+	}
+}
+
 func TestApplyCountersTransitionAndDone(t *testing.T) {
 	m := New(func() time.Time { return time.Unix(0, 0) })
 	// SessionStart: unknown→idle = first change
@@ -146,7 +180,7 @@ func TestApplyCountersTransitionAndDone(t *testing.T) {
 
 func TestApplyPreserveDoesNotBumpCounters(t *testing.T) {
 	m := New(func() time.Time { return time.Unix(0, 0) })
-	m.Apply(Event{Target: "dev", Pane: "%0", Name: "Stop"}) // →done: Transition=1, Done=1
+	m.Apply(Event{Target: "dev", Pane: "%0", Name: "Stop"})         // →done: Transition=1, Done=1
 	m.Apply(Event{Target: "dev", Pane: "%0", Name: "SubagentStop"}) // preserve
 	got := m.Snapshot("dev")[0]
 	if got.TransitionSeq != 1 || got.DoneSeq != 1 {

@@ -1,4 +1,4 @@
-// Package hooks implements the agent's local Claude Code hook intake.
+// Package hooks implements the agent's local coding-agent hook intake.
 package hooks
 
 import (
@@ -46,8 +46,8 @@ func RequireLoopback(next http.Handler) http.Handler {
 	})
 }
 
-// hookBody is the tolerant subset read from Claude's hook event JSON.
-// Unknown/extra fields are ignored so newer Claude hook versions don't break older agents.
+// hookBody is the tolerant subset read from coding-agent hook event JSON.
+// Unknown/extra fields are ignored so newer hook versions don't break older agents.
 type hookBody struct {
 	HookEventName    string `json:"hook_event_name"`
 	NotificationType string `json:"notification_type"`
@@ -56,7 +56,7 @@ type hookBody struct {
 
 // HookHandler applies a correlated hook to the state machine. It returns 204 on the
 // happy path AND on every soft failure (unknown socket, bad pane, missing $TMUX,
-// unparseable body) so a hook never breaks or stalls Claude. now defaults to
+// unparseable body) so a hook never breaks or stalls the coding agent. now defaults to
 // time.Now when nil. Token auth and loopback are handled by middleware before this.
 func HookHandler(cfg config.Config, m *state.Machine, now func() time.Time) http.HandlerFunc {
 	if now == nil {

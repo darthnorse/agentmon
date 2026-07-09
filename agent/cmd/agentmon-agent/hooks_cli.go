@@ -24,14 +24,19 @@ func printWarnings(cfg config.Config) {
 // hooksMain runs `agentmon-agent hooks <print|install|uninstall>`.
 func hooksMain(args []string, stdout io.Writer) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: agentmon-agent hooks <print|install|uninstall> [--config p] [--settings p]")
+		return fmt.Errorf("usage: agentmon-agent hooks <print|install|uninstall> [--provider claude|codex] [--config p] [--settings p]")
 	}
 	sub := args[0]
 	fs := flag.NewFlagSet("hooks "+sub, flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	cfgPath := fs.String("config", "/etc/agentmon/agent.toml", "path to agent.toml")
-	settings := fs.String("settings", "", "path to the Claude Code settings.json (required for install/uninstall)")
+	providerName := fs.String("provider", string(hooks.ProviderClaude), "hook provider for print/install: claude or codex (uninstall removes all AgentMon-marked hooks)")
+	settings := fs.String("settings", "", "path to the provider hook settings JSON (required for install/uninstall)")
 	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	provider, err := hooks.ParseProvider(*providerName)
+	if err != nil {
 		return err
 	}
 	cfg, err := config.Load(*cfgPath)
@@ -41,7 +46,7 @@ func hooksMain(args []string, stdout io.Writer) error {
 	switch sub {
 	case "print":
 		printWarnings(cfg)
-		snip, err := hooks.Snippet(cfg)
+		snip, err := hooks.Snippet(cfg, provider)
 		if err != nil {
 			return err
 		}
@@ -57,14 +62,14 @@ func hooksMain(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		merged, err := hooks.Merge(existing, cfg)
+		merged, err := hooks.Merge(existing, cfg, provider)
 		if err != nil {
 			return err
 		}
 		if err := hooks.SaveSettings(*settings, merged); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "installed AgentMon hooks into %s\n", *settings)
+		fmt.Fprintf(stdout, "installed AgentMon %s hooks into %s\n", provider, *settings)
 		return nil
 	case "uninstall":
 		if *settings == "" {

@@ -3,11 +3,11 @@
 # AgentMon agent installer — served by the hub, templated with its own URL + checksums.
 # Re-running on a host that's already installed UPDATES the binary in place (keeps the
 # enrollment + config); a first run enrolls + installs the systemd unit. With Claude
-# Code present it offers to install the state hooks (or pass --hooks / --no-hooks).
-# Usage: sudo bash -c "$(curl -fsSL <hub>/install.sh)" [-- --hostname=H --user=U --socket=S --hooks|--no-hooks --dry-run]
+# Code or Codex present it offers to install state hooks.
+# Usage: sudo bash -c "$(curl -fsSL <hub>/install.sh)" [-- --hostname=H --user=U --socket=S --hooks[=claude|codex|all]|--no-hooks --dry-run]
 #   The bash -c "$(curl ...)" form keeps the script's stdin on your terminal, so the hooks Y/n prompt can
 #   read your answer. `curl ... | sudo bash` also works but can't prompt (stdin is the pipe + sudo's pty),
-#   so it falls back to telling you to re-run with --hooks.
+#   so it falls back to telling you which explicit --hooks mode to use.
 # --socket defaults to a dedicated 'agentmon' socket (the agent never sees your default
 # socket); use --socket=default for the standard socket, or --socket=<name> for another.
 set -euo pipefail
@@ -21,14 +21,18 @@ HOSTNAME_OVERRIDE=""
 USER_OVERRIDE=""
 SOCKET_OVERRIDE=""
 DRY_RUN="0"
-HOOKS_FLAG="" # "" = auto-detect + prompt; "yes" = --hooks; "no" = --no-hooks
+HOOKS_MODE="auto" # auto-detect + prompt; claude; codex; all; or none
 for arg in "$@"; do
   case "$arg" in
     --hostname=*) HOSTNAME_OVERRIDE="${arg#*=}" ;;
     --user=*)     USER_OVERRIDE="${arg#*=}" ;;
     --socket=*)   SOCKET_OVERRIDE="${arg#*=}" ;;
-    --hooks)      HOOKS_FLAG="yes" ;;
-    --no-hooks)   HOOKS_FLAG="no" ;;
+    --hooks)      HOOKS_MODE="claude" ;; # backward-compatible legacy meaning
+    --hooks=claude) HOOKS_MODE="claude" ;;
+    --hooks=codex)  HOOKS_MODE="codex" ;;
+    --hooks=all)    HOOKS_MODE="all" ;;
+    --hooks=*)    echo "unknown hooks mode: ${arg#*=} (want claude, codex, or all)" >&2; exit 2 ;;
+    --no-hooks)   HOOKS_MODE="none" ;;
     --dry-run)    DRY_RUN="1" ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -66,7 +70,7 @@ smoke_test() {
 # Idempotency keys on hook_token_file — we always write the pair, so its presence means
 # our provisioning is done.
 provision_hook_token() {
-  grep -q '^hook_token_file' /etc/agentmon/agent.toml 2>/dev/null && return 0
+  hook_token_ready && return 0
   # A hook_token without our companion hook_token_file is an operator's manual config;
   # don't duplicate the key or risk the literal token landing in settings.json.
   if grep -q '^hook_token' /etc/agentmon/agent.toml 2>/dev/null; then
@@ -92,59 +96,110 @@ provision_hook_token() {
   smoke_test
 }
 
-# install_hooks_into merges AgentMon's state hooks into $1/.claude/settings.json,
-# running the per-user file operations AS RUN_USER (via runuser) so root never follows a
-# symlink the run-user controls. Idempotent — Merge de-dupes.
-install_hooks_into() {
-  local home_dir="$1" settings
-  settings="$home_dir/.claude/settings.json"
-  command -v runuser >/dev/null 2>&1 || die "runuser (util-linux) is required to install hooks safely"
-  runuser -u "$RUN_USER" -- mkdir -p "$home_dir/.claude"
-  runuser -u "$RUN_USER" -- /usr/local/bin/agentmon-agent hooks install --config /etc/agentmon/agent.toml --settings "$settings"
-  echo "✓ Hooks installed into $settings — restart your Claude Code sessions to pick them up."
+# BEGIN hook setup functions (kept delimited for focused shell regression tests).
+provider_settings_path() {
+  local home_dir="$1" provider="$2"
+  case "$provider" in
+    claude) echo "$home_dir/.claude/settings.json" ;;
+    codex)  echo "$home_dir/.codex/hooks.json" ;;
+    *) return 1 ;;
+  esac
 }
 
-# maybe_install_hooks decides whether to set up Claude Code state hooks: --no-hooks
-# skips; --hooks forces; otherwise (auto) it installs when Claude Code is present and the
-# hooks aren't ALREADY fully set up (token wired AND merged into settings.json — so a
-# partially-failed prior run is still completable). It prompts on a terminal (works under
-# `curl | bash` via /dev/tty) and skips quietly when non-interactive.
+hook_token_ready() {
+  grep -q '^hook_token_file' /etc/agentmon/agent.toml 2>/dev/null
+}
+
+# install_hooks_into merges AgentMon's state hooks into the selected provider's
+# global JSON config, running per-user file operations AS RUN_USER (via runuser)
+# so root never follows a symlink the run-user controls. Idempotent — Merge de-dupes.
+install_hooks_into() {
+  local home_dir="$1" provider="$2" config_dir settings restart_note
+  settings="$(provider_settings_path "$home_dir" "$provider")" || die "unsupported hook provider: $provider"
+  config_dir="${settings%/*}"
+  case "$provider" in
+    claude)
+      restart_note="restart active Claude Code sessions to pick them up" ;;
+    codex)
+      restart_note="restart active Codex sessions and approve the hook trust prompt if shown" ;;
+  esac
+  command -v runuser >/dev/null 2>&1 || die "runuser (util-linux) is required to install hooks safely"
+  runuser -u "$RUN_USER" -- mkdir -p "$config_dir"
+  runuser -u "$RUN_USER" -- /usr/local/bin/agentmon-agent hooks install --provider "$provider" --config /etc/agentmon/agent.toml --settings "$settings"
+  echo "✓ AgentMon $provider hooks installed into $settings — $restart_note."
+}
+
+# provider_detected checks the run user's config directory and PATH. Running the
+# command lookup as RUN_USER avoids mistaking root's PATH for the monitored user's.
+provider_detected() {
+  local home_dir="$1" provider="$2"
+  [ -d "$home_dir/.$provider" ] && return 0
+  command -v runuser >/dev/null 2>&1 || return 1
+  runuser -u "$RUN_USER" -- sh -lc "command -v $provider" </dev/null >/dev/null 2>&1
+}
+
+provider_has_hooks() {
+  local home_dir="$1" provider="$2" settings
+  settings="$(provider_settings_path "$home_dir" "$provider")" || return 1
+  grep -q 'agentmon-hook' "$settings" 2>/dev/null
+}
+
+# maybe_install_hooks selects explicit providers or auto-detects Claude Code and
+# Codex. Auto mode offers every detected provider that is not already configured,
+# prompts once, provisions one shared token, then performs idempotent per-user merges.
 maybe_install_hooks() {
-  [ "$HOOKS_FLAG" = "no" ] && return 0
-  local home_dir settings
+  [ "$HOOKS_MODE" = "none" ] && return 0
+  local home_dir install_claude="0" install_codex="0" token_ready="0" label rerun
   home_dir="$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6)"
   [ -n "$home_dir" ] || home_dir="${HOME:-/root}"
-  settings="$home_dir/.claude/settings.json"
+  hook_token_ready && token_ready="1"
 
-  if [ "$HOOKS_FLAG" != "yes" ]; then
-    # Skip silently only when BOTH halves are already done (token wired + hooks merged).
-    if grep -q '^hook_token_file' /etc/agentmon/agent.toml 2>/dev/null && \
-       grep -q 'agentmon-hook' "$settings" 2>/dev/null; then
-      return 0
-    fi
-    if [ ! -d "$home_dir/.claude" ] && ! command -v claude >/dev/null 2>&1; then
-      return 0 # no Claude Code on this host → nothing to hook
-    fi
-    # A reliable prompt needs OUR stdin to be the terminal. Under `curl | sudo bash`,
-    # stdin is the pipe — and sudo's pty is fed by that pipe, not the keyboard — so a
-    # /dev/tty prompt reads EOF (skips) while the keystroke leaks to the parent shell.
-    # Detect a non-interactive stdin and point at the explicit flag instead.
-    if [ ! -t 0 ] || [ ! -r /dev/tty ]; then
-      echo "Claude Code detected — re-run with --hooks to install live-state hooks (or --no-hooks to skip)."
-      return 0
-    fi
-    printf 'Claude Code detected. Install AgentMon hooks for live agent state? [y/N] ' > /dev/tty
-    local ans=""
-    read -r -t 30 ans < /dev/tty || true
-    case "$ans" in
-      [Yy]*) ;;
-      *) echo "Skipping hooks (re-run with --hooks to enable)."; return 0 ;;
-    esac
-  fi
+  case "$HOOKS_MODE" in
+    claude) install_claude="1" ;;
+    codex) install_codex="1" ;;
+    all) install_claude="1"; install_codex="1" ;;
+    auto)
+      if provider_detected "$home_dir" claude && { [ "$token_ready" != "1" ] || ! provider_has_hooks "$home_dir" claude; }; then
+        install_claude="1"
+      fi
+      if provider_detected "$home_dir" codex && { [ "$token_ready" != "1" ] || ! provider_has_hooks "$home_dir" codex; }; then
+        install_codex="1"
+      fi
+      [ "$install_claude" = "1" ] || [ "$install_codex" = "1" ] || return 0
+      case "${install_claude}${install_codex}" in
+        10) label="Claude Code"; rerun="--hooks=claude" ;;
+        01) label="Codex"; rerun="--hooks=codex" ;;
+        11) label="Claude Code and Codex"; rerun="--hooks=all" ;;
+      esac
+      # A reliable prompt needs OUR stdin to be the terminal. Under `curl | sudo bash`,
+      # stdin is the pipe — and sudo's pty is fed by that pipe, not the keyboard — so a
+      # /dev/tty prompt reads EOF (skips) while the keystroke leaks to the parent shell.
+      # Detect a non-interactive stdin and point at the explicit flag instead.
+      if [ ! -t 0 ] || [ ! -r /dev/tty ]; then
+        echo "$label detected — re-run with $rerun to install live-state hooks (or --no-hooks to skip)."
+        return 0
+      fi
+      printf '%s detected. Install AgentMon hooks for live agent state? [y/N] ' "$label" > /dev/tty
+      local ans=""
+      read -r -t 30 ans < /dev/tty || true
+      case "$ans" in
+        [Yy]*) ;;
+        *) echo "Skipping hooks (re-run with $rerun to enable)."; return 0 ;;
+      esac
+      ;;
+    *) die "unsupported hooks mode: $HOOKS_MODE" ;;
+  esac
 
   provision_hook_token
-  install_hooks_into "$home_dir"
+  if [ "$install_claude" = "1" ]; then
+    install_hooks_into "$home_dir" claude
+  fi
+  if [ "$install_codex" = "1" ]; then
+    install_hooks_into "$home_dir" codex
+  fi
+  return 0
 }
+# END hook setup functions.
 
 command -v systemctl >/dev/null 2>&1 || die "systemd (systemctl) is required; this installer does not support non-systemd hosts"
 command -v curl >/dev/null 2>&1 || die "curl is required"
@@ -172,10 +227,12 @@ if [ -f /etc/agentmon/agent.toml ] && [ -f /etc/agentmon/hub_token ] && [ -f /et
 fi
 
 hooks_plan() {
-  case "$HOOKS_FLAG" in
-    yes) echo "install (--hooks)" ;;
-    no)  echo "skip (--no-hooks)" ;;
-    *)   echo "auto (detect Claude Code + prompt)" ;;
+  case "$HOOKS_MODE" in
+    claude) echo "install Claude Code hooks" ;;
+    codex)  echo "install Codex hooks" ;;
+    all)    echo "install Claude Code + Codex hooks" ;;
+    none)   echo "skip (--no-hooks)" ;;
+    *)      echo "auto (detect Claude Code/Codex + prompt)" ;;
   esac
 }
 
@@ -200,10 +257,12 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "[dry-run] would enroll at $HUB_URL/api/v1/enroll as '$HOST'"
     echo "[dry-run] would write /etc/agentmon/agent.toml + secrets, install + start the systemd unit"
   fi
-  case "$HOOKS_FLAG" in
-    yes) echo "[dry-run] would provision a hook token + install Claude Code hooks for '$RUN_USER'" ;;
-    no)  echo "[dry-run] would NOT install hooks" ;;
-    *)   echo "[dry-run] would offer to install Claude Code hooks if Claude Code is detected" ;;
+  case "$HOOKS_MODE" in
+    claude) echo "[dry-run] would provision a hook token + install Claude Code hooks for '$RUN_USER'" ;;
+    codex)  echo "[dry-run] would provision a hook token + install Codex hooks for '$RUN_USER'" ;;
+    all)    echo "[dry-run] would provision one hook token + install Claude Code and Codex hooks for '$RUN_USER'" ;;
+    none)   echo "[dry-run] would NOT install hooks" ;;
+    *)      echo "[dry-run] would detect Claude Code and Codex, then offer to install hooks for detected clients" ;;
   esac
   echo "[dry-run] no changes made."
   exit 0

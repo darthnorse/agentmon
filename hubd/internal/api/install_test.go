@@ -3,6 +3,9 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -97,6 +100,151 @@ func TestInstallScriptDoesNotPromptForHooksWhenPiped(t *testing.T) {
 	// must gate on stdin being a real terminal and otherwise point at the explicit flag.
 	if !strings.Contains(w.Body.String(), "[ ! -t 0 ]") {
 		t.Fatal("hooks prompt must skip (and guide to --hooks) when stdin is not a terminal")
+	}
+}
+
+func TestInstallScriptSupportsClaudeAndCodexHooks(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	for _, want := range []string{
+		`echo "$home_dir/.claude/settings.json"`,
+		`echo "$home_dir/.codex/hooks.json"`,
+		`--provider "$provider"`,
+		`provider_detected "$home_dir" claude`,
+		`provider_detected "$home_dir" codex`,
+		`sh -lc "command -v $provider" </dev/null >/dev/null 2>&1`,
+		`[ "$token_ready" != "1" ]`,
+		`--hooks=codex`,
+		`--hooks=all`,
+		`Claude Code and Codex`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh missing Codex/Claude hook behavior %q", want)
+		}
+	}
+	// Both-provider installation must converge on one provisioning call before
+	// the two conditional merges, so both clients use the same hook token.
+	if got := strings.Count(body, "\n  provision_hook_token\n"); got != 1 {
+		t.Fatalf("hook token provisioning calls = %d, want 1", got)
+	}
+	provision := strings.Index(body, "\n  provision_hook_token\n")
+	claudeInstall := strings.Index(body, `install_hooks_into "$home_dir" claude`)
+	codexInstall := strings.Index(body, `install_hooks_into "$home_dir" codex`)
+	if provision < 0 || provision > claudeInstall || provision > codexInstall {
+		t.Fatalf("one token must be provisioned before both installs (provision=%d claude=%d codex=%d)", provision, claudeInstall, codexInstall)
+	}
+}
+
+func TestMaybeInstallHooksReturnsSuccessForEverySelection(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	startMarker := "# BEGIN hook setup functions"
+	endMarker := "# END hook setup functions."
+	start := strings.Index(body, startMarker)
+	end := strings.Index(body, endMarker)
+	if start < 0 || end < start {
+		t.Fatalf("could not locate hook function block (start=%d end=%d)", start, end)
+	}
+	functions := body[start : end+len(endMarker)]
+
+	tests := []struct {
+		mode    string
+		want    []string
+		notWant string
+	}{
+		{mode: "claude", want: []string{"token", "install:claude", "complete"}, notWant: "install:codex"},
+		{mode: "codex", want: []string{"token", "install:codex", "complete"}, notWant: "install:claude"},
+		{mode: "all", want: []string{"token", "install:claude", "install:codex", "complete"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.mode, func(t *testing.T) {
+			harness := "set -euo pipefail\n" + functions + "\n" +
+				"HOOKS_MODE=" + tc.mode + "\nRUN_USER=root\n" +
+				"provision_hook_token() { echo token; }\n" +
+				"install_hooks_into() { echo install:\"$2\"; }\n" +
+				"maybe_install_hooks\necho complete\n"
+			cmd := exec.Command("bash")
+			cmd.Stdin = strings.NewReader(harness)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("maybe_install_hooks exited nonzero: %v\n%s", err, out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(string(out), want) {
+					t.Fatalf("output missing %q:\n%s", want, out)
+				}
+			}
+			if tc.notWant != "" && strings.Contains(string(out), tc.notWant) {
+				t.Fatalf("output unexpectedly contains %q:\n%s", tc.notWant, out)
+			}
+		})
+	}
+}
+
+func TestInstallScriptHookModesDryRun(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	path := filepath.Join(t.TempDir(), "install.sh")
+	if err := os.WriteFile(path, w.Body.Bytes(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		arg  string
+		want string
+	}{
+		{"legacy bare hooks", "--hooks", "install Claude Code hooks"},
+		{"explicit claude", "--hooks=claude", "install Claude Code hooks"},
+		{"codex", "--hooks=codex", "install Codex hooks"},
+		{"all", "--hooks=all", "install Claude Code + Codex hooks"},
+		{"none", "--no-hooks", "skip (--no-hooks)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("bash", path, tc.arg, "--dry-run")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("dry-run failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "hooks:    "+tc.want) {
+				t.Fatalf("dry-run output missing %q:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
+func TestInstallScriptRejectsUnknownHookMode(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	path := filepath.Join(t.TempDir(), "install.sh")
+	if err := os.WriteFile(path, w.Body.Bytes(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("bash", path, "--hooks=other", "--dry-run").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "want claude, codex, or all") {
+		t.Fatalf("unknown mode result err=%v output=%s", err, out)
+	}
+}
+
+func TestInstallScriptBashSyntax(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	cmd := exec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader(w.Body.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("rendered install.sh has invalid syntax: %v\n%s", err, out)
 	}
 }
 

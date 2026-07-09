@@ -8,7 +8,7 @@ from your desktop or your phone — to answer, approve, or course-correct. When 
 at gets blocked, AgentMon tells you: an in-app toast and sound, or a push notification when your phone is
 asleep.
 
-It's built for the common reality of running several Claude Code (or similar) sessions across several boxes:
+It's built for the common reality of running several Claude Code or Codex sessions across several boxes:
 status *is* navigation, and the thing you most need is "which agent needs me, and let me get to it now."
 
 > **Status:** v1. Single-operator by design (each operator runs their own hub). LAN / private-network use —
@@ -24,7 +24,7 @@ status *is* navigation, and the thing you most need is "which agent needs me, an
 - **Real terminals, real persistence.** Sessions are `tmux` sessions, so your agents keep running when you
   close the tab, your phone sleeps, the hub restarts, or you SSH in directly. Full scrollback, touch
   scrolling, and a mobile key bar (Esc / Ctrl / Tab / arrows / paste).
-- **Live state, blocked-first.** Claude Code hooks drive per-session state — `blocked` / `done` / `working`
+- **Live state, blocked-first.** Claude Code and Codex hooks drive per-session state — `blocked` / `done` / `working`
   / `idle` — rolled up to colored dots per session and server, with blocked sessions always floated to the
   top. "Next blocked" jumps you to the next one.
 - **Cross-session attention alerts.** When a *different* session goes `blocked`, you get an in-app
@@ -36,7 +36,7 @@ status *is* navigation, and the thing you most need is "which agent needs me, an
 - **Admit agents from the web** — newly-installed agents show up as a *pending* banner; **Approve** or
   **Reject** them from the dashboard (the trust gate, no CLI needed).
 - **One-command install + upgrade** — `sudo bash -c "$(curl -fsSL <hub>/install.sh)"` enrolls a new agent,
-  updates an existing one in place, and offers (Y/n) to wire up the Claude Code state hooks.
+  updates an existing one in place, and offers (Y/n) to wire up detected Claude Code and Codex state hooks.
 - **Per-user preferences** — terminal theme + font size (separately tunable for desktop and mobile), and an
   optional "alert me when a session finishes" toggle.
 
@@ -72,7 +72,7 @@ reachable by the hub.
   (Caddy/nginx) for HTTPS, or terminate TLS however you like — cookies/CSRF want a stable origin.
 - **Each server:** Linux with `systemd`, `tmux` (3.x), and `curl`. amd64 or arm64. A non-root service
   account is recommended.
-- **For live agent state:** Claude Code (hooks are how AgentMon learns `blocked` / `done` / `working`).
+- **For live agent state:** Claude Code or Codex (hooks are how AgentMon learns `blocked` / `done` / `working`).
 
 ---
 
@@ -135,7 +135,7 @@ The hub serves a templated installer. On each box you want to monitor:
 ```bash
 sudo bash -c "$(curl -fsSL <external_origin>/install.sh)"
 # add overrides after a -- :
-#   sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --user=U --socket=S --hooks|--no-hooks --dry-run
+#   sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --user=U --socket=S --hooks=claude|--hooks=codex|--hooks=all|--no-hooks --dry-run
 ```
 
 (Use the `bash -c "$(curl …)"` form rather than `curl … | sudo bash` so the script's input is your
@@ -173,34 +173,54 @@ docker compose exec agentmon-hub /agentmon-hubd server approve <hostname>
 
 The server then appears in the UI with its live sessions. (`server revoke` / `server rm` to undo.)
 
-### 6. Enable Claude Code state (hooks)
+### 6. Enable coding-agent state (hooks)
 
-The live `blocked` / `done` / `working` dots come from Claude Code hooks — and **the installer offers to set
-them up for you**. When it detects Claude Code on the host (the run-user's `~/.claude`, or a `claude` binary
-on `PATH`) it asks:
+The live `blocked` / `done` / `working` dots come from lifecycle hooks, and **the installer offers to set
+them up for you**. It detects both Claude Code (the run-user's `~/.claude`, or a `claude` binary on that
+user's `PATH`) and Codex (`~/.codex`, or a `codex` binary). If either client is missing AgentMon hooks, it
+asks once and names every detected client it will configure. For example, when both are present:
 
 ```
-Claude Code detected. Install AgentMon hooks for live agent state? [y/N]
+Claude Code and Codex detected. Install AgentMon hooks for live agent state? [y/N]
 ```
 
 For the prompt to read your answer, the script's stdin must be your terminal — which is exactly why the
 install command uses **`sudo bash -c "$(curl …)"`** rather than `curl … | sudo bash`. (If you *pipe* it,
 the keyboard isn't reachable through the pipe + `sudo`'s pty, so the installer detects that, skips the
-prompt, and tells you to re-run with `--hooks`.) Saying **yes** generates a hook token, wires it into
-`agent.toml`, and merges the hooks into the run-user's global `~/.claude/settings.json` — idempotent, so
-re-running is safe. If Claude Code isn't on the host it's skipped silently. Override the prompt with
-**`--hooks`** (install non-interactively) or **`--no-hooks`** (skip):
+prompt, and tells you which explicit `--hooks=...` mode to re-run.) Saying **yes** generates a hook token,
+wires it into `agent.toml`, and merges hooks into the run-user's global `~/.claude/settings.json`,
+`~/.codex/hooks.json`, or both. The merge is idempotent and preserves unrelated user hooks. If neither
+client is detected, the installer skips hook setup silently.
+
+Override automatic detection and the prompt with an explicit mode:
 
 ```bash
-sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --hooks       # or --no-hooks
+sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --hooks=claude
+sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --hooks=codex
+sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --hooks=all
+sudo bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --no-hooks
 ```
 
-To wire hooks manually (or into a **per-project** `.claude/settings.json`, which the installer doesn't touch):
+Bare `--hooks` remains an alias for `--hooks=claude` for compatibility with earlier AgentMon installers.
+
+To wire hooks manually:
 
 ```bash
-agentmon-agent hooks install --settings ~/.claude/settings.json     # or a project's .claude/settings.json
-agentmon-agent hook-test --session myproject --event PermissionRequest   # verify
+agentmon-agent hooks install --provider claude --settings ~/.claude/settings.json
+agentmon-agent hooks install --provider codex  --settings ~/.codex/hooks.json
+agentmon-agent hook-test --event PermissionRequest   # run inside the monitored tmux pane to verify
 ```
+
+The one-command installer targets the run-user's standard `~/.codex/hooks.json`. If that user launches
+Codex with a custom `CODEX_HOME`, install manually with `--settings "$CODEX_HOME/hooks.json"`; the root
+installer cannot reliably reconstruct a user's future runtime environment.
+
+Restart active Claude Code or Codex sessions after changing their hook configuration. Codex may show a
+one-time hook-trust confirmation; review and approve the AgentMon curl command so the hooks can run. Codex maps
+`SessionStart` to `idle`, prompt/tool activity to `working`, `PermissionRequest` to `blocked`, and `Stop` to
+`done`. Codex does not expose Claude's `SessionEnd` hook, so AgentMon prunes state when a pane disappears from
+a successful tmux discovery. If Codex exits back to a shell in the same pane, the last state can remain until
+another agent emits `SessionStart`. Hook behavior is independent of the selected Codex model, including Sol.
 
 Without hooks, sessions still show and are fully usable — they just read `unknown` instead of live state.
 

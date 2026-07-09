@@ -34,6 +34,14 @@ type DiscoverOpts struct {
 	SocketName  string // "" → tmux default socket
 }
 
+// Discovery is one tmux snapshot plus whether malformed records were skipped.
+// Partial snapshots remain useful for display but must not drive destructive
+// reconciliation because omitted panes may still be live.
+type Discovery struct {
+	Sessions []shared.Session
+	Partial  bool
+}
+
 // paneFmt lists, per pane, the owning window's id/index/name/active flag and the
 // pane's id/command/cwd/active flag — enough to rebuild the window→pane tree and
 // pick the session's active pane from a single `list-panes -s` call.
@@ -45,18 +53,26 @@ const paneFmt = "#{window_id}" + fieldSep + "#{window_index}" + fieldSep +
 // Discover returns the live session tree for one target. A target whose tmux
 // server is not running yields an empty (non-nil) slice, not an error.
 func Discover(ctx context.Context, run Runner, opts DiscoverOpts) ([]shared.Session, error) {
+	result, err := DiscoverDetailed(ctx, run, opts)
+	return result.Sessions, err
+}
+
+// DiscoverDetailed is Discover with completeness metadata for callers that
+// reconcile state against the returned pane set.
+func DiscoverDetailed(ctx context.Context, run Runner, opts DiscoverOpts) (Discovery, error) {
 	base := socketArgs(opts.SocketName)
 
 	sessOut, err := run(ctx, with(base, "list-sessions", "-F",
 		"#{session_id}"+fieldSep+"#{session_name}")...)
 	if err != nil {
 		if isNoServer(err) {
-			return []shared.Session{}, nil
+			return Discovery{Sessions: []shared.Session{}}, nil
 		}
-		return nil, err
+		return Discovery{}, err
 	}
 
 	sessions := []shared.Session{}
+	partial := false
 	for _, line := range nonEmptyLines(sessOut) {
 		f, err := splitFields(line, 2)
 		if err != nil {
@@ -65,13 +81,15 @@ func Discover(ctx context.Context, run Runner, opts DiscoverOpts) ([]shared.Sess
 			// not blind the operator to every other session on this target. Logged,
 			// so it is never a *silent* drop (the M1 failure this replaces).
 			log.Printf("discovery: skipping malformed session record (server=%s target=%s): %v", opts.ServerID, opts.TargetLabel, err)
+			partial = true
 			continue
 		}
 		sid, name := f[0], unescapeName(f[1])
-		windows, cwd, command, err := discoverPanes(ctx, run, base, sid)
+		windows, cwd, command, panesPartial, err := discoverPanes(ctx, run, base, sid)
 		if err != nil {
-			return nil, err
+			return Discovery{}, err
 		}
+		partial = partial || panesPartial
 		sessions = append(sessions, shared.Session{
 			Name:    name,
 			Server:  opts.ServerID,
@@ -81,16 +99,16 @@ func Discover(ctx context.Context, run Runner, opts DiscoverOpts) ([]shared.Sess
 			Windows: windows,
 		})
 	}
-	return sessions, nil
+	return Discovery{Sessions: sessions, Partial: partial}, nil
 }
 
 // discoverPanes runs one `list-panes -s` for the session and assembles its
 // windows (first-seen order, which follows tmux's window-index order) along with
 // the session-level cwd/command taken from the active window's active pane.
-func discoverPanes(ctx context.Context, run Runner, base []string, sessionID string) (windows []shared.Window, sessCwd, sessCommand string, err error) {
+func discoverPanes(ctx context.Context, run Runner, base []string, sessionID string) (windows []shared.Window, sessCwd, sessCommand string, partial bool, err error) {
 	out, err := run(ctx, with(base, "list-panes", "-s", "-t", sessionID, "-F", paneFmt)...)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", false, err
 	}
 	pos := map[string]int{} // window_id → index in windows
 	for _, line := range nonEmptyLines(out) {
@@ -99,6 +117,7 @@ func discoverPanes(ctx context.Context, run Runner, base []string, sessionID str
 			// Skip (but log) a single malformed pane record rather than dropping the
 			// whole session — see the session-loop rationale above.
 			log.Printf("discovery: skipping malformed pane record (session=%s): %v", sessionID, err)
+			partial = true
 			continue
 		}
 		wid, windex, wname, wactive := f[0], f[1], unescapeName(f[2]), f[3]
@@ -118,7 +137,7 @@ func discoverPanes(ctx context.Context, run Runner, base []string, sessionID str
 		sessCwd = windows[0].Panes[0].Cwd
 		sessCommand = windows[0].Panes[0].Command
 	}
-	return windows, sessCwd, sessCommand, nil
+	return windows, sessCwd, sessCommand, partial, nil
 }
 
 // with returns base followed by extra, never aliasing base's backing array.

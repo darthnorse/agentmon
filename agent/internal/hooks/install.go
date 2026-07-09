@@ -16,21 +16,57 @@ import (
 // uninstall removes exactly our entries (and nothing the user added).
 const Marker = "agentmon-hook"
 
-// events are the Claude Code hook events AgentMon installs (verified v2.1.195).
-var events = []string{
-	"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
-	"Notification", "PermissionRequest", "Stop", "SubagentStop", "SessionEnd",
+// Provider identifies the coding agent whose hook configuration is being managed.
+type Provider string
+
+const (
+	ProviderClaude Provider = "claude"
+	ProviderCodex  Provider = "codex"
+)
+
+// ParseProvider validates a CLI/config provider name.
+func ParseProvider(s string) (Provider, error) {
+	switch Provider(strings.ToLower(strings.TrimSpace(s))) {
+	case ProviderClaude:
+		return ProviderClaude, nil
+	case ProviderCodex:
+		return ProviderCodex, nil
+	default:
+		return "", fmt.Errorf("unknown hook provider %q (want claude or codex)", s)
+	}
+}
+
+// eventsFor returns only lifecycle events supported by the selected provider.
+// Claude's list is verified against v2.1.195. Codex intentionally omits
+// Notification, SessionEnd, and subagent events: PermissionRequest and Stop
+// provide the blocked/done transitions without letting a subagent affect its
+// parent pane's state.
+func eventsFor(provider Provider) ([]string, error) {
+	switch provider {
+	case ProviderClaude:
+		return []string{
+			"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+			"Notification", "PermissionRequest", "Stop", "SubagentStop", "SessionEnd",
+		}, nil
+	case ProviderCodex:
+		return []string{
+			"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+			"PermissionRequest", "Stop",
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown hook provider %q", provider)
+	}
 }
 
 // shellSingleQuote wraps s in single quotes for safe shell interpolation.
-// Embedded single quotes are escaped as '\''.
+// Embedded single quotes use the standard shell close/escape/reopen form.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// Command builds the shell command Claude runs for each hook event. It pipes the
+// Command builds the shell command the coding agent runs for each hook event. It pipes the
 // event JSON (stdin) to the agent and carries pane/socket correlation in headers.
-// curl failures are swallowed (|| true) so a hook never fails Claude's turn.
+// curl failures are swallowed (|| true) so a hook never fails the coding agent's turn.
 // The hook token and token-file path are shell-single-quoted to prevent injection
 // from values containing shell metacharacters (spaces, quotes, $, backticks, etc.).
 func Command(cfg config.Config) (string, error) {
@@ -55,15 +91,31 @@ func group(cmd string) map[string]any {
 	return map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd}}}
 }
 
+func groupFor(provider Provider, event, cmd string) map[string]any {
+	g := group(cmd)
+	if provider == ProviderCodex && event == "SessionStart" {
+		// Codex also emits SessionStart with source=compact. Compaction occurs
+		// mid-turn and must not reset a working pane to idle.
+		g["matcher"] = "startup|resume|clear"
+	}
+	// Keep Claude's established matcherless shape unchanged in this Codex-scoped
+	// change; rolling out a Claude matcher needs its own compatibility decision.
+	return g
+}
+
 // Snippet returns the {"hooks":{...}} settings block AgentMon installs.
-func Snippet(cfg config.Config) (map[string]any, error) {
+func Snippet(cfg config.Config, provider Provider) (map[string]any, error) {
 	cmd, err := Command(cfg)
+	if err != nil {
+		return nil, err
+	}
+	events, err := eventsFor(provider)
 	if err != nil {
 		return nil, err
 	}
 	h := map[string]any{}
 	for _, e := range events {
-		h[e] = []any{group(cmd)}
+		h[e] = []any{groupFor(provider, e, cmd)}
 	}
 	return map[string]any{"hooks": h}, nil
 }
@@ -71,21 +123,26 @@ func Snippet(cfg config.Config) (map[string]any, error) {
 // Merge splices AgentMon's hooks into an existing settings map idempotently:
 // existing AgentMon groups are removed first, so re-running never duplicates and the
 // user's own hooks are untouched. Returns the same (or a fresh) map.
-func Merge(existing map[string]any, cfg config.Config) (map[string]any, error) {
+func Merge(existing map[string]any, cfg config.Config, provider Provider) (map[string]any, error) {
 	cmd, err := Command(cfg)
 	if err != nil {
 		return nil, err
 	}
-	if existing == nil {
-		existing = map[string]any{}
+	events, err := eventsFor(provider)
+	if err != nil {
+		return nil, err
 	}
+	// Remove every prior AgentMon group before adding the selected provider's
+	// event set. This repairs a settings file previously installed with the
+	// wrong provider without touching user-managed hook groups.
+	existing = Unmerge(existing)
 	hooks, _ := existing["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
 	for _, e := range events {
 		arr, _ := hooks[e].([]any)
-		arr = append(dropAgentmon(arr), group(cmd))
+		arr = append(arr, groupFor(provider, e, cmd))
 		hooks[e] = arr
 	}
 	existing["hooks"] = hooks

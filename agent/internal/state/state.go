@@ -1,4 +1,4 @@
-// Package state derives a Claude Code session/pane state from hook events. It is
+// Package state derives a coding-agent session/pane state from hook events. It is
 // pure (no tmux, no HTTP), in-memory, and safe for concurrent use.
 package state
 
@@ -17,7 +17,7 @@ type Event struct {
 	Pane             string    // tmux pane id, e.g. "%3"
 	Name             string    // hook_event_name
 	NotificationKind string    // notification_type (Notification only; else "")
-	ClaudeSessionID  string    // session_id (UUID) — informational
+	ClaudeSessionID  string    // session_id (UUID) — informational; legacy field name
 	Epoch            string    // $TMUX server pid; "" if unknown
 	At               time.Time // event time; defaults to now() when zero
 }
@@ -76,7 +76,7 @@ func (m *Machine) Apply(ev Event) (shared.State, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := key{ev.Target, ev.Pane}
-	ps := m.panes[k]            // zero value for a new pane (counters 0)
+	ps := m.panes[k] // zero value for a new pane (counters 0)
 	prior := ps.State
 	if prior == "" {
 		prior = shared.StateUnknown
@@ -134,6 +134,30 @@ func (m *Machine) Rollup(target string, panes []string) shared.State {
 		}
 	}
 	return shared.RollUp(states...)
+}
+
+// Reconcile removes state for panes absent from a successful tmux discovery.
+// Only entries last updated at or before observedBefore are eligible, so a hook
+// that arrives while discovery is running is not deleted by the older snapshot.
+// Other targets are untouched.
+func (m *Machine) Reconcile(target string, livePanes []string, observedBefore time.Time) {
+	live := make(map[string]struct{}, len(livePanes))
+	for _, pane := range livePanes {
+		live[pane] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, ps := range m.panes {
+		if k.target != target {
+			continue
+		}
+		if _, ok := live[k.pane]; ok {
+			continue
+		}
+		if !ps.UpdatedAt.After(observedBefore) {
+			delete(m.panes, k)
+		}
+	}
 }
 
 // Snapshot returns the per-pane state for all panes matching target (or all panes

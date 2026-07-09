@@ -28,8 +28,8 @@ func withTmuxTimeout(r *http.Request) (context.Context, context.CancelFunc) {
 }
 
 // Discoverer resolves a target's live session tree. Injected so the handler is
-// testable without a real tmux (production binds tmux.Discover + tmux.ExecRunner).
-type Discoverer func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error)
+// testable without a real tmux (production binds tmux.DiscoverDetailed + tmux.ExecRunner).
+type Discoverer func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error)
 
 // SessionsHandler serves GET /sessions?target=<label>. Target resolves via config
 // (empty → default); discovery runs through the injected Discoverer.
@@ -44,7 +44,8 @@ func SessionsHandler(cfg config.Config, discover Discoverer, m *state.Machine) h
 		}
 		ctx, cancel := withTmuxTimeout(r)
 		defer cancel()
-		sessions, err := discover(ctx, tmux.DiscoverOpts{
+		discoveryStartedAt := time.Now()
+		discovery, err := discover(ctx, tmux.DiscoverOpts{
 			ServerID:    cfg.ServerID,
 			TargetLabel: t.Label,
 			SocketName:  t.SocketName,
@@ -54,13 +55,35 @@ func SessionsHandler(cfg config.Config, discover Discoverer, m *state.Machine) h
 			writeJSONError(w, http.StatusInternalServerError, "discovery failed")
 			return
 		}
+		sessions := discovery.Sessions
 		if sessions == nil {
 			sessions = []shared.Session{}
+		}
+		if m != nil && !discovery.Partial {
+			m.Reconcile(t.Label, discoveredPaneIDs(sessions), discoveryStartedAt)
 		}
 		stampState(m, t.Label, sessions)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(shared.SessionList{Sessions: sessions})
 	}
+}
+
+func discoveredPaneIDs(sessions []shared.Session) []string {
+	var panes []string
+	for _, session := range sessions {
+		panes = append(panes, sessionPaneIDs(session)...)
+	}
+	return panes
+}
+
+func sessionPaneIDs(session shared.Session) []string {
+	var panes []string
+	for _, window := range session.Windows {
+		for _, pane := range window.Panes {
+			panes = append(panes, pane.ID)
+		}
+	}
+	return panes
 }
 
 // maxCreateBody caps the POST /sessions request body. The body is a tiny JSON
@@ -236,13 +259,7 @@ func stampState(m *state.Machine, target string, sessions []shared.Session) {
 		return
 	}
 	for i := range sessions {
-		var panes []string
-		for _, win := range sessions[i].Windows {
-			for _, p := range win.Panes {
-				panes = append(panes, p.ID)
-			}
-		}
-		sessions[i].State = m.Rollup(target, panes)
+		sessions[i].State = m.Rollup(target, sessionPaneIDs(sessions[i]))
 	}
 }
 

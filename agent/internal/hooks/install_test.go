@@ -62,45 +62,167 @@ func TestCommandTokenFileWithSpace(t *testing.T) {
 	}
 }
 
-func TestSnippetCoversAllEvents(t *testing.T) {
-	s, err := Snippet(installCfg())
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := s["hooks"].(map[string]any)
-	for _, e := range events {
-		if _, ok := h[e]; !ok {
-			t.Fatalf("snippet missing event %s", e)
+func TestParseProvider(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want Provider
+	}{
+		{"claude", ProviderClaude},
+		{"CODEX", ProviderCodex},
+		{" codex ", ProviderCodex},
+	} {
+		got, err := ParseProvider(tc.in)
+		if err != nil || got != tc.want {
+			t.Fatalf("ParseProvider(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
 		}
+	}
+	if _, err := ParseProvider("other"); err == nil {
+		t.Fatal("unknown provider must error")
+	}
+}
+
+func TestSnippetUsesProviderEvents(t *testing.T) {
+	tests := []struct {
+		provider Provider
+		want     []string
+		excluded []string
+	}{
+		{
+			provider: ProviderClaude,
+			want: []string{
+				"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+				"Notification", "PermissionRequest", "Stop", "SubagentStop", "SessionEnd",
+			},
+		},
+		{
+			provider: ProviderCodex,
+			want: []string{
+				"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+				"PermissionRequest", "Stop",
+			},
+			excluded: []string{"Notification", "SessionEnd", "SubagentStart", "SubagentStop"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.provider), func(t *testing.T) {
+			s, err := Snippet(installCfg(), tc.provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := s["hooks"].(map[string]any)
+			if len(h) != len(tc.want) {
+				t.Fatalf("events = %v, want exactly %v", h, tc.want)
+			}
+			for _, e := range tc.want {
+				if _, ok := h[e]; !ok {
+					t.Fatalf("snippet missing event %s", e)
+				}
+			}
+			for _, e := range tc.excluded {
+				if _, ok := h[e]; ok {
+					t.Fatalf("snippet unexpectedly includes event %s", e)
+				}
+			}
+			start := h["SessionStart"].([]any)[0].(map[string]any)
+			if tc.provider == ProviderCodex {
+				if got := start["matcher"]; got != "startup|resume|clear" {
+					t.Fatalf("Codex SessionStart matcher = %v", got)
+				}
+				stop := h["Stop"].([]any)[0].(map[string]any)
+				if _, ok := stop["matcher"]; ok {
+					t.Fatal("Codex Stop must remain matcherless")
+				}
+			} else if _, ok := start["matcher"]; ok {
+				t.Fatal("Claude SessionStart shape changed unexpectedly")
+			}
+		})
 	}
 }
 
 func TestMergeIdempotentPreservesUserHooks(t *testing.T) {
-	existing := map[string]any{
-		"hooks": map[string]any{
-			"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "echo user"}}}},
-		},
-		"otherSetting": true,
+	for _, provider := range []Provider{ProviderClaude, ProviderCodex} {
+		t.Run(string(provider), func(t *testing.T) {
+			existing := map[string]any{
+				"hooks": map[string]any{
+					"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "echo user"}}}},
+				},
+				"otherSetting": true,
+			}
+			m1, err := Merge(existing, installCfg(), provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m2, _ := Merge(m1, installCfg(), provider) // second run must not duplicate
+			stop := m2["hooks"].(map[string]any)["Stop"].([]any)
+			user, agent := 0, 0
+			for _, g := range stop {
+				if isAgentmonGroup(g) {
+					agent++
+				} else {
+					user++
+				}
+			}
+			if user != 1 || agent != 1 {
+				t.Fatalf("Stop groups user=%d agent=%d, want 1/1", user, agent)
+			}
+			if m2["otherSetting"] != true {
+				t.Fatal("unrelated setting lost")
+			}
+		})
 	}
-	m1, err := Merge(existing, installCfg())
+	if _, err := Merge(map[string]any{}, installCfg(), Provider("other")); err == nil {
+		t.Fatal("unknown provider must error")
+	}
+}
+
+func TestProviderSnippetCommandHasSharedTransport(t *testing.T) {
+	for _, provider := range []Provider{ProviderClaude, ProviderCodex} {
+		s, err := Snippet(installCfg(), provider)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stop := s["hooks"].(map[string]any)["Stop"].([]any)
+		group := stop[0].(map[string]any)
+		hook := group["hooks"].([]any)[0].(map[string]any)
+		cmd := hook["command"].(string)
+		for _, want := range []string{"$TMUX_PANE", "$TMUX", "127.0.0.1:8377/hook", ">/dev/null 2>&1 || true", Marker} {
+			if !strings.Contains(cmd, want) {
+				t.Fatalf("%s command missing %q: %s", provider, want, cmd)
+			}
+		}
+	}
+}
+
+func TestMergeCorrectsWrongProviderAndPreservesUserHooks(t *testing.T) {
+	wrong, err := Merge(map[string]any{"custom": true}, installCfg(), ProviderClaude)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m2, _ := Merge(m1, installCfg()) // second run must not duplicate
-	stop := m2["hooks"].(map[string]any)["Stop"].([]any)
-	user, agent := 0, 0
-	for _, g := range stop {
-		if isAgentmonGroup(g) {
-			agent++
-		} else {
-			user++
+	h := wrong["hooks"].(map[string]any)
+	h["Notification"] = append(h["Notification"].([]any), group("echo user-notification"))
+
+	fixed, err := Merge(wrong, installCfg(), ProviderCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h = fixed["hooks"].(map[string]any)
+	if fixed["custom"] != true {
+		t.Fatal("unrelated top-level setting lost")
+	}
+	for _, stale := range []string{"SessionEnd", "SubagentStop"} {
+		if _, ok := h[stale]; ok {
+			t.Fatalf("stale Claude-only AgentMon event %s remains", stale)
 		}
 	}
-	if user != 1 || agent != 1 {
-		t.Fatalf("Stop groups user=%d agent=%d, want 1/1", user, agent)
+	notification := h["Notification"].([]any)
+	if len(notification) != 1 || isAgentmonGroup(notification[0]) {
+		t.Fatalf("user Notification hook not preserved alone: %+v", notification)
 	}
-	if m2["otherSetting"] != true {
-		t.Fatal("unrelated setting lost")
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop"} {
+		groups := h[event].([]any)
+		if len(groups) != 1 || !isAgentmonGroup(groups[0]) {
+			t.Fatalf("Codex event %s groups = %+v", event, groups)
+		}
 	}
 }
 
@@ -110,7 +232,7 @@ func TestUnmergeRemovesOnlyOurs(t *testing.T) {
 			"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "echo user"}}}},
 		},
 	}
-	merged, _ := Merge(existing, installCfg())
+	merged, _ := Merge(existing, installCfg(), ProviderClaude)
 	cleaned := Unmerge(merged)
 	hooks := cleaned["hooks"].(map[string]any)
 	stop := hooks["Stop"].([]any)
@@ -123,7 +245,7 @@ func TestUnmergeRemovesOnlyOurs(t *testing.T) {
 }
 
 func TestUnmergeEmptyDropsHooksKey(t *testing.T) {
-	merged, _ := Merge(map[string]any{}, installCfg())
+	merged, _ := Merge(map[string]any{}, installCfg(), ProviderClaude)
 	cleaned := Unmerge(merged)
 	if _, ok := cleaned["hooks"]; ok {
 		t.Fatal("hooks key should be gone when empty")
@@ -136,7 +258,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if m, err := LoadSettings(p); err != nil || len(m) != 0 {
 		t.Fatalf("missing file should load empty: %v %+v", err, m)
 	}
-	merged, _ := Merge(map[string]any{}, installCfg())
+	merged, _ := Merge(map[string]any{}, installCfg(), ProviderClaude)
 	if err := SaveSettings(p, merged); err != nil {
 		t.Fatal(err)
 	}

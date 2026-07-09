@@ -15,7 +15,6 @@ import (
 	"agentmon/agent/internal/hooks"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
-	"agentmon/shared"
 )
 
 var version = "dev"
@@ -65,8 +64,8 @@ func main() {
 		log.Fatal("config: directive_key is required")
 	}
 
-	discover := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
-		return tmux.Discover(ctx, tmux.ExecRunner, opts)
+	discover := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.DiscoverDetailed(ctx, tmux.ExecRunner, opts)
 	}
 
 	createSession := func(ctx context.Context, socket, name, cwd string) error {

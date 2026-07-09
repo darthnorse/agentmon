@@ -115,6 +115,59 @@ func TestHookToleratesExtraFields(t *testing.T) {
 	}
 }
 
+func TestHookCodexLifecycleSequence(t *testing.T) {
+	m := state.New(nil)
+	h := handler(m)
+	const tmuxEnv = "/tmp/tmux-0/default,321,0"
+	const pane = "%4"
+	tests := []struct {
+		name string
+		body string
+		want shared.State
+	}{
+		{
+			name: "session start",
+			body: `{"session_id":"codex-session","transcript_path":"/tmp/transcript.jsonl","cwd":"/work/repo","hook_event_name":"SessionStart","model":"gpt-5.6-sol","source":"startup","permission_mode":"default"}`,
+			want: shared.StateIdle,
+		},
+		{
+			name: "prompt submitted",
+			body: `{"session_id":"codex-session","turn_id":"turn-1","cwd":"/work/repo","hook_event_name":"UserPromptSubmit","model":"gpt-5.6-sol","prompt":"run the tests","permission_mode":"default"}`,
+			want: shared.StateWorking,
+		},
+		{
+			name: "permission requested",
+			body: `{"session_id":"codex-session","turn_id":"turn-1","cwd":"/work/repo","hook_event_name":"PermissionRequest","model":"gpt-5.6-sol","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"go test ./...","description":"run outside sandbox"}}`,
+			want: shared.StateBlocked,
+		},
+		{
+			name: "tool completed",
+			body: `{"session_id":"codex-session","turn_id":"turn-1","cwd":"/work/repo","hook_event_name":"PostToolUse","model":"gpt-5.6-sol","permission_mode":"default","tool_name":"Bash","tool_use_id":"call-1","tool_response":{"exit_code":0},"future":{"nested":true}}`,
+			want: shared.StateWorking,
+		},
+		{
+			name: "turn stopped",
+			body: `{"session_id":"codex-session","turn_id":"turn-1","cwd":"/work/repo","hook_event_name":"Stop","model":"gpt-5.6-sol","permission_mode":"default","stop_hook_active":false,"last_assistant_message":"Tests pass."}`,
+			want: shared.StateDone,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := post(t, h, "127.0.0.1:5000", "Bearer hooktok", pane, tmuxEnv, tc.body)
+			if rr.Code != http.StatusNoContent {
+				t.Fatalf("code %d, want 204", rr.Code)
+			}
+			if got, ok := m.Pane("default", pane); !ok || got != tc.want {
+				t.Fatalf("state = %q ok=%v, want %q/true", got, ok, tc.want)
+			}
+		})
+	}
+	snapshot := m.Snapshot("default")
+	if len(snapshot) != 1 || snapshot[0].ClaudeSessionID != "codex-session" {
+		t.Fatalf("Codex session ID not retained in legacy snapshot field: %+v", snapshot)
+	}
+}
+
 func TestHookCapturesEpoch(t *testing.T) {
 	m := state.New(func() time.Time { return time.Unix(0, 0) })
 	h := RequireLoopback(RequireHookAuth("hooktok", HookHandler(testCfg(), m, nil)))

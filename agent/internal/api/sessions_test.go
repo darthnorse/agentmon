@@ -27,12 +27,12 @@ func testCfg() config.Config {
 
 func TestSessionsHandlerReturnsTree(t *testing.T) {
 	var gotOpts tmux.DiscoverOpts
-	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
 		gotOpts = opts
-		return []shared.Session{{Name: "proj", Server: "server-a", Target: "default",
+		return tmux.Discovery{Sessions: []shared.Session{{Name: "proj", Server: "server-a", Target: "default",
 			Cwd: "/home/dev/proj", Command: "zsh",
 			Windows: []shared.Window{{ID: "@1", Index: "0", Name: "main",
-				Panes: []shared.Pane{{ID: "%0", Command: "zsh", Cwd: "/home/dev/proj"}}}}}}, nil
+				Panes: []shared.Pane{{ID: "%0", Command: "zsh", Cwd: "/home/dev/proj"}}}}}}}, nil
 	}
 	h := SessionsHandler(testCfg(), disc, nil)
 	req := httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil)
@@ -56,12 +56,12 @@ func TestSessionsHandlerReturnsTree(t *testing.T) {
 
 func TestSessionsHandlerEmptyTargetUsesDefault(t *testing.T) {
 	called := false
-	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
 		called = true
 		if opts.TargetLabel != "default" {
 			t.Fatalf("want default target, got %q", opts.TargetLabel)
 		}
-		return []shared.Session{}, nil
+		return tmux.Discovery{Sessions: []shared.Session{}}, nil
 	}
 	h := SessionsHandler(testCfg(), disc, nil)
 	rr := httptest.NewRecorder()
@@ -72,9 +72,9 @@ func TestSessionsHandlerEmptyTargetUsesDefault(t *testing.T) {
 }
 
 func TestSessionsHandlerUnknownTarget404(t *testing.T) {
-	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
 		t.Fatal("discover must not be called for unknown target")
-		return nil, nil
+		return tmux.Discovery{}, nil
 	}
 	h := SessionsHandler(testCfg(), disc, nil)
 	rr := httptest.NewRecorder()
@@ -85,8 +85,8 @@ func TestSessionsHandlerUnknownTarget404(t *testing.T) {
 }
 
 func TestSessionsHandlerDiscoveryError500(t *testing.T) {
-	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
-		return nil, errors.New("tmux boom")
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.Discovery{}, errors.New("tmux boom")
 	}
 	h := SessionsHandler(testCfg(), disc, nil)
 	rr := httptest.NewRecorder()
@@ -97,8 +97,8 @@ func TestSessionsHandlerDiscoveryError500(t *testing.T) {
 }
 
 func TestSessionsHandlerNilDiscoveryEncodesEmptyArray(t *testing.T) {
-	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
-		return nil, nil // a Discoverer is not contractually required to return non-nil
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.Discovery{}, nil // a Discoverer is not contractually required to return non-nil
 	}
 	h := SessionsHandler(testCfg(), disc, nil)
 	rr := httptest.NewRecorder()
@@ -115,9 +115,9 @@ func TestSessionsHandlerNilDiscoveryEncodesEmptyArray(t *testing.T) {
 func TestSessionsHandlerStampsState(t *testing.T) {
 	m := state.New(nil)
 	m.Apply(state.Event{Target: "default", Pane: "%0", Name: "PermissionRequest"})
-	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
-		return []shared.Session{{Name: "proj", Target: "default",
-			Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}}, nil
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.Discovery{Sessions: []shared.Session{{Name: "proj", Target: "default",
+			Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}}}, nil
 	}
 	h := SessionsHandler(testCfg(), disc, m)
 	rr := httptest.NewRecorder()
@@ -131,10 +131,94 @@ func TestSessionsHandlerStampsState(t *testing.T) {
 	}
 }
 
+func TestSessionsHandlerReconcilesStateAfterSuccessfulDiscovery(t *testing.T) {
+	m := state.New(nil)
+	m.Apply(state.Event{Target: "default", Pane: "%live", Name: "Stop"})
+	m.Apply(state.Event{Target: "default", Pane: "%gone", Name: "PermissionRequest"})
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.Discovery{Sessions: []shared.Session{{Name: "proj", Target: "default",
+			Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%live"}}}}}}}, nil
+	}
+	h := SessionsHandler(testCfg(), disc, m)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d", rr.Code)
+	}
+	if _, ok := m.Pane("default", "%gone"); ok {
+		t.Fatal("state for pane absent from successful discovery was not pruned")
+	}
+	if got, ok := m.Pane("default", "%live"); !ok || got != shared.StateDone {
+		t.Fatalf("live pane state = %q ok=%v", got, ok)
+	}
+}
+
+func TestSessionsHandlerReconcilePreservesHookRacingDiscovery(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	m := state.New(func() time.Time { return future })
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		m.Apply(state.Event{Target: "default", Pane: "%new", Name: "SessionStart"})
+		return tmux.Discovery{Sessions: []shared.Session{}}, nil
+	}
+	h := SessionsHandler(testCfg(), disc, m)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d", rr.Code)
+	}
+	if got, ok := m.Pane("default", "%new"); !ok || got != shared.StateIdle {
+		t.Fatalf("racing pane state = %q ok=%v, want idle/true", got, ok)
+	}
+}
+
+func TestSessionsHandlerDoesNotReconcileOnDiscoveryError(t *testing.T) {
+	m := state.New(nil)
+	m.Apply(state.Event{Target: "default", Pane: "%0", Name: "PermissionRequest"})
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.Discovery{}, errors.New("tmux boom")
+	}
+	h := SessionsHandler(testCfg(), disc, m)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("code %d", rr.Code)
+	}
+	if got, ok := m.Pane("default", "%0"); !ok || got != shared.StateBlocked {
+		t.Fatalf("failed discovery pruned state: %q ok=%v", got, ok)
+	}
+}
+
+func TestSessionsHandlerDoesNotReconcilePartialDiscovery(t *testing.T) {
+	m := state.New(nil)
+	m.Apply(state.Event{Target: "default", Pane: "%skipped", Name: "PermissionRequest"})
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.Discovery{
+			Sessions: []shared.Session{{Name: "visible", Target: "default"}},
+			Partial:  true,
+		}, nil
+	}
+	h := SessionsHandler(testCfg(), disc, m)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodGet, "/sessions?target=default", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d", rr.Code)
+	}
+	if got, ok := m.Pane("default", "%skipped"); !ok || got != shared.StateBlocked {
+		t.Fatalf("partial discovery pruned skipped pane: %q ok=%v", got, ok)
+	}
+	var body shared.SessionList
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Sessions) != 1 || body.Sessions[0].Name != "visible" {
+		t.Fatalf("partial discovery should still render usable sessions: %+v", body.Sessions)
+	}
+}
+
 func TestSessionsHandlerNilMachineUnknown(t *testing.T) {
-	disc := func(ctx context.Context, opts tmux.DiscoverOpts) ([]shared.Session, error) {
-		return []shared.Session{{Name: "p", Target: "default",
-			Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}}, nil
+	disc := func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error) {
+		return tmux.Discovery{Sessions: []shared.Session{{Name: "p", Target: "default",
+			Windows: []shared.Window{{Panes: []shared.Pane{{ID: "%0"}}}}}}}, nil
 	}
 	h := SessionsHandler(testCfg(), disc, nil)
 	rr := httptest.NewRecorder()
@@ -374,9 +458,9 @@ func TestSessionsHandlerTimesOutOnHungTmux(t *testing.T) {
 	defer func() { agentTmuxTimeout = old }()
 
 	// A discoverer that blocks until the request context is cancelled — i.e. a hung tmux.
-	slow := func(ctx context.Context, _ tmux.DiscoverOpts) ([]shared.Session, error) {
+	slow := func(ctx context.Context, _ tmux.DiscoverOpts) (tmux.Discovery, error) {
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return tmux.Discovery{}, ctx.Err()
 	}
 	h := SessionsHandler(testCfg(), slow, nil)
 	rr := httptest.NewRecorder()
