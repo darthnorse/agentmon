@@ -7,6 +7,8 @@ import { useStateSnapshot } from "@/store/session-state";
 import { effectiveSessionState } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
+import { ProviderTag } from "@/components/ProviderTag";
+import type { Provider } from "@/lib/provider";
 import { usePrefs } from "@/store/prefs";
 import { themeOf } from "@/lib/terminal-themes";
 import { gridLayout } from "@/lib/grid-layout";
@@ -15,9 +17,10 @@ import { chordLabel, isMacPlatform } from "@/lib/window-shortcuts";
 
 // Live tiled grid. EVERY tile stays mounted (its own WS); expand is in-state, so
 // the non-focused tiles are hidden with display:none — sockets + scrollback survive.
-export function GridView({ livePaneIds, readyServers }: {
+export function GridView({ livePaneIds, readyServers, providers }: {
   livePaneIds?: Set<string>;
   readyServers?: Set<string>;
+  providers?: ReadonlyMap<string, Provider>;
 } = {}) {
   const { panes, focusedId, focus, collapse, closePane } = usePanes();
   // Guard against a stale focusedId pointing at a removed pane — fall back to grid view.
@@ -106,6 +109,7 @@ export function GridView({ livePaneIds, readyServers }: {
                     {p.serverName} ·
                   </button>
                   <SessionNameEditor className="min-w-0" serverId={p.serverId} target={p.target} name={p.session} paneId={p.paneId} />
+                  <ProviderTag provider={providers?.get(paneIdentity(p.serverId, p.target, p.paneId))} />
                 </span>
                 <span className="flex flex-none items-center gap-1">
                   {expanded ? (
