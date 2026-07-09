@@ -123,3 +123,13 @@ function mkSession(name: string, winId: string, paneId: string) {
     windows: [{ id: winId, index: "0", name: "m", panes: [{ id: paneId, command: "c", cwd: `/home/${name}` }] }],
   };
 }
+
+it("tags a claude session row on the mobile list", () => {
+  const claudeServer = {
+    s1: [{ name: "tagged", server: "s1", target: "default", cwd: "/a", command: "claude",
+      windows: [{ id: "@9", index: "0", name: "m", panes: [{ id: "%9", command: "claude", cwd: "/a" }] }] }],
+  };
+  const rows = flattenSessions(servers, claudeServer);
+  render(<SessionList rows={rows} query="" onQueryChange={() => {}} onOpen={() => {}} stateOf={() => "idle"} />);
+  expect(screen.getByText("claude")).toHaveAttribute("title", "Claude Code");
+});

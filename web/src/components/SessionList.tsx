@@ -3,6 +3,8 @@ import type { Session, ServerSummary, Window, Pane, SessionState } from "@/lib/c
 import { Input } from "@/components/ui/input";
 import { StateDot } from "@/components/StateDot";
 import { SessionNameEditor } from "@/components/SessionNameEditor";
+import { ProviderTag } from "@/components/ProviderTag";
+import { providerOf } from "@/lib/provider";
 import { rowActivation } from "@/lib/row-activation";
 import { paneKey } from "@/store/panes";
 
@@ -82,13 +84,16 @@ export function SessionList({
                 >
                   <StateDot state={stateOf(row)} />
                   <div className="min-w-0">
-                    <SessionNameEditor
-                      className="font-medium"
-                      serverId={row.server.id}
-                      target={row.session.target}
-                      name={row.session.name}
-                      paneId={row.pane.id}
-                    />
+                    <span className="flex items-center gap-1.5">
+                      <SessionNameEditor
+                        className="font-medium"
+                        serverId={row.server.id}
+                        target={row.session.target}
+                        name={row.session.name}
+                        paneId={row.pane.id}
+                      />
+                      <ProviderTag provider={providerOf(row.session.command)} />
+                    </span>
                     <div className="text-xs text-muted-foreground">{row.server.name} · {row.session.cwd || "—"}</div>
                   </div>
                 </div>
