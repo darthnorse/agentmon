@@ -12,9 +12,9 @@ export interface ResizeFrame { type: "resize"; cols: number; rows: number; }
 export interface ErrorFrame { type: "error"; code: string; message: string; }
 export interface ReconnectFrame { type: "reconnect"; status: string; }
 // Mirrors hubd registry.ServerSummary (browser-safe; no secrets). `state` is the
-// hub's server rollup (mirrors the wire); the desktop sidebar consumes it only to
-// ORDER session-less server groups blocked-first — no header dot is rendered
-// (removed with the provider-tags change, see its design spec).
+// hub's server rollup (mirrors the wire); the desktop sidebar uses it to ORDER
+// session-less server groups blocked-first and, when it is known (≠ unknown), as
+// that group's only header dot — servers with sessions render no header dot.
 export interface ServerSummary { id: string; name: string; labels: string[]; enabled: boolean; state?: SessionState; }
 // Mirrors the hub's login/me JSON body.
 export interface SessionInfo { principalId: string; username: string; displayName: string; csrfToken: string; mustChangePassword?: boolean; }

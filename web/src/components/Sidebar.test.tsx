@@ -36,7 +36,7 @@ describe("Sidebar state", () => {
 });
 
 describe("Sidebar session-less servers", () => {
-  it("renders a session-less server without any dot", () => {
+  it("shows a session-less server's hub-reported state as its only dot", () => {
     const withIdle: ServerSummary[] = [
       { id: "s1", name: "alpha", labels: [], enabled: true },
       { id: "s3", name: "charlie", labels: [], enabled: true, state: "blocked" },
@@ -45,8 +45,11 @@ describe("Sidebar session-less servers", () => {
     const rows = flattenSessions(withIdle, onlyS1);
     render(<Sidebar servers={withIdle} rows={rows} query="" onQueryChange={() => {}} onOpen={() => {}} stateOf={() => "idle"} />);
     expect(screen.getByText("charlie")).toBeInTheDocument();
-    // its REST state no longer paints a dot anywhere
-    expect(screen.queryByRole("img", { name: "blocked" })).toBeNull();
+    // session-less + known REST state → the header shows the hub's dot (covers the
+    // first-paint window and empty-but-blocked servers); alpha (has a session) gets
+    // NO header dot — its only img is the session row's idle dot.
+    expect(screen.getAllByRole("img", { name: "blocked" })).toHaveLength(1);
+    expect(screen.getAllByRole("img")).toHaveLength(2); // charlie header + alpha session row
   });
 
   it("renders a server with no sessions and no state with just its name", () => {

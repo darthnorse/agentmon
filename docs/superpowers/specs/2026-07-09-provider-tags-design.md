@@ -62,9 +62,12 @@ changes. Payload sniffing at intake was rejected as fragile.
 
 ## Sidebar server-dot removal
 
-Remove the `StateDot` from the server header row in `Sidebar.tsx` (name only). The
-`serverState` **rollup computation stays** — it still drives blocked-first ordering of
-the server groups. Session-less servers show just their name.
+Remove the `StateDot` from the server header row in `Sidebar.tsx` for servers that
+have sessions (their rows carry the dots). The `serverState` **rollup computation
+stays** — it still drives blocked-first ordering of the server groups.
+Post-review amendment (owner-approved): a **session-less** server with a known REST
+`state` keeps a header dot — otherwise the first-paint window (sessions queries
+pending) and empty-but-blocked servers would sort first with no visible cue.
 
 ## Testing
 

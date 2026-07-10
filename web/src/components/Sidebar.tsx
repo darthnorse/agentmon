@@ -9,8 +9,10 @@ import { rowActivation } from "@/lib/row-activation";
 import { providerOf } from "@/lib/provider";
 
 // Desktop servers→sessions tree. Blocked-first ordering via the per-server
-// rollup (no header dot); session-less servers render name-only, using their
-// REST `state` (or "unknown") for ordering.
+// rollup. Servers with sessions get NO header dot (their session rows carry the
+// dots); a session-less server with a known REST `state` shows that state as its
+// header dot — covering the first-paint window (sessions queries still pending)
+// and empty-but-blocked servers, which otherwise sort first with no visible cue.
 export function Sidebar({
   servers, rows, query, onQueryChange, onOpen, stateOf,
 }: {
@@ -55,9 +57,10 @@ export function Sidebar({
           aria-label="Search sessions" />
       </div>
       <div className="flex-1 overflow-y-auto">
-        {groups.map(({ id, serverName, list }) => (
+        {groups.map(({ id, serverName, list, serverState, sessionLess }) => (
           <div key={id}>
             <div className="flex items-center gap-2 px-3 py-1">
+              {sessionLess && serverState !== "unknown" && <StateDot state={serverState} />}
               <span className="text-xs font-semibold uppercase text-muted-foreground">{serverName}</span>
             </div>
             {list.map((row) => (
