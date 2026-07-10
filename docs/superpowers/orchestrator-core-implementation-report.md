@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `feat/orchestrator-core`
-Status: Checkpoint 1 reached after completing Tasks 1–5. Waiting for explicit review instructions or `continue` before Task 6.
+Status: Checkpoint 2 reached after completing Tasks 1–11. Waiting for explicit review instructions or `continue` before Task 12.
 
 ## Completed tasks
 
@@ -16,6 +16,18 @@ Status: Checkpoint 1 reached after completing Tasks 1–5. Waiting for explicit 
   - Commit: `2d16b36 feat(hub): epics + epic_events store with guarded transitions`
 - Task 5: shared epic stages and orchestrator report wire type.
   - Commit: `d097688 feat(shared): epic stages + orchestrator report wire type`
+- Task 6: minimal GitHub REST client.
+  - Commit: `6d350fb feat(hub): minimal github rest client`
+- Task 7: webhook HMAC verification and event parsing.
+  - Commit: `2d08be5 feat(hub): webhook hmac verify + event parse`
+- Task 8: verdict block parser.
+  - Commit: `5adea9a feat(hub): verdict block parser`
+- Task 9: fail-closed merge gate.
+  - Commit: `c585329 feat(hub): fail-closed merge gate`
+- Task 10: epic-stage transition table.
+  - Commit: `edf0457 feat(hub): epic stage transition table`
+- Task 11: board-change broadcaster.
+  - Commit: `036c544 feat(hub): board change broadcaster`
 
 ## Verification
 
@@ -35,6 +47,8 @@ ok  agentmon/hubd/internal/authz
 ok  agentmon/hubd/internal/config
 ok  agentmon/hubd/internal/db
 ok  agentmon/hubd/internal/directive
+ok  agentmon/hubd/internal/github
+ok  agentmon/hubd/internal/orchestrator
 ok  agentmon/hubd/internal/registry
 ok  agentmon/hubd/internal/state
 ok  agentmon/hubd/internal/webui
@@ -45,6 +59,12 @@ Task-specific verification also passed:
 - Task 3: project store tests and clean hub build.
 - Task 4: complete DB package tests and clean hub build.
 - Task 5: complete shared module tests and clean hub build.
+- Task 6: five GitHub REST-client tests.
+- Task 7: complete GitHub package tests.
+- Task 8: four verdict-parser tests.
+- Task 9: ten merge-gate decision subtests.
+- Task 10: transition-validity table test.
+- Task 11: broadcaster tests under `go test -race`.
 
 ## Resolved plan mismatch
 
@@ -52,6 +72,6 @@ The earlier Task 3 helper collision was resolved by plan-fix commit `7f53b53`: `
 
 ## Checkpoint stop
 
-- Checkpoint 1 is reached with Tasks 1–5 complete.
-- Task 6 has not been started.
-- Plan checkbox updates through Checkpoint 1 remain uncommitted because task commit commands stage only their listed implementation files.
+- Checkpoint 2 is reached with Tasks 1–11 complete.
+- Task 12 has not been started.
+- Plan checkbox updates through Checkpoint 2 remain uncommitted because task commit commands stage only their listed implementation files.
