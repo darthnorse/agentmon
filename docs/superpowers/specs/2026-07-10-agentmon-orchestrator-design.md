@@ -105,8 +105,12 @@ queued → starting → planning → implementing → reviewing → pr_open → 
   runner that forgets to report cannot leave the board lying about PR states.
 - `merging → merged`: hub action (squash-merge; `Closes #N` closes the issue) or a
   human merging in GitHub — the webhook moves the machine either way.
-- `escalated`: gate declined (§6) or plan-gate hold; carries a human-readable reason;
-  fires existing alert/push.
+- `escalated`: gate declined (§6), plan-gate hold, or **runner-initiated at any stage**
+  — the runner may report `escalated` with a question whenever it hits a decision it
+  shouldn't make alone (ambiguous requirement, competing designs), planning included.
+  The session stays alive waiting; the human answers from the board (guidance text →
+  send-keys into the live session) or by attaching to the terminal. Carries a
+  human-readable reason; fires existing alert/push.
 - `stalled`: session died before `pr_open`, or per-stage timeout exceeded
   (configurable, e.g. planning 2h, implementing 8h, reviewing 2h). Push notification;
   board offers Retry.
@@ -162,12 +166,24 @@ A runner session must:
    reports for epic N come from the assigned host/session.
 4. Scale process to the issue: full flow by default — plan (committed plan doc) →
    implement with subagent/TDD discipline → multi-review → fix loop. `pipeline:light`
-   label skips heavy planning for small fixes.
+   label skips heavy planning for small fixes. The epic issue body is the
+   *requirements* (scope, acceptance criteria, constraints, PRD pointers); the runner
+   writes the implementation plan at execution time against the current codebase. If
+   the body already carries a detailed plan, the planning stage validates and adapts
+   it instead.
+   The mechanism is skills-invoking-skills: `epic-pipeline` is a skill whose
+   instructions invoke the same skills used manually today (superpowers planning,
+   subagent-driven implementation, `/multi-review --codex`) — no new automation
+   machinery. Required skills are distributed to project hosts (or committed as
+   repo-level skills) as part of sub-project 2.
+   May escalate with a question at any stage (§4) — ambiguity found while planning
+   is far cheaper than at review time.
 5. Open a PR whose body ends with a fenced verdict block:
 
    ```yaml
    agentmon-verdict: v1
    epic: 15
+   reviews: [specialist, simplifier, deep-scan, codex]   # gate checks required set
    findings: { found: 9, resolved: 7, unresolved: 2 }
    unresolved:
      - "Deletion cascade: guardian-linked records span tenants"
@@ -175,6 +191,11 @@ A runner session must:
    uncertain: true
    learnings_updated: true
    ```
+
+   The full multi-review report is committed to the branch (spot-checkable evidence;
+   the `reviewing` stage duration on the board is a plausibility signal). The gate
+   compares `reviews` against the project's `required_reviews` config — a PR without
+   proof of the required reviews escalates instead of merging.
 
 6. Write durable learnings into `CLAUDE.md`/`AGENTS.md`/docs in the same PR
    (context is a workspace; the repo is memory).
