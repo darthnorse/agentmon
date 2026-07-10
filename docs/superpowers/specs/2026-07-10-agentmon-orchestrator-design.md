@@ -97,9 +97,10 @@ queued → starting → planning → implementing → reviewing → pr_open → 
 - `queued`: mirrored, unblocked or waiting on deps; shows blocked-by on the board.
 - `starting`: session spawn dispatched; guards double-spawn (spawn is DB-state-guarded, idempotent on reconcile).
 - `planning / implementing / reviewing`: reported by the runner. Optional `plan-gate`
-  label: after committing the plan doc the runner pauses and reports a needs-attention
-  hold ("plan awaiting approval"); board Approve sends guidance text into the live
-  session via the existing send-keys relay.
+  label: after committing the plan doc the runner pauses and the epic enters
+  `escalated` with reason kind `plan-approval` (no extra state); board Approve sends
+  guidance text into the live session via the existing send-keys relay and the epic
+  returns to `implementing`.
 - `pr_open`: reported by runner AND corroborated by the `pull_request` webhook — a
   runner that forgets to report cannot leave the board lying about PR states.
 - `merging → merged`: hub action (squash-merge; `Closes #N` closes the issue) or a
