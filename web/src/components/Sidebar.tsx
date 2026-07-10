@@ -61,7 +61,7 @@ export function Sidebar({
           <div key={id}>
             <div className="flex items-center gap-2 px-3 py-1">
               {sessionLess && serverState !== "unknown" && <StateDot state={serverState} />}
-              <span className="text-xs font-semibold uppercase text-muted-foreground">{serverName}</span>
+              <span className="text-base font-semibold uppercase text-muted-foreground">{serverName}</span>
             </div>
             {list.map((row) => (
               <div
