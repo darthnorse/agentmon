@@ -10,8 +10,12 @@
 
 ## Detection: exact command match (fleet convention)
 
-`session.command` already flows tmux → agent → hub → web (it is the active pane's
-`pane_current_command`). A pure helper derives the provider:
+Pane commands already flow tmux → agent → hub → web. Detection derives from the
+**row's own pane** (`row.pane.command`, the pane every surface displays and opens)
+— NOT `session.command`, which is tmux's *active* pane and can name a different
+pane's process in a split (post-review amendment: "never a wrong tag" must hold
+per displayed pane). A pure helper derives the provider (plus `providerByIdent`,
+a lib helper building the grid's paneIdentity-keyed map):
 
 ```ts
 // web/src/lib/provider.ts
@@ -44,7 +48,8 @@ changes. Payload sniffing at intake was rejected as fragile.
 - Otherwise a muted, small, lowercase text tag: `claude` / `codex`
   (`text-xs text-muted-foreground`, `flex-none` so the tag itself never shrinks or
   wraps — a long session name truncates first, the tag stays legible,
-  `title` + `aria-label` = "Claude Code" / "Codex" for accessibility/tests).
+  `title` = "Claude Code" / "Codex". Post-review amendment: no `aria-label` —
+  ARIA prohibits naming a generic `<span>`, so AT announces the visible text).
 
 ## Surfaces
 
@@ -57,9 +62,12 @@ changes. Payload sniffing at intake was rejected as fragile.
 
 ## Sidebar server-dot removal
 
-Remove the `StateDot` from the server header row in `Sidebar.tsx` (name only). The
-`serverState` **rollup computation stays** — it still drives blocked-first ordering of
-the server groups. Session-less servers show just their name.
+Remove the `StateDot` from the server header row in `Sidebar.tsx` for servers that
+have sessions (their rows carry the dots). The `serverState` **rollup computation
+stays** — it still drives blocked-first ordering of the server groups.
+Post-review amendment (owner-approved): a **session-less** server with a known REST
+`state` keeps a header dot — otherwise the first-paint window (sessions queries
+pending) and empty-but-blocked servers would sort first with no visible cue.
 
 ## Testing
 

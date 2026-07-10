@@ -6,10 +6,13 @@ import { sortBlockedFirst, rollUp } from "@/lib/state";
 import { StateDot } from "@/components/StateDot";
 import { SessionActionsMenu } from "@/components/SessionActionsMenu";
 import { rowActivation } from "@/lib/row-activation";
+import { providerOf } from "@/lib/provider";
 
-// Desktop servers→sessions tree. Dots roll up; blocked sorts first. The tree is
-// seeded from the full `servers` list so a session-less server still renders (its
-// REST `state` dot, or `unknown`) — the M8-deferred server-dot fallback.
+// Desktop servers→sessions tree. Blocked-first ordering via the per-server
+// rollup. Servers with sessions get NO header dot (their session rows carry the
+// dots); a session-less server with a known REST `state` shows that state as its
+// header dot — covering the first-paint window (sessions queries still pending)
+// and empty-but-blocked servers, which otherwise sort first with no visible cue.
 export function Sidebar({
   servers, rows, query, onQueryChange, onOpen, stateOf,
 }: {
@@ -54,10 +57,10 @@ export function Sidebar({
           aria-label="Search sessions" />
       </div>
       <div className="flex-1 overflow-y-auto">
-        {groups.map(({ id, serverName, list, serverState }) => (
+        {groups.map(({ id, serverName, list, serverState, sessionLess }) => (
           <div key={id}>
             <div className="flex items-center gap-2 px-3 py-1">
-              <StateDot state={serverState} />
+              {sessionLess && serverState !== "unknown" && <StateDot state={serverState} />}
               <span className="text-xs font-semibold uppercase text-muted-foreground">{serverName}</span>
             </div>
             {list.map((row) => (
@@ -75,6 +78,7 @@ export function Sidebar({
                     name={row.session.name}
                     paneId={row.pane.id}
                     state={stateOf(row)}
+                    provider={providerOf(row.pane.command)}
                   />
                   <div className="truncate text-xs text-muted-foreground">{row.session.cwd || "—"}</div>
                 </div>

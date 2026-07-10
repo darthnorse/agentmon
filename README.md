@@ -222,6 +222,10 @@ one-time hook-trust confirmation; review and approve the AgentMon curl command s
 a successful tmux discovery. If Codex exits back to a shell in the same pane, the last state can remain until
 another agent emits `SessionStart`. Hook behavior is independent of the selected Codex model, including Sol.
 
+The web UI tags each session `claude` / `codex` from the pane's foreground process
+name. This expects the **native builds** — an npm-wrapped install runs as `node`
+and shows no tag (the tag reappears once the session restarts under a native binary).
+
 Without hooks, sessions still show and are fully usable — they just read `unknown` instead of live state.
 
 ---

@@ -5,6 +5,7 @@ import { usePanes, GRID_TILE_CAP } from "@/store/panes";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import type { SessionRow } from "@/components/SessionList";
 import type { SeenRequest, ServerSummary, SessionState } from "@/lib/contracts";
+import { providerByIdent } from "@/lib/provider";
 
 export function DesktopShell({
   servers, rows, query, onQueryChange, stateOf, livePaneIds, readyServers,
@@ -27,6 +28,7 @@ export function DesktopShell({
   useFocusedSeen(focusedReq);
   const [notice, setNotice] = React.useState<string | null>(null);
   const noticeTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  const providers = React.useMemo(() => providerByIdent(rows), [rows]);
 
   // Clear the notice timer on unmount to avoid setState-on-unmounted-component.
   React.useEffect(() => () => clearTimeout(noticeTimer.current), []);
@@ -52,7 +54,7 @@ export function DesktopShell({
             {notice}
           </div>
         )}
-        <GridView livePaneIds={livePaneIds} readyServers={readyServers} />
+        <GridView livePaneIds={livePaneIds} readyServers={readyServers} providers={providers} />
       </main>
     </div>
   );

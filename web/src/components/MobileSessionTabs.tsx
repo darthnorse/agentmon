@@ -4,6 +4,8 @@ import type { OpenTab } from "@/store/mobile-open-tabs";
 import { StateDot } from "@/components/StateDot";
 import { cn } from "@/lib/utils";
 import { paneIdentity } from "@/lib/pane-identity";
+import { ProviderTag } from "@/components/ProviderTag";
+import { providerOf, type Provider } from "@/lib/provider";
 
 // One tab per session (§ mobile session switcher). Kept flat/serializable so the
 // route can build it from the cached session list and unit tests can assert on it.
@@ -15,6 +17,7 @@ export interface SessionTab {
   paneId: string;
   state: SessionState;
   active: boolean;
+  provider?: Provider;
 }
 
 // The session currently open in the terminal (from the URL) — always shown as the
@@ -68,6 +71,7 @@ export function buildTabs(
       paneId: row.pane.id,
       state: stateOf(row),
       active,
+      provider: providerOf(row.pane.command),
     });
   }
   if (!matched) {
@@ -105,7 +109,17 @@ export function MobileSessionTabs({
 }) {
   return (
     <nav aria-label="Sessions" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-      {tabs.map((tab) => (
+      {tabs.map((tab) => {
+        // One copy of the tab body — the active/inactive branches differ only in
+        // their wrapper (plain span vs switch button), so additions land once.
+        const body = (
+          <>
+            <StateDot state={tab.state} />
+            <span className="max-w-[8rem] truncate">{tab.name}</span>
+            <ProviderTag provider={tab.provider} />
+          </>
+        );
+        return (
         <span
           key={tab.key}
           aria-current={tab.active ? "page" : undefined}
@@ -115,18 +129,14 @@ export function MobileSessionTabs({
           )}
         >
           {tab.active ? (
-            <span className="flex min-w-0 items-center gap-1">
-              <StateDot state={tab.state} />
-              <span className="max-w-[8rem] truncate">{tab.name}</span>
-            </span>
+            <span className="flex min-w-0 items-center gap-1">{body}</span>
           ) : (
             <button
               type="button"
               onClick={() => onSwitch(tab)}
               className="flex min-w-0 items-center gap-1 hover:opacity-80"
             >
-              <StateDot state={tab.state} />
-              <span className="max-w-[8rem] truncate">{tab.name}</span>
+              {body}
             </button>
           )}
           <button
@@ -138,7 +148,8 @@ export function MobileSessionTabs({
             ×
           </button>
         </span>
-      ))}
+        );
+      })}
     </nav>
   );
 }

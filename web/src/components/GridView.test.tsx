@@ -61,4 +61,12 @@ describe("GridView", () => {
     const after = screen.getByTestId("tv-%0");
     expect(after).toBe(before); // same DOM node ⇒ the tile (and its WS) was preserved
   });
+
+  it("tags a tile whose pane identity maps to a provider", () => {
+    usePanes.getState().openPane({ serverId: "s", paneId: "%0", target: "default", session: "a", serverName: "h" });
+    usePanes.getState().collapse();
+    const providers = new Map([["s:default:%0", "codex" as const]]);
+    render(<GridView providers={providers} />);
+    expect(screen.getByText("codex")).toHaveAttribute("title", "Codex");
+  });
 });

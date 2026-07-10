@@ -7,10 +7,13 @@ import type { OpenTab } from "@/store/mobile-open-tabs";
 import type { SessionState } from "@/lib/contracts";
 
 const servers = [{ id: "s1", name: "host-1", labels: [], enabled: true }];
+// session.command ("zsh") deliberately DIVERGES from the pane's own command
+// ("claude"): the provider tests below only pass if buildTabs derives from
+// row.pane.command — the pane each tab shows — not tmux's active-pane session.command.
 function mkSession(name: string, winId: string, paneId: string) {
   return {
-    name, server: "s1", target: "default", cwd: `/home/${name}`, command: "claude",
-    windows: [{ id: winId, index: "0", name: "m", panes: [{ id: paneId, command: "c", cwd: `/home/${name}` }] }],
+    name, server: "s1", target: "default", cwd: `/home/${name}`, command: "zsh",
+    windows: [{ id: winId, index: "0", name: "m", panes: [{ id: paneId, command: "claude", cwd: `/home/${name}` }] }],
   };
 }
 const byServer = { s1: [mkSession("alpha", "@0", "%0"), mkSession("beta", "@1", "%1"), mkSession("gamma", "@2", "%2")] };
@@ -62,6 +65,22 @@ describe("buildTabs", () => {
     expect(tabs).toHaveLength(3);
     expect(tabs.filter((t) => t.active).map((t) => t.paneId)).toEqual(["%2"]);
     expect(tabs.find((t) => t.active)?.name).toBe("renamed");
+  });
+
+  it("threads the provider from the resolved row into each tab", () => {
+    const tabs = buildTabs(openAll, rows, current, idle);
+    expect(tabs.map((t) => t.provider)).toEqual(["claude", "claude", "claude"]);
+  });
+
+  it("gives the synthetic first-paint tab no provider", () => {
+    const tabs = buildTabs([], [], current, idle);
+    expect(tabs[0].provider).toBeUndefined();
+  });
+
+  it("renders the tag inside a tab", () => {
+    const tabs = buildTabs([open("%0")], rows, current, idle);
+    render(<MobileSessionTabs tabs={tabs} onSwitch={() => {}} onClose={() => {}} />);
+    expect(screen.getAllByText("claude").length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -120,5 +139,6 @@ describe("MobileSessionTabs", () => {
   it("marks the active tab with aria-current", () => {
     render(<MobileSessionTabs tabs={tabs} onSwitch={() => {}} onClose={() => {}} />);
     expect(document.querySelector('[aria-current="page"]')?.textContent).toContain("beta");
+    expect(document.querySelector('[aria-current="page"]')?.textContent).toContain("claude");
   });
 });

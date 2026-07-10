@@ -6,6 +6,8 @@ import { killSession, ApiError, sessionsKey } from "@/lib/api-client";
 import { usePanes, paneKey } from "@/store/panes";
 import { queryClient } from "@/lib/query-client";
 import { toast } from "sonner";
+import { ProviderTag } from "@/components/ProviderTag";
+import type { Provider } from "@/lib/provider";
 
 interface Props {
   serverId: string;
@@ -14,12 +16,13 @@ interface Props {
   name: string;
   paneId: string;
   state: SessionState;
+  provider?: Provider;
 }
 
 // Per-session ⋯ overflow menu on the desktop sidebar: Rename… (reuses the inline
 // editor) and Kill session… (confirmation modal). Its controls stopPropagation so
 // the menu lives inside the click-to-open row.
-export function SessionActionsMenu({ serverId, serverName, target, name, paneId, state }: Props) {
+export function SessionActionsMenu({ serverId, serverName, target, name, paneId, state, provider }: Props) {
   const [open, setOpen] = React.useState(false);
   const [mode, setMode] = React.useState<"idle" | "rename">("idle");
   const [killOpen, setKillOpen] = React.useState(false);
@@ -69,6 +72,7 @@ export function SessionActionsMenu({ serverId, serverName, target, name, paneId,
   return (
     <span className="flex w-full min-w-0 items-center gap-1">
       <span className="truncate">{name}</span>
+      <ProviderTag provider={provider} />
       <div className="relative flex-none ml-auto" ref={ref}>
         <button
           type="button"
