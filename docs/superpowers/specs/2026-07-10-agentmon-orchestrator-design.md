@@ -174,7 +174,15 @@ A runner session must:
    that reports for epic N come from the assigned host/session.
 4. Scale process to the issue: full flow by default — plan (committed plan doc) →
    implement with subagent/TDD discipline → multi-review → fix loop. `pipeline:light`
-   label skips heavy planning for small fixes. The epic issue body is the
+   label skips heavy planning for small fixes.
+   **Checkpoint reviews:** generated plans embed checkpoint stops at their logical
+   seams; at each, the runner runs a cross-provider multi-review on the segment
+   diff *in-session* (lenses run as subagents/subprocesses, so only the report
+   enters runner context — no separate session needed): Claude runners use
+   `/multi-review --codex`, Codex runners invert (headless `claude` as reviewer).
+   FIX findings are applied and committed at the checkpoint; unresolvable
+   DISCUSS findings map to `report --stage escalated` (the existing
+   human-summoning path); the final pre-PR multi-review feeds the verdict block. The epic issue body is the
    *requirements* (scope, acceptance criteria, constraints, PRD pointers); the runner
    writes the implementation plan at execution time against the current codebase. If
    the body already carries a detailed plan, the planning stage validates and adapts
