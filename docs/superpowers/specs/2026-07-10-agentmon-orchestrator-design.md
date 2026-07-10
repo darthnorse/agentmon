@@ -157,8 +157,15 @@ unknown reporting session, unparseable CI state)   → escalated + reason
 ```
 
 The gate never merges on ambiguity, and an agent cannot talk its way past it — the
-verdict is data the gate parses, not an argument the gate believes. From `escalated`,
-board **Approve & merge** or a human merge in GitHub both work.
+verdict is data the gate parses, not an argument the gate believes. Hardening (from
+the checkpoint-2 review): merges are **SHA-pinned** to the evaluated head (GitHub
+rejects if the branch moved — closes the check-to-merge race); the verdict must
+carry schema `v1`, non-negative counts, and an `epic:` matching the issue under
+evaluation; check-run and issue listings fail closed on partial API views. The
+verdict remains the assigned runner's self-report (provenance contract documented
+in `gate.go`) — signed attestation is future work if PR authorship ever opens up.
+From `escalated`, board **Approve & merge** or a human merge in GitHub both work,
+including direct `escalated/stalled → merged` transitions observed via reconcile.
 
 ## 7. Runner contract
 

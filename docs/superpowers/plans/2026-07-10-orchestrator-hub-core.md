@@ -373,7 +373,7 @@ func TestProjectSetters(t *testing.T) {
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProject -v`
 Expected: FAIL — `d.CreateProject undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/db/projects.go`:
 
@@ -507,12 +507,12 @@ func unmarshalStrings(s string) []string {
 
 (Add `"encoding/json"` to imports.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProject -v && go build ./...`
 Expected: PASS, clean build.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): projects store"
@@ -544,7 +544,7 @@ cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): proj
   - `func (d *DB) AppendEpicEvent(ctx context.Context, ev EpicEvent) error` — stamps UUID if `ID == ""`
   - `func (d *DB) ListEpicEvents(ctx context.Context, epicID string, limit int) ([]EpicEvent, error)` — newest first
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/db/epics_test.go`:
 
@@ -662,12 +662,12 @@ func TestEpicSettersAndLists(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestUpsertEpic -v`
 Expected: FAIL — `d.UpsertEpicIssue undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/db/epics.go`:
 
@@ -923,12 +923,12 @@ func splitNonEmpty(s string, sep rune) []string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -v && go build ./...`
 Expected: PASS (all db tests), clean build.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/db/ && git commit -m "feat(hub): epics + epic_events store with guarded transitions"
@@ -949,7 +949,7 @@ git add hubd/internal/db/ && git commit -m "feat(hub): epics + epic_events store
   - `func ReportableStage(s EpicStage) bool` — the subset a RUNNER may report: planning, implementing, reviewing, pr_open, escalated
   - `type OrchestratorReport struct { Repo string; Epic int; Stage EpicStage; Note string; PR int; Session string; Ts string }` with json tags `repo, epic, stage, note, pr, session, ts` (`note`/`pr` omitempty)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `shared/orchestrator_test.go`:
 
@@ -998,12 +998,12 @@ func TestOrchestratorReportJSON(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/shared && go test ./ -run 'TestValidEpicStage|TestReportableStage|TestOrchestratorReportJSON' -v`
 Expected: FAIL — `ValidEpicStage undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `shared/orchestrator.go`:
 
@@ -1061,18 +1061,18 @@ type OrchestratorReport struct {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/shared && go test ./ -v && cd /root/agentmon/hubd && go build ./...`
 Expected: PASS; hub still builds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add shared/ && git commit -m "feat(shared): epic stages + orchestrator report wire type"
 ```
 
-- [ ] **Step 6: CHECKPOINT 1 — STOP**
+- [x] **Step 6: CHECKPOINT 1 — STOP**
 
 Tasks 1–5 (foundations: config, schema, stores, shared types) are a review checkpoint. STOP here — do not begin Task 6. Report that checkpoint 1 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
 
@@ -1103,7 +1103,7 @@ Tasks 1–5 (foundations: config, schema, stores, shared types) are a review che
     - `RemoveLabel(ctx, repo string, num int, label string) error` — 404 tolerated (already absent)
   - Sentinels: `ErrNotFound`, `ErrNotMergeable`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/github/client_test.go`:
 
@@ -1259,12 +1259,12 @@ func TestWriteBackCalls(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -v`
 Expected: FAIL — package doesn't exist / `NewClient undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/github/client.go`:
 
@@ -1501,12 +1501,12 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, num int, label st
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -v && go build ./...`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/github/ && git commit -m "feat(hub): minimal github rest client"
@@ -1527,7 +1527,7 @@ cd /root/agentmon && git add hubd/internal/github/ && git commit -m "feat(hub): 
   - `type Event struct { Kind, Action, Repo string; Issue *Issue; PRNumber int; PRMerged bool }`
   - `func ParseEvent(kind string, body []byte) (Event, error)` — kinds handled: `issues`, `pull_request`, `check_suite`, `ping`; anything else ⇒ `Event{Kind: kind}` with only Repo filled when present
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/github/webhook_test.go`:
 
@@ -1603,12 +1603,12 @@ func TestParseUnknownKind(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -run 'TestVerify|TestParse' -v`
 Expected: FAIL — `VerifySignature undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/github/webhook.go`:
 
@@ -1676,12 +1676,12 @@ func ParseEvent(kind string, body []byte) (Event, error) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/github/ && git commit -m "feat(hub): webhook hmac verify + event parse"
@@ -1702,7 +1702,7 @@ git add hubd/internal/github/ && git commit -m "feat(hub): webhook hmac verify +
   - `var ErrNoVerdict = errors.New("orchestrator: no verdict block")`
   - `func ParseVerdict(prBody string) (*Verdict, error)` — scans fenced ` ```yaml ` blocks, parses the LAST one whose YAML contains key `agentmon-verdict`; malformed YAML in that block ⇒ error (gate treats any error as escalate)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/verdict_test.go`:
 
@@ -1761,12 +1761,12 @@ func TestParseVerdictMalformed(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v`
 Expected: FAIL — package doesn't exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/verdict.go`:
 
@@ -1831,12 +1831,12 @@ func ParseVerdict(prBody string) (*Verdict, error) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): verdict block parser"
@@ -1868,7 +1868,7 @@ Decision order (first match wins — mirrors spec §6):
 8. required reviews not a subset of `Verdict.Reviews` ⇒ escalate "missing required reviews: …"
 9. otherwise ⇒ Merge
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/gate_test.go`:
 
@@ -1920,12 +1920,12 @@ func TestDecide(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestDecide -v`
 Expected: FAIL — `Decide undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/gate.go`:
 
@@ -2008,12 +2008,12 @@ func missingReviews(required, got []string) []string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestDecide -v`
 Expected: PASS (10 subtests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): fail-closed merge gate"
@@ -2037,7 +2037,7 @@ Rules:
 - Recovery: `escalated → queued | implementing | merging | canceled`; `stalled → queued | canceled | failed`; `queued → canceled`.
 - Terminal (`merged, failed, canceled`): no exits.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/machine_test.go`:
 
@@ -2088,12 +2088,12 @@ func TestValidTransition(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestValidTransition -v`
 Expected: FAIL — `ValidTransition undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/machine.go`:
 
@@ -2154,12 +2154,12 @@ func ValidTransition(from, to shared.EpicStage) bool {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestValidTransition -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): epic stage transition table"
@@ -2179,7 +2179,7 @@ cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(
   - `type BoardChange struct { ProjectID, EpicID string; Issue int; Stage shared.EpicStage; Needs, Title string }`
   - `type BoardBroadcaster` with `NewBoardBroadcaster() *BoardBroadcaster`, `Subscribe() (id uint64, ch <-chan BoardChange, cancel func())`, `Publish(c BoardChange)` — same drop-oldest, non-blocking semantics as `state.Broadcaster` (`state/broadcaster.go`), buffer 64.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/broadcast_test.go`:
 
@@ -2228,12 +2228,12 @@ func TestBoardBroadcastCancelIdempotent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestBoardBroadcast -v`
 Expected: FAIL — `NewBoardBroadcaster undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/broadcast.go` (mirror of `state/broadcaster.go` semantics):
 
@@ -2307,18 +2307,18 @@ func (b *BoardBroadcaster) Publish(c BoardChange) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestBoardBroadcast -v -race`
 Expected: PASS under `-race`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): board change broadcaster"
 ```
 
-- [ ] **Step 6: CHECKPOINT 2 — STOP**
+- [x] **Step 6: CHECKPOINT 2 — STOP**
 
 Tasks 6–11 (GitHub client, webhook, verdict, gate, machine, broadcaster) are a review checkpoint. STOP here — do not begin Task 12. Report that checkpoint 2 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
 
@@ -2793,7 +2793,7 @@ type GitHubAPI interface {
 	ListIssuesSince(ctx context.Context, repo, since string) ([]github.Issue, error)
 	GetPullRequest(ctx context.Context, repo string, num int) (github.PullRequest, error)
 	ListCheckRuns(ctx context.Context, repo, ref string) ([]github.CheckRun, error)
-	MergePR(ctx context.Context, repo string, num int) error
+	MergePR(ctx context.Context, repo string, num int, sha string) error // sha pins the evaluated head (checkpoint-2 review)
 	CreateIssueComment(ctx context.Context, repo string, num int, body string) error
 	AddLabels(ctx context.Context, repo string, num int, labels []string) error
 	RemoveLabel(ctx context.Context, repo string, num int, label string) error
@@ -2891,7 +2891,7 @@ func (f *fakeGH) GetPullRequest(_ context.Context, _ string, n int) (github.Pull
 func (f *fakeGH) ListCheckRuns(_ context.Context, _, ref string) ([]github.CheckRun, error) {
 	return f.checks[ref], nil
 }
-func (f *fakeGH) MergePR(_ context.Context, _ string, n int) error {
+func (f *fakeGH) MergePR(_ context.Context, _ string, n int, _ string) error {
 	f.merged = append(f.merged, n)
 	pr := f.prs[n]
 	pr.Merged = true
@@ -3203,7 +3203,7 @@ func (o *Orchestrator) tickProject(ctx context.Context, p db.Project) {
 	runs, err := o.d.GH.ListCheckRuns(ctx, p.Repo, pr.HeadSHA)
 	if err != nil { log; continue }
 	green, pending := github.ChecksState(runs)
-	res := Decide(GateInput{Verdict: v, VerdictErr: verr, Labels: e.Labels,
+	res := Decide(GateInput{Verdict: v, VerdictErr: verr, Epic: e.IssueNumber, Labels: e.Labels,
 		RequiredReviews: p.RequiredReviews, ChecksGreen: green, ChecksPending: pending})
 	switch {
 	case res.Wait:
@@ -3217,7 +3217,7 @@ func (o *Orchestrator) tickProject(ctx context.Context, p db.Project) {
 	}
 ```
 
-`mergeEpic(ctx, p, e, source)`: transition current→`merging` (source); `MergePR`; `ErrNotMergeable` ⇒ `SetEpicNeeds` + transition `merging→escalated` "merge conflict — rebase needed"; other error ⇒ log, leave in `merging` (next tick re-fetches PR: merged-by-now or retry); success ⇒ `finishMerged`. `finishMerged`: transition to `merged` (via `merging` if legal path requires — from `merging` directly); best-effort `AddLabels(repo, issue, ["agentmon:merged"])` + `comment("✅ merged PR #N")`.
+`mergeEpic(ctx, p, e, source)`: transition current→`merging` (source); `MergePR(ctx, p.Repo, e.PRNumber, pr.HeadSHA)` (SHA-pinned); `ErrNotMergeable` ⇒ `SetEpicNeeds` + transition `merging→escalated` "merge conflict — rebase needed"; other error ⇒ log, leave in `merging` (next tick re-fetches PR: merged-by-now or retry); success ⇒ `finishMerged`. `finishMerged`: transition to `merged` (via `merging` if legal path requires — from `merging` directly); best-effort `AddLabels(repo, issue, ["agentmon:merged"])` + `comment("✅ merged PR #N")`.
 
 `schedule`: `epics, _ := ListEpicsByProject`; `for _, e := range ReadyEpics(epics, p.MaxParallel, p.Paused)`: if `e.Attempt+1 > o.d.Cfg.MaxAttempts` ⇒ transition `failed` "attempts exhausted"; else `srv := Reg.Get`; transition `queued→starting` "spawning epic-N"; `SetEpicAssignment(SessionNameFor(e.IssueNumber), e.Attempt+1)`; `CreateSession(ctx, srv, p.Target, shared.CreateSessionRequest{Name: SessionNameFor(e.IssueNumber), Cwd: p.Workdir, Command: KickoffCommand(ProviderFor(p.Provider, e.Labels), e.IssueNumber)})`; on error ⇒ `SetEpicNeeds` + transition `starting→stalled` "spawn failed: …".
 
