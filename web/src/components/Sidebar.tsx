@@ -8,9 +8,9 @@ import { SessionActionsMenu } from "@/components/SessionActionsMenu";
 import { rowActivation } from "@/lib/row-activation";
 import { providerOf } from "@/lib/provider";
 
-// Desktop servers→sessions tree. Dots roll up; blocked sorts first. The tree is
-// seeded from the full `servers` list so a session-less server still renders (its
-// REST `state` dot, or `unknown`) — the M8-deferred server-dot fallback.
+// Desktop servers→sessions tree. Blocked-first ordering via the per-server
+// rollup (no header dot); session-less servers render name-only, using their
+// REST `state` (or "unknown") for ordering.
 export function Sidebar({
   servers, rows, query, onQueryChange, onOpen, stateOf,
 }: {
@@ -55,7 +55,7 @@ export function Sidebar({
           aria-label="Search sessions" />
       </div>
       <div className="flex-1 overflow-y-auto">
-        {groups.map(({ id, serverName, list, serverState }) => (
+        {groups.map(({ id, serverName, list }) => (
           <div key={id}>
             <div className="flex items-center gap-2 px-3 py-1">
               <span className="text-xs font-semibold uppercase text-muted-foreground">{serverName}</span>

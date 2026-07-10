@@ -136,5 +136,6 @@ describe("MobileSessionTabs", () => {
   it("marks the active tab with aria-current", () => {
     render(<MobileSessionTabs tabs={tabs} onSwitch={() => {}} onClose={() => {}} />);
     expect(document.querySelector('[aria-current="page"]')?.textContent).toContain("beta");
+    expect(document.querySelector('[aria-current="page"]')?.textContent).toContain("claude");
   });
 });
