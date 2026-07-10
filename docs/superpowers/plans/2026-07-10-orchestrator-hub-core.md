@@ -4104,6 +4104,133 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): wire orchestrato
 
 ---
 
+### Task 22: require_ci — close the CI-not-yet-registered merge window
+
+Added from the checkpoint-2 review (DISCUSS item, owner-approved): `ChecksState`
+returns green for zero check runs (repos without CI), but on a CI-ENABLED repo the
+gate can evaluate a PR before the CI provider registers its first check run — a
+fail-open window. Fix: a per-project `require_ci` flag; when set, zero check runs
+reads as *pending* (wait), never green. A stage timeout still catches CI that never
+arrives.
+
+**Files:**
+- Create: `hubd/internal/db/migrations/0006_require_ci.sql`
+- Modify: `hubd/internal/db/projects.go`, `hubd/internal/orchestrator/orchestrator.go` (evaluateGates), `hubd/internal/api/orchestrator.go` (register field)
+- Test: `hubd/internal/db/projects_test.go`, `hubd/internal/orchestrator/orchestrator_test.go` (append)
+
+**Interfaces:**
+- Consumes: Task 3 store, Task 15 `evaluateGates`, Task 18 register handler.
+- Produces: `db.Project.RequireCI bool`, persisted and honored by the gate path.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `hubd/internal/db/projects_test.go`:
+
+```go
+func TestProjectRequireCIRoundTrip(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	enrollTestServer(t, d, "aigallery")
+	p := testProject("aigallery")
+	p.RequireCI = true
+	if err := d.CreateProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetProject(ctx, "p1")
+	if err != nil || !got.RequireCI {
+		t.Fatalf("RequireCI must round-trip: %+v err=%v", got, err)
+	}
+}
+```
+
+Append to `hubd/internal/orchestrator/orchestrator_test.go` (reuses the Task 15
+fakes; the project seeded by `newTestOrch` has RequireCI false — this test seeds
+its own):
+
+```go
+func TestRequireCIHoldsMergeUntilChecksRegister(t *testing.T) {
+	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
+		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
+		"uncertain: false\nlearnings_updated: true\n```"
+	gh := &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s"}},
+		checks: map[string][]github.CheckRun{}, // no runs registered yet
+	}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{"epic-16": true}})
+	ctx := context.Background()
+	// flip the project to require CI
+	if ok, err := d.SetProjectRequireCI(ctx, "p1", true); err != nil || !ok {
+		t.Fatalf("SetProjectRequireCI: ok=%v err=%v", ok, err)
+	}
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: "epic-16", Ts: "t"}}
+	o.Tick(ctx) // gate must WAIT (zero runs + require_ci), not merge
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "pr_open" || len(gh.merged) != 0 {
+		t.Fatalf("must hold in pr_open with no merge, got stage=%s merged=%v", e.Stage, gh.merged)
+	}
+	// CI registers a green run → next tick merges
+	gh.checks["s"] = []github.CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}}
+	o.Tick(ctx)
+	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("must merge once checks exist and pass, got %+v", e)
+	}
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProjectRequireCI -v && go test ./internal/orchestrator/ -run TestRequireCI -v`
+Expected: FAIL — `p.RequireCI undefined` / `d.SetProjectRequireCI undefined` (compile errors).
+
+- [ ] **Step 3: Implement**
+
+Create `hubd/internal/db/migrations/0006_require_ci.sql`:
+
+```sql
+ALTER TABLE projects ADD COLUMN require_ci INTEGER NOT NULL DEFAULT 0;
+```
+
+In `hubd/internal/db/projects.go`: add `RequireCI bool` to `Project`; append
+`, require_ci` to `projectCols`; scan into `&p.RequireCI` (last position); add the
+column + `p.RequireCI` value to `CreateProject`'s INSERT; add:
+
+```go
+func (d *DB) SetProjectRequireCI(ctx context.Context, id string, v bool) (bool, error) {
+	return d.execFound(ctx, `UPDATE projects SET require_ci = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
+}
+```
+
+In `hubd/internal/orchestrator/orchestrator.go` `evaluateGates`, after computing
+`green, pending := github.ChecksState(runs)`:
+
+```go
+	if p.RequireCI && len(runs) == 0 {
+		// CI is configured for this project but no run has registered yet —
+		// the zero-runs green is only for CI-less repos. Wait, don't merge.
+		pending = true
+	}
+```
+
+In `hubd/internal/api/orchestrator.go`: accept `require_ci` (json `require_ci`)
+in the project-register body and pass it through; include it in the project DTO.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd /root/agentmon/hubd && go build ./... && go test ./... `
+Expected: PASS (all packages).
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): per-project require_ci closes the pre-check-registration merge window"
+```
+
+---
+
 ## Out of scope for this plan (tracked in the spec §13)
 
 - **Sub-project 2 (runner):** agent loopback `POST /orchestrator/report` intake + buffered `GET /orchestrator/reports` drain endpoint, `agentmon report` CLI, agent-side `CreateSessionRequest.Command` execution (both ends currently reject it — the orchestrator core sets it; the agent honors it once sub-project 2 lands), `epic-pipeline` skill, Codex playbook, import script, doctor run.
