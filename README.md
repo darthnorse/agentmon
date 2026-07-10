@@ -25,14 +25,16 @@ status *is* navigation, and the thing you most need is "which agent needs me, an
   close the tab, your phone sleeps, the hub restarts, or you SSH in directly. Full scrollback, touch
   scrolling, and a mobile key bar (Esc / Ctrl / Tab / arrows / paste).
 - **Live state, blocked-first.** Claude Code and Codex hooks drive per-session state — `blocked` / `done` / `working`
-  / `idle` — rolled up to colored dots per session and server, with blocked sessions always floated to the
-  top. "Next blocked" jumps you to the next one.
+  / `idle` — shown as colored dots per session, with blocked sessions (and the hosts holding them) always
+  floated to the top. "Next blocked" jumps you to the next one. Each session is tagged `claude` / `codex`
+  so you can tell at a glance which agent runs where.
 - **Cross-session attention alerts.** When a *different* session goes `blocked`, you get an in-app
   toast + sound + vibrate while AgentMon is open, and a **Web-Push** notification when it's backgrounded or
   your phone is asleep (install it as a PWA first — required on iOS).
 - **Installable PWA** — add it to your home screen for a full-screen mobile terminal and push notifications.
-- **Create + rename sessions from the UI** — spin up a new project session on any server (see
-  [`session_dirs`](#agent-agenttoml)), or rename one inline from its terminal header or the session list.
+- **Create, rename + kill sessions from the UI** — spin up a new project session on any server (see
+  [`session_dirs`](#agent-agenttoml)), rename one inline from its terminal header or the session list, or
+  kill one from the sidebar's ⋯ menu.
 - **Admit agents from the web** — newly-installed agents show up as a *pending* banner; **Approve** or
   **Reject** them from the dashboard (the trust gate, no CLI needed).
 - **One-command install + upgrade** — `sudo bash -c "$(curl -fsSL <hub>/install.sh)"` enrolls a new agent,
@@ -322,6 +324,16 @@ for h in "${HOSTS[@]}"; do
     || echo "  !! $h FAILED"
 done
 ```
+
+Over SSH there's no terminal on the script's stdin, so the hooks Y/n prompt is **skipped** — the loop
+above updates binaries but never touches hook config. To also wire up state hooks, pass the explicit
+mode (idempotent, safe to repeat) by appending it to the remote command:
+
+```bash
+  ssh "$h" 'SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo; $SUDO bash -c "$(curl -fsSL <external_origin>/install.sh)" -- --hooks=all'
+```
+
+(`--hooks=claude` or `--hooks=codex` to wire just one client; hosts differ → set the flag per host.)
 
 ---
 
