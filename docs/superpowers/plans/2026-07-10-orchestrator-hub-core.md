@@ -177,7 +177,7 @@ In `Load`, after the existing `SessionCookie.Name` default block:
 Run: `cd /root/agentmon/hubd && go test ./internal/config/ -v`
 Expected: PASS (both tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/config/ && git commit -m "feat(hub): github + orchestrator config sections"
@@ -194,16 +194,16 @@ cd /root/agentmon && git add hubd/internal/config/ && git commit -m "feat(hub): 
 **Interfaces:**
 - Produces: tables `projects`, `epics`, `epic_events` (schema below — later tasks' SQL must match column names exactly).
 
-- [ ] **Step 1: Extend the schema test to fail**
+- [x] **Step 1: Extend the schema test to fail**
 
 In `hubd/internal/db/db_test.go`, add `"projects", "epics", "epic_events"` to the `want` slice of table names in the existing schema test.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestOpen -v`
 Expected: FAIL — missing table `projects`.
 
-- [ ] **Step 3: Create the migration**
+- [x] **Step 3: Create the migration**
 
 Create `hubd/internal/db/migrations/0005_orchestrator.sql`:
 
@@ -263,12 +263,12 @@ CREATE INDEX idx_epic_events_epic ON epic_events(epic_id, ts);
 
 Note: string timestamps use `''` (not NULL) for "unset" — matches the store code's plain-`string` fields and avoids `sql.NullString` scanning.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -v`
 Expected: PASS (all existing + schema test).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): 0005 orchestrator schema (projects, epics, epic_events)"
@@ -293,7 +293,7 @@ cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): 0005
   - `func (d *DB) SetProjectPaused(ctx context.Context, id string, paused bool) (bool, error)`
   - `func (d *DB) SetProjectMaxParallel(ctx context.Context, id string, n int) (bool, error)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/db/projects_test.go`:
 
@@ -305,16 +305,9 @@ import (
 	"testing"
 )
 
-// enrollTestServer satisfies the epics/projects FK on servers(id).
-func enrollTestServer(t *testing.T, d *DB, id string) {
-	t.Helper()
-	if err := d.EnrollServer(context.Background(), Server{
-		ID: id, Name: id, Hostname: id, URL: "http://127.0.0.1:1", Status: "active",
-		Bearer: "b", SigningKey: "k",
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
+// NOTE: the package already provides enrollTestServer(t, d, id) in
+// state_test.go (same signature/behavior — enrolls an active server
+// satisfying the projects/epics FK). REUSE it; do not redeclare.
 
 func testProject(server string) Project {
 	return Project{
@@ -375,7 +368,7 @@ func TestProjectSetters(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProject -v`
 Expected: FAIL — `d.CreateProject undefined` (compile error).
