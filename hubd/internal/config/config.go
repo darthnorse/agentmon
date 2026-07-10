@@ -61,19 +61,21 @@ func Load(path string) (Config, error) {
 	if c.SessionCookie.Name == "" {
 		c.SessionCookie.Name = "agentmon_session"
 	}
-	if c.Orchestrator.Tick == 0 {
+	// <= 0 (not == 0): negative YAML values must fall back too — a negative
+	// Tick would panic time.NewTicker; negative timeouts stall every epic.
+	if c.Orchestrator.Tick <= 0 {
 		c.Orchestrator.Tick = 15 * time.Second
 	}
-	if c.Orchestrator.PlanningTimeout == 0 {
+	if c.Orchestrator.PlanningTimeout <= 0 {
 		c.Orchestrator.PlanningTimeout = 2 * time.Hour
 	}
-	if c.Orchestrator.ImplementingTimeout == 0 {
+	if c.Orchestrator.ImplementingTimeout <= 0 {
 		c.Orchestrator.ImplementingTimeout = 8 * time.Hour
 	}
-	if c.Orchestrator.ReviewingTimeout == 0 {
+	if c.Orchestrator.ReviewingTimeout <= 0 {
 		c.Orchestrator.ReviewingTimeout = 2 * time.Hour
 	}
-	if c.Orchestrator.MaxAttempts == 0 {
+	if c.Orchestrator.MaxAttempts <= 0 {
 		c.Orchestrator.MaxAttempts = 2
 	}
 	return c, nil

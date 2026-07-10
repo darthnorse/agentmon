@@ -25,13 +25,11 @@ const projectCols = "id, name, repo, server_id, target, workdir, base_branch, pr
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
 	var reviews string
-	var paused int
 	if err := row.Scan(&p.ID, &p.Name, &p.Repo, &p.ServerID, &p.Target, &p.Workdir,
-		&p.BaseBranch, &p.Provider, &reviews, &p.MaxParallel, &paused); err != nil {
+		&p.BaseBranch, &p.Provider, &reviews, &p.MaxParallel, &p.Paused); err != nil {
 		return Project{}, err
 	}
 	p.RequiredReviews = unmarshalStrings(reviews)
-	p.Paused = paused != 0
 	return p, nil
 }
 
@@ -40,7 +38,7 @@ func (d *DB) CreateProject(ctx context.Context, p Project) error {
 		`INSERT INTO projects(id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, created_at, updated_at)
 		 VALUES(?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))`,
 		p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider,
-		marshalStrings(p.RequiredReviews), p.MaxParallel, boolToInt(p.Paused))
+		marshalStrings(p.RequiredReviews), p.MaxParallel, p.Paused)
 	return err
 }
 
@@ -49,6 +47,10 @@ func (d *DB) GetProject(ctx context.Context, id string) (Project, error) {
 		`SELECT `+projectCols+` FROM projects WHERE id = ?`, id))
 }
 
+// GetProjectByRepo matches case-insensitively: the repo column is COLLATE
+// NOCASE because GitHub slugs are case-insensitive but case-preserving, and
+// webhook payloads carry canonical casing that may differ from what the
+// admin typed at registration.
 func (d *DB) GetProjectByRepo(ctx context.Context, repo string) (Project, error) {
 	return scanProject(d.sql.QueryRowContext(ctx,
 		`SELECT `+projectCols+` FROM projects WHERE repo = ?`, repo))
@@ -73,32 +75,11 @@ func (d *DB) ListProjects(ctx context.Context) ([]Project, error) {
 }
 
 func (d *DB) SetProjectPaused(ctx context.Context, id string, paused bool) (bool, error) {
-	res, err := d.sql.ExecContext(ctx,
-		`UPDATE projects SET paused = ?, updated_at = datetime('now') WHERE id = ?`,
-		boolToInt(paused), id)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return d.execFound(ctx, `UPDATE projects SET paused = ?, updated_at = datetime('now') WHERE id = ?`, paused, id)
 }
 
 func (d *DB) SetProjectMaxParallel(ctx context.Context, id string, n int) (bool, error) {
-	res, err := d.sql.ExecContext(ctx,
-		`UPDATE projects SET max_parallel = ?, updated_at = datetime('now') WHERE id = ?`,
-		n, id)
-	if err != nil {
-		return false, err
-	}
-	rn, _ := res.RowsAffected()
-	return rn > 0, nil
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
+	return d.execFound(ctx, `UPDATE projects SET max_parallel = ?, updated_at = datetime('now') WHERE id = ?`, n, id)
 }
 
 // marshalStrings / unmarshalStrings mirror servers.go's label helpers for
@@ -107,10 +88,7 @@ func marshalStrings(ss []string) string {
 	if len(ss) == 0 {
 		return "[]"
 	}
-	b, err := json.Marshal(ss)
-	if err != nil {
-		return "[]"
-	}
+	b, _ := json.Marshal(ss)
 	return string(b)
 }
 

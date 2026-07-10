@@ -62,3 +62,24 @@ func TestProjectSetters(t *testing.T) {
 		t.Fatal("pause on missing id should report false")
 	}
 }
+
+func TestGetProjectByRepoIsCaseInsensitive(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	enrollTestServer(t, d, "aigallery")
+	if err := d.CreateProject(ctx, testProject("aigallery")); err != nil {
+		t.Fatal(err)
+	}
+	// GitHub slugs are case-insensitive but case-preserving: webhooks carry
+	// canonical casing that may differ from what was typed at registration.
+	got, err := d.GetProjectByRepo(ctx, "DarthNorse/School-Platform")
+	if err != nil || got.ID != "p1" {
+		t.Fatalf("case-insensitive lookup failed: %+v err=%v", got, err)
+	}
+	// And the UNIQUE constraint must reject a differently-cased duplicate.
+	dup := testProject("aigallery")
+	dup.ID, dup.Name, dup.Repo = "p2", "dupe", "DARTHNORSE/school-platform"
+	if err := d.CreateProject(ctx, dup); err == nil {
+		t.Fatal("differently-cased duplicate repo must violate UNIQUE")
+	}
+}

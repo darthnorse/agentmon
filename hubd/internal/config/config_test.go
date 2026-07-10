@@ -123,3 +123,24 @@ func TestOrchestratorDefaults(t *testing.T) {
 		t.Fatalf("default max_attempts = %d, want 2", c.Orchestrator.MaxAttempts)
 	}
 }
+
+func TestOrchestratorNegativeValuesDefaulted(t *testing.T) {
+	c, err := Load(writeCfg(t, `
+orchestrator:
+  tick: -5s
+  planning_timeout: -1h
+  max_attempts: -1
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Orchestrator.Tick != 15*time.Second {
+		t.Fatalf("negative tick must default, got %v", c.Orchestrator.Tick)
+	}
+	if c.Orchestrator.PlanningTimeout != 2*time.Hour {
+		t.Fatalf("negative planning_timeout must default, got %v", c.Orchestrator.PlanningTimeout)
+	}
+	if c.Orchestrator.MaxAttempts != 2 {
+		t.Fatalf("negative max_attempts must default, got %d", c.Orchestrator.MaxAttempts)
+	}
+}

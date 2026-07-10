@@ -109,3 +109,31 @@ func TestEpicSettersAndLists(t *testing.T) {
 		t.Fatalf("all=%d nt=%d", len(all), len(nt))
 	}
 }
+
+func TestEpicEventsSameSecondOrderByInsertion(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	seedProject(t, d)
+	e, _ := d.UpsertEpicIssue(ctx, Epic{
+		ProjectID: "p1", IssueNumber: 30, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	// Same-second ts; explicit IDs chosen so the OLD (id-based) tiebreak
+	// would return them in the wrong order. rowid must win instead.
+	ts := "2026-07-10T15:00:00Z"
+	first := EpicEvent{ID: "a-first", EpicID: e.ID, FromStage: "queued", ToStage: "starting", Source: "hub", Ts: ts}
+	second := EpicEvent{ID: "0-second", EpicID: e.ID, FromStage: "starting", ToStage: "planning", Source: "report", Ts: ts}
+	if err := d.AppendEpicEvent(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AppendEpicEvent(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := d.ListEpicEvents(ctx, e.ID, 10)
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("evs=%v err=%v", evs, err)
+	}
+	if evs[0].ID != "0-second" || evs[1].ID != "a-first" {
+		t.Fatalf("newest-first insertion order expected, got %q then %q", evs[0].ID, evs[1].ID)
+	}
+}

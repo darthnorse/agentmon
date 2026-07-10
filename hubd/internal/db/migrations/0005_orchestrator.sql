@@ -1,7 +1,7 @@
 CREATE TABLE projects (
   id               TEXT PRIMARY KEY,
   name             TEXT NOT NULL UNIQUE,
-  repo             TEXT NOT NULL UNIQUE,
+  repo             TEXT NOT NULL COLLATE NOCASE UNIQUE,
   server_id        TEXT NOT NULL REFERENCES servers(id),
   target           TEXT NOT NULL DEFAULT '',
   workdir          TEXT NOT NULL,

@@ -2,11 +2,13 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"strconv"
+	"fmt"
+	"log"
 
 	"github.com/google/uuid"
+
+	"agentmon/shared"
 )
 
 // Epic is the runtime row for one orchestrated issue. GitHub owns the
@@ -46,6 +48,21 @@ const epicCols = `id, project_id, issue_number, title, labels, blocked_by, stage
  session_name, branch, pr_number, verdict, needs, issue_state,
  queued_at, started_at, stage_updated_at, merged_at`
 
+// SQL fragments are built from the shared stage constants so the db layer
+// cannot silently drift when a stage is added or renamed. Values are trusted
+// constants, never user input.
+var (
+	terminalStagesSQL = fmt.Sprintf("('%s','%s','%s')",
+		shared.EpicMerged, shared.EpicFailed, shared.EpicCanceled)
+	transitionSQL = fmt.Sprintf(`UPDATE epics SET stage=?, stage_updated_at=?,
+	   started_at = CASE WHEN ?='%s' AND started_at='' THEN ? ELSE started_at END,
+	   merged_at  = CASE WHEN ?='%s' THEN ? ELSE merged_at END,
+	   needs      = CASE WHEN ? IN ('%s','%s') THEN needs ELSE '' END,
+	   updated_at = datetime('now')
+	 WHERE id = ? AND stage = ?`,
+		shared.EpicStarting, shared.EpicMerged, shared.EpicEscalated, shared.EpicStalled)
+)
+
 func scanEpic(row interface{ Scan(...any) error }) (Epic, error) {
 	var e Epic
 	var labels, blocked string
@@ -59,31 +76,24 @@ func scanEpic(row interface{ Scan(...any) error }) (Epic, error) {
 	return e, nil
 }
 
+// UpsertEpicIssue inserts a new epic (stage 'queued') or refreshes only the
+// GitHub-mirror fields of an existing one. Single statement: the webhook
+// handler and the sync poller may race on the same issue, and a
+// check-then-insert pair would lose to UNIQUE(project_id, issue_number).
 func (d *DB) UpsertEpicIssue(ctx context.Context, e Epic) (Epic, error) {
-	existing, err := d.GetEpicByIssue(ctx, e.ProjectID, e.IssueNumber)
-	if err == nil {
-		_, uerr := d.sql.ExecContext(ctx,
-			`UPDATE epics SET title=?, labels=?, blocked_by=?, issue_state=?, updated_at=datetime('now') WHERE id=?`,
-			e.Title, marshalStrings(e.Labels), marshalInts(e.BlockedBy), e.IssueState, existing.ID)
-		if uerr != nil {
-			return Epic{}, uerr
-		}
-		return d.GetEpic(ctx, existing.ID)
-	}
-	if err != sql.ErrNoRows {
-		return Epic{}, err
-	}
-	id := uuid.NewString()
-	_, err = d.sql.ExecContext(ctx,
+	_, err := d.sql.ExecContext(ctx,
 		`INSERT INTO epics(id, project_id, issue_number, title, labels, blocked_by, issue_state,
 		   queued_at, stage_updated_at, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))`,
-		id, e.ProjectID, e.IssueNumber, e.Title, marshalStrings(e.Labels),
+		 VALUES(?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))
+		 ON CONFLICT(project_id, issue_number) DO UPDATE SET
+		   title=excluded.title, labels=excluded.labels, blocked_by=excluded.blocked_by,
+		   issue_state=excluded.issue_state, updated_at=datetime('now')`,
+		uuid.NewString(), e.ProjectID, e.IssueNumber, e.Title, marshalStrings(e.Labels),
 		marshalInts(e.BlockedBy), e.IssueState, e.QueuedAt, e.StageUpdatedAt)
 	if err != nil {
 		return Epic{}, err
 	}
-	return d.GetEpic(ctx, id)
+	return d.GetEpicByIssue(ctx, e.ProjectID, e.IssueNumber)
 }
 
 func (d *DB) GetEpic(ctx context.Context, id string) (Epic, error) {
@@ -102,7 +112,7 @@ func (d *DB) ListEpicsByProject(ctx context.Context, projectID string) ([]Epic, 
 
 func (d *DB) ListNonTerminalEpics(ctx context.Context) ([]Epic, error) {
 	return d.listEpics(ctx,
-		`SELECT `+epicCols+` FROM epics WHERE stage NOT IN ('merged','failed','canceled') ORDER BY issue_number`)
+		`SELECT `+epicCols+` FROM epics WHERE stage NOT IN `+terminalStagesSQL+` ORDER BY issue_number`)
 }
 
 func (d *DB) listEpics(ctx context.Context, q string, args ...any) ([]Epic, error) {
@@ -122,17 +132,12 @@ func (d *DB) listEpics(ctx context.Context, q string, args ...any) ([]Epic, erro
 	return out, rows.Err()
 }
 
-// TransitionEpic performs the guarded stage move. Two statements, no tx: the
-// DB is single-writer (SetMaxOpenConns(1)), and a lost event row after a crash
-// is tolerable — stage is authoritative, events are the narrative.
+// TransitionEpic performs the guarded stage move. The returned bool ALONE
+// reports whether the stage moved; a failed epic_events append is logged and
+// swallowed (two statements, no tx — the DB is single-writer and the design
+// treats events as narrative, stage as authoritative).
 func (d *DB) TransitionEpic(ctx context.Context, id, from, to, source, note, now string) (bool, error) {
-	res, err := d.sql.ExecContext(ctx,
-		`UPDATE epics SET stage=?, stage_updated_at=?,
-		   started_at = CASE WHEN ?='starting' AND started_at='' THEN ? ELSE started_at END,
-		   merged_at  = CASE WHEN ?='merged' THEN ? ELSE merged_at END,
-		   needs      = CASE WHEN ? IN ('escalated','stalled') THEN needs ELSE '' END,
-		   updated_at = datetime('now')
-		 WHERE id = ? AND stage = ?`,
+	res, err := d.sql.ExecContext(ctx, transitionSQL,
 		to, now, to, now, to, now, to, id, from)
 	if err != nil {
 		return false, err
@@ -140,28 +145,32 @@ func (d *DB) TransitionEpic(ctx context.Context, id, from, to, source, note, now
 	if n, _ := res.RowsAffected(); n == 0 {
 		return false, nil
 	}
-	return true, d.AppendEpicEvent(ctx, EpicEvent{
+	if err := d.AppendEpicEvent(ctx, EpicEvent{
 		EpicID: id, FromStage: from, ToStage: to, Source: source, Note: note, Ts: now,
-	})
+	}); err != nil {
+		log.Printf("db: epic %s event append %s→%s failed (stage IS committed): %v", id, from, to, err)
+	}
+	return true, nil
 }
 
 func (d *DB) SetEpicAssignment(ctx context.Context, id, session string, attempt int) (bool, error) {
-	return d.epicUpdate(ctx, `UPDATE epics SET session_name=?, attempt=?, updated_at=datetime('now') WHERE id=?`, session, attempt, id)
+	return d.execFound(ctx, `UPDATE epics SET session_name=?, attempt=?, updated_at=datetime('now') WHERE id=?`, session, attempt, id)
 }
 
 func (d *DB) SetEpicPR(ctx context.Context, id string, pr int, branch string) (bool, error) {
-	return d.epicUpdate(ctx, `UPDATE epics SET pr_number=?, branch=?, updated_at=datetime('now') WHERE id=?`, pr, branch, id)
+	return d.execFound(ctx, `UPDATE epics SET pr_number=?, branch=?, updated_at=datetime('now') WHERE id=?`, pr, branch, id)
 }
 
 func (d *DB) SetEpicVerdict(ctx context.Context, id, verdictJSON string) (bool, error) {
-	return d.epicUpdate(ctx, `UPDATE epics SET verdict=?, updated_at=datetime('now') WHERE id=?`, verdictJSON, id)
+	return d.execFound(ctx, `UPDATE epics SET verdict=?, updated_at=datetime('now') WHERE id=?`, verdictJSON, id)
 }
 
 func (d *DB) SetEpicNeeds(ctx context.Context, id, needs string) (bool, error) {
-	return d.epicUpdate(ctx, `UPDATE epics SET needs=?, updated_at=datetime('now') WHERE id=?`, needs, id)
+	return d.execFound(ctx, `UPDATE epics SET needs=?, updated_at=datetime('now') WHERE id=?`, needs, id)
 }
 
-func (d *DB) epicUpdate(ctx context.Context, q string, args ...any) (bool, error) {
+// execFound runs a mutation and reports whether any row matched.
+func (d *DB) execFound(ctx context.Context, q string, args ...any) (bool, error) {
 	res, err := d.sql.ExecContext(ctx, q, args...)
 	if err != nil {
 		return false, err
@@ -182,9 +191,11 @@ func (d *DB) AppendEpicEvent(ctx context.Context, ev EpicEvent) error {
 }
 
 func (d *DB) ListEpicEvents(ctx context.Context, epicID string, limit int) ([]EpicEvent, error) {
+	// rowid tie-break: ts is second-resolution RFC3339, and one tick can emit
+	// several transitions in the same second; insertion order is the truth.
 	rows, err := d.sql.QueryContext(ctx,
 		`SELECT id, epic_id, from_stage, to_stage, source, note, ts
-		 FROM epic_events WHERE epic_id = ? ORDER BY ts DESC, id LIMIT ?`, epicID, limit)
+		 FROM epic_events WHERE epic_id = ? ORDER BY ts DESC, rowid DESC LIMIT ?`, epicID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -204,10 +215,7 @@ func marshalInts(ns []int) string {
 	if len(ns) == 0 {
 		return "[]"
 	}
-	b, err := json.Marshal(ns)
-	if err != nil {
-		return "[]"
-	}
+	b, _ := json.Marshal(ns)
 	return string(b)
 }
 
@@ -216,34 +224,6 @@ func unmarshalInts(s string) []int {
 	if s == "" {
 		return nil
 	}
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		// tolerate a legacy comma list, e.g. "12,13"
-		for _, part := range splitNonEmpty(s, ',') {
-			if n, err := strconv.Atoi(part); err == nil {
-				out = append(out, n)
-			}
-		}
-	}
-	return out
-}
-
-func splitNonEmpty(s string, sep rune) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		if r == sep {
-			if cur != "" {
-				out = append(out, cur)
-			}
-			cur = ""
-			continue
-		}
-		if r != ' ' && r != '[' && r != ']' {
-			cur += string(r)
-		}
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
+	_ = json.Unmarshal([]byte(s), &out)
 	return out
 }
