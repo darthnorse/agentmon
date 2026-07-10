@@ -21,6 +21,7 @@
 - Commit style: `feat(hub): …` / `test(hub): …`; **never add a Co-Authored-By trailer**.
 - The merge gate FAILS CLOSED: missing/malformed verdict, unknown reporter session, unparseable CI ⇒ escalate, never merge.
 - Verify the whole module still builds before every commit: `go build ./... && go test ./...`.
+- **Checkpoint stops:** after committing Task 5, Task 11, and Task 15, STOP execution and report the checkpoint (tasks completed, suite status). An external cross-provider review of the branch happens at each checkpoint. Do NOT begin Task 6, 12, or 16 until you receive explicit fix instructions or an explicit "continue".
 
 ## Shared type registry (single source of truth for cross-task names)
 
@@ -48,15 +49,15 @@
 
 **Files:**
 - Modify: `hubd/internal/config/config.go`
-- Test: `hubd/internal/config/config_test.go` (new)
+- Test: `hubd/internal/config/config_test.go` (append — file exists on main; keep all pre-existing tests unchanged)
 
 **Interfaces:**
 - Consumes: nothing new.
 - Produces: `config.GitHubCfg{Token, WebhookSecret string}`, `config.OrchestratorCfg{Tick, PlanningTimeout, ImplementingTimeout, ReviewingTimeout time.Duration; MaxAttempts int}`, fields `Config.GitHub GitHubCfg` and `Config.Orchestrator OrchestratorCfg` with defaults applied in `Load`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
-Create `hubd/internal/config/config_test.go`:
+Append to the existing `hubd/internal/config/config_test.go` (preserve all pre-existing tests):
 
 ```go
 package config
@@ -117,12 +118,12 @@ func TestOrchestratorDefaults(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/config/ -v`
 Expected: FAIL — `c.GitHub undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/config/config.go`, add next to `CookieCfg`/`RateLimitCfg`:
 
@@ -171,7 +172,7 @@ In `Load`, after the existing `SessionCookie.Name` default block:
 	}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/config/ -v`
 Expected: PASS (both tests).
@@ -1077,6 +1078,10 @@ Expected: PASS; hub still builds.
 ```bash
 cd /root/agentmon && git add shared/ && git commit -m "feat(shared): epic stages + orchestrator report wire type"
 ```
+
+- [ ] **Step 6: CHECKPOINT 1 — STOP**
+
+Tasks 1–5 (foundations: config, schema, stores, shared types) are a review checkpoint. STOP here — do not begin Task 6. Report that checkpoint 1 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
 
 ---
 
@@ -2320,6 +2325,10 @@ Expected: PASS under `-race`.
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): board change broadcaster"
 ```
 
+- [ ] **Step 6: CHECKPOINT 2 — STOP**
+
+Tasks 6–11 (GitHub client, webhook, verdict, gate, machine, broadcaster) are a review checkpoint. STOP here — do not begin Task 12. Report that checkpoint 2 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
+
 ---
 
 ### Task 12: Scheduler — ready-set + kickoff command
@@ -2388,10 +2397,10 @@ func TestReadyEpics(t *testing.T) {
 }
 
 func TestKickoffAndProvider(t *testing.T) {
-	if got := KickoffCommand("claude", 16); got != `claude "/epic-pipeline 16"` {
+	if got := KickoffCommand("claude", 16); got != `IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"` {
 		t.Fatalf("claude kickoff = %q", got)
 	}
-	if got := KickoffCommand("codex", 16); got != `codex "/epic-pipeline 16"` {
+	if got := KickoffCommand("codex", 16); got != `codex -a never "/epic-pipeline 16"` {
 		t.Fatalf("codex kickoff = %q", got)
 	}
 	if SessionNameFor(16) != "epic-16" {
@@ -2478,15 +2487,18 @@ func depsSatisfied(e db.Epic, byIssue map[int]db.Epic) bool {
 	return true
 }
 
-// KickoffCommand is what the spawned tmux session runs. The /epic-pipeline
-// skill (sub-project 2) does the rest; exact codex invocation is validated
-// there and only lives here.
+// KickoffCommand is what the spawned tmux session runs (tmux executes it via
+// `sh -c`, so the env prefix is fine). Runners MUST be autonomous — a
+// permission prompt is a stalled epic: Claude needs IS_SANDBOX=1 (root host) +
+// --dangerously-skip-permissions; Codex needs approval policy "never". The
+// /epic-pipeline skill (sub-project 2) does the rest; exact codex invocation
+// is validated there and only lives here.
 func KickoffCommand(provider string, issue int) string {
-	bin := "claude"
+	prompt := fmt.Sprintf("/epic-pipeline %d", issue)
 	if provider == "codex" {
-		bin = "codex"
+		return fmt.Sprintf(`codex -a never %q`, prompt)
 	}
-	return fmt.Sprintf(`%s "/epic-pipeline %d"`, bin, issue)
+	return fmt.Sprintf(`IS_SANDBOX=1 claude --dangerously-skip-permissions %q`, prompt)
 }
 
 func SessionNameFor(issue int) string { return fmt.Sprintf("epic-%d", issue) }
@@ -3261,6 +3273,10 @@ Expected: PASS — all orchestrator tests including the four new scenario tests.
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): orchestrator core loop — sync, reports, stalls, gate, schedule"
 ```
+
+- [ ] **Step 6: CHECKPOINT 3 — STOP**
+
+Tasks 12–15 (scheduler, report drain, sync, core loop — the highest-judgment code in the plan) are a review checkpoint. STOP here — do not begin Task 16. Report that checkpoint 3 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
 
 ---
 

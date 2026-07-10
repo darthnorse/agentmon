@@ -126,10 +126,13 @@ queued → starting → planning → implementing → reviewing → pr_open → 
   orchestrator-owned running sessions < `max_parallel`.
 - Trigger: any state change or sync event; plus periodic tick.
 - Spawn via the existing hub→agent create-session call with the (already-defined,
-  currently rejected) `Command` field carrying the provider kickoff — e.g.
-  `claude "/epic-pipeline N"`; the agent-side command execution ships in
-  sub-project 2. Session named `epic-N`. Session liveness for stall detection is
-  polled from the hub's state projection (vanished sessions emit no event).
+  currently rejected) `Command` field carrying the provider kickoff. Runners must
+  run fully autonomously — a permission prompt is a stalled epic — so kickoffs
+  carry the autonomy flags: `IS_SANDBOX=1 claude --dangerously-skip-permissions
+  "/epic-pipeline N"` and `codex -a never "/epic-pipeline N"`. Agent-side command
+  execution ships in sub-project 2. Session named `epic-N`. Session liveness for
+  stall detection is polled from the hub's state projection (vanished sessions
+  emit no event).
 - **Worktrees are the runner's job** (`git worktree add ../<repo>-epic-N`): moot at
   `max_parallel=1`, ready for >1. Hub stays git-ignorant.
 - **Epic import** (no hub code): a `gh`-based script/skill turns `docs/plan/epic-*.md`
@@ -289,6 +292,9 @@ Every failure is either *machine-retryable* or *needs you*; nothing fails silent
   (not yet installed on most fleet hosts — one-time setup, verified by the doctor run).
 - Repo clone at the project workdir; git identity configured.
 - Claude Code and/or Codex ≥0.144 with AgentMon hooks (existing install flow).
+- Codex hosts: `~/.codex/config.toml` `[sandbox_workspace_write]` with the project
+  repo's `.git` in `writable_roots` and `network_access = true` (loopback binds for
+  test suites) — without these, runner sessions cannot commit or pass test gates.
 - Agent version with the localhost reporter endpoint (ships with sub-project 2).
 
 ## 13. Decomposition & order
