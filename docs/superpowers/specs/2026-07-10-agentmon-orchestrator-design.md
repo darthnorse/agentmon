@@ -308,7 +308,9 @@ Three sub-projects, each with its own implementation plan (writing-plans):
 1. **Hub orchestrator core + GitHub sync** — schema, mirror/webhook/poll, state
    machine, scheduler, merge gate, actions API, audit. (Largest; unblocks the rest.)
 2. **Runner** — agent reporter endpoint + `agentmon report` CLI, `epic-pipeline`
-   Claude skill, Codex playbook, verdict format, import script, doctor run.
+   Claude skill, Codex playbook, verdict format, import script, doctor run, and a
+   `plan-epics` skill (interactive PRD→epics decomposition with the human: emits
+   `docs/plan/epic-*.md` with front-matter + decisions, then runs the import).
 3. **Board UI** — Board + Timeline tabs, drawer, actions, alerts integration.
 
 Order 1 → 2 → 3 for integration, but the skill's *content* (prompts, pipeline
