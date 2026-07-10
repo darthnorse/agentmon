@@ -244,6 +244,10 @@ Reference mockup: `docs/superpowers/specs/2026-07-10-orchestrator-board-mockup.h
 - **Drawer** (click any card/row): stage history with timestamps, verdict block when
   escalated, live terminal preview + **Open full session** for running epics (the
   same session view used today), branch/deps/host/autonomy, PR/issue links.
+  **Plan review ("plan mode"):** when an epic is escalated with reason kind
+  `plan-approval`, the drawer renders the plan doc committed on the epic branch
+  (via GitHub contents API) with Approve / send-guidance actions — reviewing a
+  runner's plan from a phone is one tap.
 - **Header**: run pill (`Running · 1/1 slot`), max-parallel stepper, Run issue…,
   Pause project. Stat strip: Merged / Working / Needs you / PRs open / Queued.
 - Escalations also ride the existing M9 alerts/web-push path.
