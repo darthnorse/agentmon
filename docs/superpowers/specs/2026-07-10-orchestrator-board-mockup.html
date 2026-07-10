@@ -1,0 +1,702 @@
+<title>AgentMon — Orchestrator board mockup</title>
+<style>
+  :root{
+    --bg:#11161d; --card:#161c25; --card2:#1b2230; --border:#2e3642;
+    --ink:#c9d2dd; --muted:#8d9aab; --faint:#5c6979;
+    --primary:#2f7df0; --primary-ink:#eaf2ff;
+    --queued:#6b7280; --planning:#8b5cf6; --implementing:#d97706; --reviewing:#0284c7;
+    --propen:#3b82f6; --escalated:#ef4444; --merged:#16a34a;
+    --working:#f59e0b; --idle:#22c55e;
+    --good:#4ade80; --warn:#fbbf24; --bad:#ff8b84;
+    --radius:8px;
+    color-scheme: dark;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
+    font-size:14px; line-height:1.45;
+  }
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ---------- app bar ---------- */
+  .appbar{
+    display:flex; align-items:center; gap:12px; padding:10px 20px;
+    border-bottom:1px solid var(--border); background:var(--card);
+  }
+  .appbar .brand{font-weight:650; letter-spacing:.2px}
+  .appbar .crumb{color:var(--muted)}
+  .appbar .crumb b{color:var(--ink); font-weight:600}
+  .mock-tag{
+    margin-left:auto; font-size:11px; color:var(--faint);
+    border:1px dashed var(--border); border-radius:99px; padding:2px 10px;
+    text-transform:uppercase; letter-spacing:.08em;
+  }
+
+  .wrap{max-width:1360px; margin:0 auto; padding:18px 20px 60px; display:flex; flex-direction:column; gap:14px}
+
+  /* ---------- project header / controls ---------- */
+  .projhead{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+  .projhead h1{font-size:19px; font-weight:650; margin:0}
+  .projmeta{color:var(--muted); font-size:12.5px}
+  .projmeta .sep{color:var(--faint); margin:0 6px}
+  .runpill{
+    display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
+    border:1px solid var(--border); background:var(--card); border-radius:99px; padding:4px 12px;
+  }
+  .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .dot.working{background:var(--working)}
+  .dot.idle{background:var(--idle)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .dot.live{animation:pulse 1.6s ease-in-out infinite}
+  @media (prefers-reduced-motion: reduce){ .dot.live,.cursor{animation:none} }
+
+  .controls{margin-left:auto; display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .btn{
+    appearance:none; border:1px solid var(--border); background:var(--card2); color:var(--ink);
+    border-radius:var(--radius); padding:6px 13px; font-size:13px; font-weight:550; cursor:pointer;
+  }
+  .btn:hover{border-color:var(--faint)}
+  .btn:focus-visible{outline:2px solid var(--primary); outline-offset:1px}
+  .btn.primary{background:var(--primary); border-color:var(--primary); color:var(--primary-ink)}
+  .btn.danger-ghost{color:#ff9f9a}
+  .btn.sm{padding:4px 10px; font-size:12px}
+  .stepper{display:inline-flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden}
+  .stepper .btn{border:0; border-radius:0; padding:6px 10px}
+  .stepper .val{padding:6px 12px; background:var(--card); font-weight:650}
+  .stepper .lbl{padding:6px 10px; color:var(--muted); font-size:12px; background:var(--card)}
+
+  /* ---------- stats ---------- */
+  .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px}
+  .stat{
+    background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+    padding:10px 14px 12px;
+  }
+  .stat .k{font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted)}
+  .stat .v{font-size:22px; font-weight:650; margin-top:2px}
+  .stat .v small{font-size:12px; color:var(--muted); font-weight:500; margin-left:6px}
+  .stat.attn{border-color:color-mix(in srgb, var(--escalated) 45%, var(--border))}
+  .stat.attn .v{color:var(--bad)}
+
+  /* ---------- tabs ---------- */
+  .tabs{display:flex; gap:4px; border-bottom:1px solid var(--border)}
+  .tab{
+    appearance:none; background:none; border:0; color:var(--muted); font-size:13.5px; font-weight:600;
+    padding:8px 14px 10px; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px;
+  }
+  .tab:hover{color:var(--ink)}
+  .tab:focus-visible{outline:2px solid var(--primary); outline-offset:-2px}
+  .tab.active{color:var(--ink); border-bottom-color:var(--primary)}
+  .tabnote{margin-left:auto; align-self:center; font-size:11.5px; color:var(--faint)}
+
+  /* ---------- kanban ---------- */
+  .kanban-scroll{overflow-x:auto}
+  .kanban{display:grid; grid-template-columns:repeat(5, minmax(248px,1fr)); gap:12px; min-width:1290px; align-items:start}
+  .col{background:var(--card); border:1px solid var(--border); border-radius:12px; display:flex; flex-direction:column; min-height:120px}
+  .col.attn{border-color:color-mix(in srgb, var(--escalated) 40%, var(--border))}
+  .col-h{
+    display:flex; align-items:center; gap:8px; padding:10px 12px;
+    font-size:11.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+  }
+  .col-h .count{margin-left:auto; color:var(--muted); font-weight:600}
+  .col-cards{display:flex; flex-direction:column; gap:9px; padding:0 9px 11px}
+  .card{
+    background:var(--card2); border:1px solid var(--border); border-radius:9px;
+    padding:10px 11px 11px; cursor:pointer; display:flex; flex-direction:column; gap:7px;
+  }
+  .card:hover, .card:focus-visible{border-color:var(--faint); outline:none}
+  .card.attn{border-color:color-mix(in srgb, var(--escalated) 55%, var(--border))}
+  .card .top{display:flex; align-items:center; gap:7px; font-size:11.5px}
+  .card .top .stg{font-weight:650}
+  .card .top .provider{margin-left:auto; color:var(--muted); font-size:11px}
+  .card .title{font-size:13px; font-weight:560; line-height:1.35}
+  .card .title .inum{color:var(--muted); font-weight:500}
+  .card .branch{font-size:11px; color:var(--muted)}
+  .facts{
+    border-top:1px solid var(--border); padding-top:7px; display:flex; flex-direction:column; gap:3px;
+    font-size:11.5px; color:var(--muted);
+  }
+  .facts .f{display:flex; gap:6px; flex-wrap:wrap}
+  .facts .f b{color:var(--ink); font-weight:600}
+  .v-good{color:var(--good)} .v-warn{color:var(--warn)} .v-bad{color:var(--bad)}
+  .needs{
+    border-top:1px solid var(--border); padding-top:7px; display:flex; flex-direction:column; gap:6px;
+  }
+  .needs .nh{font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--bad); font-weight:700}
+  .needs .nr{font-size:12px; color:var(--ink)}
+  .needs .acts{display:flex; gap:6px; flex-wrap:wrap; margin-top:2px}
+  .deps{display:flex; gap:5px; flex-wrap:wrap}
+  .lbl-tag{color:var(--faint); font-size:10.5px; border:1px solid var(--border); border-radius:4px; padding:0 5px; flex:none}
+  .card .quiet{font-size:11.5px; color:var(--faint); border-top:1px solid var(--border); padding-top:7px}
+  .card.compact{padding:8px 11px; gap:4px}
+  .card.compact .facts{border-top:0; padding-top:0}
+
+  /* ---------- gantt (Timeline tab) ---------- */
+  .legend{display:flex; align-items:center; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:12px; margin-bottom:10px}
+  .legend .item{display:inline-flex; align-items:center; gap:6px}
+  .sw{width:10px; height:10px; border-radius:3px; flex:none}
+  .sw.ghosted{border:1.5px dashed var(--faint); background:transparent}
+  .board{background:var(--card); border:1px solid var(--border); border-radius:12px; overflow-x:auto}
+  .gantt{min-width:1080px; position:relative}
+  .g-head{
+    display:grid; grid-template-columns:330px 1fr; border-bottom:1px solid var(--border);
+    position:sticky; top:0; background:var(--card); z-index:3;
+  }
+  .g-head .left{padding:9px 14px; font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted)}
+  .axis{position:relative; height:36px}
+  .axis .tick{
+    position:absolute; top:0; bottom:0; display:flex; align-items:center;
+    font-size:11.5px; color:var(--muted); padding-left:7px; border-left:1px solid var(--border);
+  }
+  .g-body{position:relative}
+  .grid-lines{position:absolute; inset:0; left:330px; pointer-events:none}
+  .grid-lines .gl{position:absolute; top:0; bottom:0; width:1px; background:var(--border); opacity:.45}
+  .nowline{position:absolute; top:0; bottom:0; width:1px; background:var(--primary); opacity:.85; z-index:2; pointer-events:none}
+  .nowline .flag{
+    position:absolute; top:2px; left:3px; font-size:10px; color:var(--primary-ink);
+    background:var(--primary); border-radius:3px; padding:0 5px; font-weight:650;
+  }
+  .grouphead{display:grid; grid-template-columns:330px 1fr; border-top:1px solid var(--border)}
+  .grouphead:first-child{border-top:0}
+  .grouphead .left{
+    padding:8px 14px 4px; font-size:11.5px; font-weight:650; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--muted);
+  }
+  .row{
+    display:grid; grid-template-columns:330px 1fr; min-height:52px;
+    border-top:1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    cursor:pointer;
+  }
+  .row:hover, .row:focus-visible{background:color-mix(in srgb, var(--card2) 70%, transparent); outline:none}
+  .row.attn{background:color-mix(in srgb, var(--escalated) 7%, transparent)}
+  .r-left{padding:8px 14px; display:flex; flex-direction:column; gap:3px; justify-content:center; min-width:0}
+  .r-title{font-size:13.5px; font-weight:560; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .r-title .inum{color:var(--muted); font-weight:500}
+  .r-sub{display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--muted); min-width:0}
+  .chip{display:inline-flex; align-items:center; gap:5px; border-radius:99px; padding:1px 8px 1px 6px;
+    background:var(--card2); border:1px solid var(--border); font-size:11px; font-weight:550; color:var(--ink); flex:none}
+  .chip .dot{width:7px;height:7px}
+  .provider{color:var(--muted); font-size:11px; flex:none}
+  .r-track{position:relative}
+  .bar{
+    position:absolute; top:50%; transform:translateY(-50%); height:18px; border-radius:4px;
+    display:flex; align-items:center; min-width:8px;
+  }
+  .bar .cap{position:absolute; left:calc(100% + 8px); white-space:nowrap; font-size:11px; color:var(--muted)}
+  .bar.ghost{border:1.5px dashed var(--faint); background:color-mix(in srgb, var(--faint) 12%, transparent)}
+  .bar .wait-tail{
+    position:absolute; left:100%; top:0; bottom:0; border-radius:0 4px 4px 0;
+    background:repeating-linear-gradient(135deg, color-mix(in srgb,var(--escalated) 40%, transparent) 0 4px, transparent 4px 8px);
+  }
+  .bar .live-edge{position:absolute; right:-2px; top:-3px; bottom:-3px; width:3px; border-radius:2px; background:var(--working); animation:pulse 1.6s ease-in-out infinite}
+  svg.arrows{position:absolute; inset:0; pointer-events:none; z-index:1}
+  svg.arrows path{fill:none; stroke:var(--faint); stroke-width:1.3; opacity:.55}
+  svg.arrows marker path{fill:var(--faint); stroke:none; opacity:1}
+
+  /* ---------- tooltip ---------- */
+  .tip{
+    position:fixed; z-index:40; background:var(--card2); border:1px solid var(--border); border-radius:6px;
+    padding:6px 9px; font-size:11.5px; color:var(--ink); pointer-events:none; display:none; max-width:280px;
+    box-shadow:0 6px 20px rgba(0,0,0,.4);
+  }
+  .tip .t{font-weight:600}
+  .tip .d{color:var(--muted)}
+
+  /* ---------- drawer ---------- */
+  .scrim{position:fixed; inset:0; background:rgba(6,9,13,.55); z-index:50; display:none}
+  .drawer{
+    position:fixed; top:0; right:0; bottom:0; width:min(560px,100vw); z-index:51;
+    background:var(--card); border-left:1px solid var(--border);
+    transform:translateX(102%); transition:transform .22s ease; display:flex; flex-direction:column;
+  }
+  @media (prefers-reduced-motion: reduce){ .drawer{transition:none} }
+  .drawer.open{transform:none}
+  .d-head{display:flex; align-items:flex-start; gap:10px; padding:16px 18px 10px; border-bottom:1px solid var(--border)}
+  .d-head h2{font-size:15.5px; margin:0; font-weight:650; line-height:1.3}
+  .d-head .inum{color:var(--muted); font-weight:500}
+  .d-close{margin-left:auto; flex:none}
+  .d-sub{display:flex; align-items:center; gap:10px; padding:10px 18px; font-size:12px; color:var(--muted); border-bottom:1px solid var(--border); flex-wrap:wrap}
+  .d-body{overflow-y:auto; padding:14px 18px 20px; display:flex; flex-direction:column; gap:16px}
+  .d-sec .h{font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:7px}
+  .stagelist{display:flex; flex-direction:column; gap:6px; font-size:12.5px}
+  .stagelist .s{display:flex; align-items:center; gap:9px}
+  .stagelist .t{color:var(--muted); margin-left:auto}
+  .verdict{
+    background:var(--card2); border:1px solid color-mix(in srgb, var(--escalated) 40%, var(--border));
+    border-radius:var(--radius); padding:10px 12px; font-size:12.5px; display:flex; flex-direction:column; gap:5px;
+  }
+  .verdict .vt{font-weight:650; color:var(--bad)}
+  .verdict ul{margin:2px 0 0 18px; padding:0; color:var(--ink)}
+  .verdict li{margin:2px 0}
+  .term{
+    background:#0c1117; border:1px solid var(--border); border-radius:var(--radius);
+    padding:12px 14px; font-size:12px; line-height:1.65; overflow-x:auto; white-space:pre;
+  }
+  .term .tm{color:#7ee2a8}
+  .term .td{color:var(--muted)}
+  .term .ta{color:var(--working)}
+  .cursor{display:inline-block; width:7px; height:13px; background:var(--ink); vertical-align:-2px; animation:pulse 1.1s steps(1) infinite}
+  .d-actions{display:flex; gap:8px; flex-wrap:wrap}
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:4px 16px; font-size:12.5px}
+  .kv .k{color:var(--muted)}
+
+  .toast{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:60;
+    background:var(--card2); border:1px solid var(--border); color:var(--ink);
+    border-radius:99px; padding:9px 18px; font-size:13px; display:none; box-shadow:0 8px 30px rgba(0,0,0,.45);
+  }
+  footer{color:var(--faint); font-size:11.5px; text-align:center}
+  @media (max-width:720px){
+    .wrap{padding:14px 12px 50px}
+    .controls{margin-left:0}
+  }
+</style>
+
+<div class="appbar">
+  <span class="brand">AgentMon</span>
+  <span class="crumb">Projects / <b>school-platform</b></span>
+  <span class="mock-tag">static mockup · fake data</span>
+</div>
+
+<div class="wrap">
+
+  <div class="projhead">
+    <h1>school-platform</h1>
+    <span class="projmeta mono">github.com/darthnorse/school-platform<span class="sep">·</span>host aigallery<span class="sep">·</span>base main</span>
+    <span class="runpill"><span class="dot working live"></span>Running · 1/1 slot</span>
+    <div class="controls">
+      <span class="stepper"><span class="lbl">max parallel</span><button class="btn" aria-label="decrease">−</button><span class="val num">1</span><button class="btn" aria-label="increase">+</button></span>
+      <button class="btn" onclick="toast('Mockup: would prompt for an issue URL, e.g. dnsmon#47')">Run issue…</button>
+      <button class="btn danger-ghost" onclick="toast('Mockup: project paused — running epic finishes, nothing new starts')">Pause project</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">Merged</div><div class="v num">5<small>epics</small></div></div>
+    <div class="stat"><div class="k">Working</div><div class="v num">1<small>#16 implementing</small></div></div>
+    <div class="stat attn"><div class="k">Needs you</div><div class="v num">1<small>PR #58</small></div></div>
+    <div class="stat"><div class="k">PRs open</div><div class="v num">2</div></div>
+    <div class="stat"><div class="k">Queued</div><div class="v num">3</div></div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab active" id="tab-board" role="tab" aria-selected="true" onclick="showTab('board')">Board</button>
+    <button class="tab" id="tab-timeline" role="tab" aria-selected="false" onclick="showTab('timeline')">Timeline</button>
+    <span class="tabnote">same hub state, two lenses — click any card/row for the live drawer</span>
+  </div>
+
+  <!-- =============== BOARD (kanban) =============== -->
+  <div id="panel-board">
+    <div class="kanban-scroll"><div class="kanban" id="kanban"></div></div>
+  </div>
+
+  <!-- =============== TIMELINE (gantt) =============== -->
+  <div id="panel-timeline" hidden>
+    <div class="legend" aria-label="legend">
+      <span class="item"><span class="sw" style="background:var(--queued)"></span>queued</span>
+      <span class="item"><span class="sw" style="background:var(--planning)"></span>planning</span>
+      <span class="item"><span class="sw" style="background:var(--implementing)"></span>implementing</span>
+      <span class="item"><span class="sw" style="background:var(--reviewing)"></span>reviewing</span>
+      <span class="item"><span class="sw" style="background:var(--propen)"></span>PR open</span>
+      <span class="item"><span class="sw" style="background:var(--escalated)"></span>escalated</span>
+      <span class="item"><span class="sw" style="background:var(--merged)"></span>merged</span>
+      <span class="item"><span class="sw ghosted"></span>projected</span>
+      <span class="item" style="color:var(--faint)">⟶ blocked by</span>
+    </div>
+    <div class="board">
+      <div class="gantt" id="gantt">
+        <div class="g-head">
+          <div class="left">Epic</div>
+          <div class="axis" id="axis"></div>
+        </div>
+        <div class="g-body" id="gbody"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>AgentMon orchestrator — board mockup v2 · 2026-07-10 · Board = “what needs me”, Timeline = “how is it tracking”</footer>
+</div>
+
+<div class="tip" id="tip" role="tooltip"></div>
+<div class="scrim" id="scrim" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer" aria-label="epic detail"></aside>
+<div class="toast" id="toastEl" role="status"></div>
+
+<script>
+// ---------- fake data ----------
+const T0 = Date.parse("2026-07-07T00:00:00");
+const T1 = Date.parse("2026-07-13T00:00:00");
+const NOW = Date.parse("2026-07-10T14:05:00");
+const DAY = 86400000;
+const p = t => ( (Date.parse(t) - T0) / (T1 - T0) ) * 100;
+const pn = ms => ( (ms - T0) / (T1 - T0) ) * 100;
+
+const STAGE = {
+  queued:      {c:"var(--queued)",      label:"queued"},
+  planning:    {c:"var(--planning)",    label:"planning"},
+  implementing:{c:"var(--implementing)",label:"implementing"},
+  reviewing:   {c:"var(--reviewing)",   label:"reviewing"},
+  pr_open:     {c:"var(--propen)",      label:"PR open"},
+  escalated:   {c:"var(--escalated)",   label:"escalated"},
+  merged:      {c:"var(--merged)",      label:"merged"},
+};
+
+const EPICS = [
+  {num:12, group:"school-platform", title:"Monorepo scaffold, CI & environments", provider:"claude", stage:"merged",
+   start:"2026-07-07T09:00", end:"2026-07-07T15:30", deps:[], pr:41,
+   stages:[["planning","09:00"],["implementing","09:40"],["reviewing","13:05"],["PR open","14:20"],["merged ✓","15:30"]]},
+  {num:13, group:"school-platform", title:"Multi-tenant data model + RLS", provider:"claude", stage:"merged",
+   start:"2026-07-07T16:00", end:"2026-07-08T11:00", deps:[12], pr:44, labels:["pr-gate"],
+   stages:[["planning","16:00"],["implementing","17:10"],["reviewing","07:40"],["PR open","09:05"],["merged ✓ (you)","11:00"]]},
+  {num:14, group:"school-platform", title:"AuthN/AuthZ — staff, pupil, guardian roles", provider:"claude", stage:"merged",
+   start:"2026-07-08T11:30", end:"2026-07-09T09:30", deps:[13], pr:51,
+   stages:[["planning","11:30"],["implementing","12:20"],["reviewing","06:15"],["PR open","08:10"],["merged ✓","09:30"]]},
+  {num:15, group:"school-platform", title:"GDPR consent & data-retention framework", provider:"claude", stage:"escalated",
+   start:"2026-07-09T10:00", end:"2026-07-09T18:15", deps:[13], pr:58, waitTail:true,
+   ci:"Passing", review:"2 unresolved", merge:"Blocked",
+   needs:"2 review findings need a human decision",
+   verdict:{unresolved:2, items:[
+     "Deletion cascade: guardian-linked records span tenants — needs a policy decision",
+     "Retention default for safeguarding notes (7y?) — reviewer and implementer disagree"]},
+   stages:[["planning","10:00"],["implementing","11:05"],["reviewing","15:30"],["PR open","17:40"],["escalated ⚠","18:15"]]},
+  {num:16, group:"school-platform", title:"Curriculum & class management", provider:"claude", stage:"implementing", live:true,
+   start:"2026-07-10T08:05", end:null, deps:[14], session:"epic-16-curriculum", host:"aigallery",
+   stages:[["planning","08:05"],["implementing ●","08:50"]]},
+  {num:17, group:"school-platform", title:"Timetabling engine", provider:"claude", stage:"queued", ghost:true,
+   start:"2026-07-10T20:00", end:"2026-07-11T06:00", deps:[16]},
+  {num:18, group:"school-platform", title:"Assignments & marking", provider:"codex", stage:"queued", ghost:true,
+   start:"2026-07-11T06:00", end:"2026-07-11T16:00", deps:[16], labels:["agent:codex"]},
+  {num:19, group:"school-platform", title:"Guardian portal", provider:"claude", stage:"queued", ghost:true,
+   start:"2026-07-11T16:00", end:"2026-07-12T04:00", deps:[14,15]},
+  {num:52, group:"Ad-hoc runs · other repos", repo:"dnsmon", title:"Bump alpine base image", provider:"codex", stage:"pr_open",
+   start:"2026-07-10T11:20", end:null, pr:13, deps:[],
+   ci:"Pending", review:"Verdict clean", merge:"Auto when green", labels:["agentmon:run"],
+   stages:[["dispatched via label","11:20"],["implementing","11:35"],["PR open","13:40"]]},
+  {num:47, group:"Ad-hoc runs · other repos", repo:"dnsmon", title:"Fix TTL cache stampede", provider:"codex", stage:"merged",
+   start:"2026-07-09T13:10", end:"2026-07-09T16:40", deps:[], pr:12, labels:["agentmon:run"],
+   stages:[["dispatched via label","13:10"],["implementing","13:25"],["PR open","15:50"],["merged ✓","16:40"]]},
+];
+
+const fmtDur = (a,b)=>{ const h=Math.round((b-a)/3600000); return h>=24? Math.floor(h/24)+"d "+(h%24)+"h" : h+"h"; };
+const slug = e => "epic/"+e.num+"-"+e.title.toLowerCase().split(/[^a-z]+/).filter(Boolean).slice(0,2).join("-");
+const repoOf = e => e.repo || "school-platform";
+
+// ================= BOARD (kanban) =================
+const COLS = [
+  {key:"working", name:"Working",  dot:"var(--implementing)", match:e=>["planning","implementing","reviewing"].includes(e.stage)},
+  {key:"needs",   name:"Needs you",dot:"var(--escalated)",    match:e=>e.stage==="escalated", attn:true},
+  {key:"propen",  name:"PR open",  dot:"var(--propen)",       match:e=>e.stage==="pr_open"},
+  {key:"queued",  name:"Queued",   dot:"var(--queued)",       match:e=>e.stage==="queued"},
+  {key:"merged",  name:"Merged",   dot:"var(--merged)",       match:e=>e.stage==="merged"},
+];
+
+function ciClass(v){ return v==="Passing"?"v-good": v==="Failing"?"v-bad":"v-warn"; }
+
+function cardHTML(e, col){
+  const st = STAGE[e.stage];
+  const labels = (e.labels||[]).map(l=>`<span class="lbl-tag mono">${l}</span>`).join("");
+  const repoTag = e.repo ? `<span class="lbl-tag mono">${e.repo}</span>` : "";
+  const live = e.live ? `<span class="dot working live" title="agent working"></span>` : "";
+  const stageName = e.live ? "implementing" : st.label;
+
+  let body = "";
+  if (col.key==="working"){
+    body = `<div class="facts">
+      <div class="f"><b class="mono">${e.session||""}</b> @ ${e.host||"aigallery"}</div>
+      <div class="f">started ${e.start.slice(11,16)} · ${fmtDur(Date.parse(e.start), NOW)} elapsed</div>
+    </div>
+    <div class="quiet">no PR yet</div>`;
+  } else if (col.key==="needs"){
+    body = `<div class="facts">
+      <div class="f">PR <b class="num">#${e.pr}</b> · open</div>
+      <div class="f">CI <b class="${ciClass(e.ci)}">${e.ci}</b> Review <b class="v-bad">${e.review}</b></div>
+      <div class="f">Merge <b class="v-bad">${e.merge}</b></div>
+    </div>
+    <div class="needs">
+      <span class="nh">Needs attention</span>
+      <span class="nr">${e.needs}</span>
+      <div class="acts">
+        <button class="btn primary sm" onclick="event.stopPropagation();toast('Mockup: PR #${e.pr} squash-merged → #${e.num} merged; scheduler recomputes graph')">Approve &amp; merge</button>
+        <button class="btn sm" onclick="event.stopPropagation();toast('Mockup: fresh session re-runs #${e.num} with your guidance')">Retry</button>
+        <button class="btn sm" onclick="event.stopPropagation();toast('Mockup: opens PR #${e.pr} on GitHub')">PR ↗</button>
+      </div>
+    </div>`;
+  } else if (col.key==="propen"){
+    body = `<div class="facts">
+      <div class="f">PR <b class="num">#${e.pr}</b> · open</div>
+      <div class="f">CI <b class="${ciClass(e.ci)}">${e.ci}</b> Review <b class="v-good">${e.review}</b></div>
+      <div class="f">Merge <b>${e.merge}</b></div>
+    </div>`;
+  } else if (col.key==="queued"){
+    body = `<div class="facts">
+      <div class="f deps">blocked by ${e.deps.map(d=>`<span class="lbl-tag num">#${d}</span>`).join("")}</div>
+    </div>`;
+  } else { // merged
+    body = `<div class="facts">
+      <div class="f">✓ ${fmtDur(Date.parse(e.start), Date.parse(e.end))} · PR <b class="num">#${e.pr}</b></div>
+    </div>`;
+  }
+
+  return `<div class="top">
+      <span class="dot" style="background:${st.c}"></span><span class="stg">${stageName}</span>
+      ${live}<span class="provider">${e.provider}</span>
+    </div>
+    <div class="title"><span class="inum num">#${e.num}</span> ${e.title}</div>
+    <div class="branch mono">${repoOf(e)} · ${e.stage==="queued" ? "—" : slug(e)}</div>
+    ${(labels||repoTag) ? `<div class="deps">${repoTag}${labels}</div>` : ""}
+    ${body}`;
+}
+
+const kanban = document.getElementById("kanban");
+COLS.forEach(col=>{
+  const items = EPICS.filter(col.match);
+  const colEl = document.createElement("div");
+  colEl.className = "col" + (col.attn && items.length ? " attn" : "");
+  colEl.innerHTML = `<div class="col-h"><span class="dot" style="background:${col.dot}"></span>${col.name}<span class="count num">${items.length}</span></div>`;
+  const cc = document.createElement("div");
+  cc.className = "col-cards";
+  items.forEach(e=>{
+    const card = document.createElement("div");
+    card.className = "card" + (col.attn ? " attn" : "") + (col.key==="merged" ? " compact" : "");
+    card.tabIndex = 0;
+    card.setAttribute("role","button");
+    card.innerHTML = cardHTML(e, col);
+    card.addEventListener("click", ()=>openDrawer(e));
+    card.addEventListener("keydown", ev=>{ if(ev.key==="Enter"||ev.key===" "){ev.preventDefault(); openDrawer(e);} });
+    cc.appendChild(card);
+  });
+  colEl.appendChild(cc);
+  kanban.appendChild(colEl);
+});
+
+// ================= TIMELINE (gantt) =================
+const axis = document.getElementById("axis");
+["Mon 7 Jul","Tue 8 Jul","Wed 9 Jul","Thu 10 Jul","Fri 11 Jul","Sat 12 Jul"].forEach((d,i)=>{
+  const t = document.createElement("div");
+  t.className = "tick num";
+  t.style.left = pn(T0 + i*DAY) + "%";
+  t.textContent = d;
+  axis.appendChild(t);
+});
+
+const gbody = document.getElementById("gbody");
+const gl = document.createElement("div"); gl.className = "grid-lines";
+for (let i=1;i<6;i++){
+  const l = document.createElement("div"); l.className="gl";
+  l.style.left = ((i*DAY)/(T1-T0))*100 + "%";
+  gl.appendChild(l);
+}
+gbody.appendChild(gl);
+
+let lastGroup = null;
+const rowEls = {};
+EPICS.forEach(e=>{
+  if (e.group !== lastGroup){
+    const gh = document.createElement("div");
+    gh.className = "grouphead";
+    gh.innerHTML = `<div class="left">${e.group}</div><div></div>`;
+    gbody.appendChild(gh);
+    lastGroup = e.group;
+  }
+  const st = STAGE[e.stage];
+  const row = document.createElement("div");
+  row.className = "row" + (e.stage==="escalated" ? " attn" : "");
+  row.tabIndex = 0;
+  row.setAttribute("role","button");
+  row.setAttribute("aria-label", `Epic ${e.num} ${e.title}, ${st.label}`);
+  const repoTag = e.repo ? `<span class="lbl-tag mono">${e.repo}</span>` : "";
+  const labels = (e.labels||[]).map(l=>`<span class="lbl-tag mono">${l}</span>`).join("");
+  const liveDot = e.live ? `<span class="dot working live" title="agent working"></span>` : "";
+  row.innerHTML = `
+    <div class="r-left">
+      <div class="r-title"><span class="inum num">#${e.num}</span> ${e.title}</div>
+      <div class="r-sub">
+        <span class="chip"><span class="dot" style="background:${st.c}"></span>${st.label}</span>
+        ${liveDot}<span class="provider">${e.provider}</span>${repoTag}${labels}
+      </div>
+    </div>
+    <div class="r-track"></div>`;
+  const track = row.querySelector(".r-track");
+  const bar = document.createElement("div");
+  const endMs = e.end ? Date.parse(e.end) : NOW;
+  bar.className = "bar" + (e.ghost ? " ghost" : "");
+  bar.style.left = p(e.start) + "%";
+  bar.style.width = Math.max(0.8, pn(endMs) - p(e.start)) + "%";
+  if (!e.ghost) bar.style.background = st.c;
+  bar.dataset.tip = tipText(e);
+  if (e.live) bar.innerHTML = `<div class="live-edge"></div>`;
+  if (e.waitTail){
+    const tail = document.createElement("div");
+    tail.className = "wait-tail";
+    tail.style.width = ((NOW - endMs)/(endMs - Date.parse(e.start))) * 100 + "%";
+    bar.appendChild(tail);
+  }
+  const cap = document.createElement("span");
+  cap.className = "cap num";
+  cap.textContent = e.ghost ? "projected" : (e.stage==="merged" ? "✓ "+fmtDur(Date.parse(e.start), endMs) : fmtDur(Date.parse(e.start), endMs));
+  bar.appendChild(cap);
+  track.appendChild(bar);
+  row.addEventListener("click", ()=>openDrawer(e));
+  row.addEventListener("keydown", ev=>{ if(ev.key==="Enter"||ev.key===" "){ev.preventDefault(); openDrawer(e);} });
+  gbody.appendChild(row);
+  rowEls[e.num] = {row, e};
+});
+
+const nl = document.createElement("div");
+nl.className = "nowline";
+nl.style.left = `calc(330px + (100% - 330px) * ${pn(NOW)/100})`;
+nl.innerHTML = `<span class="flag">now 14:05</span>`;
+gbody.appendChild(nl);
+
+let arrowsDrawn = false;
+function drawArrows(){
+  if (arrowsDrawn) return;
+  arrowsDrawn = true;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("class","arrows");
+  const bodyRect = gbody.getBoundingClientRect();
+  svg.setAttribute("width", bodyRect.width);
+  svg.setAttribute("height", bodyRect.height);
+  svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z"/></marker></defs>`;
+  EPICS.forEach(e=>{
+    e.deps.forEach(d=>{
+      const from = rowEls[d], to = rowEls[e.num];
+      if (!from || !to) return;
+      const fb = from.row.querySelector(".bar").getBoundingClientRect();
+      const tb = to.row.querySelector(".bar").getBoundingClientRect();
+      const x1 = fb.right - bodyRect.left, y1 = fb.top + fb.height/2 - bodyRect.top;
+      const x2 = tb.left - bodyRect.left, y2 = tb.top + tb.height/2 - bodyRect.top;
+      const mx = Math.max(x1 + 10, x2 - 14);
+      const path = document.createElementNS("http://www.w3.org/2000/svg","path");
+      path.setAttribute("d", `M${x1},${y1} H${mx} V${y2} H${x2-2}`);
+      path.setAttribute("marker-end","url(#ah)");
+      svg.appendChild(path);
+    });
+  });
+  gbody.appendChild(svg);
+}
+
+// ---------- tabs ----------
+function showTab(which){
+  const board = which==="board";
+  document.getElementById("panel-board").hidden = !board;
+  document.getElementById("panel-timeline").hidden = board;
+  document.getElementById("tab-board").classList.toggle("active", board);
+  document.getElementById("tab-board").setAttribute("aria-selected", board);
+  document.getElementById("tab-timeline").classList.toggle("active", !board);
+  document.getElementById("tab-timeline").setAttribute("aria-selected", !board);
+  if (!board) requestAnimationFrame(drawArrows);
+}
+
+// ---------- tooltip ----------
+const tip = document.getElementById("tip");
+document.addEventListener("mousemove", ev=>{
+  const bar = ev.target.closest(".bar");
+  if (bar && bar.dataset.tip){
+    tip.innerHTML = bar.dataset.tip;
+    tip.style.display = "block";
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 300) + "px";
+    tip.style.top = (ev.clientY + 14) + "px";
+  } else tip.style.display = "none";
+});
+function tipText(e){
+  const endMs = e.end ? Date.parse(e.end) : NOW;
+  const f = ms => { const d = new Date(ms), z = n => String(n).padStart(2,"0");
+    return `${z(d.getDate())} Jul ${z(d.getHours())}:${z(d.getMinutes())}`; };
+  return `<span class="t">#${e.num} ${e.title}</span><br>
+    <span class="d">${STAGE[e.stage].label} · ${e.ghost ? "projected slot" : f(Date.parse(e.start)) + " → " + (e.end? f(endMs) : "now")}</span>`;
+}
+
+// ---------- drawer ----------
+const drawer = document.getElementById("drawer");
+const scrim = document.getElementById("scrim");
+function openDrawer(e){
+  const st = STAGE[e.stage];
+  const stageRows = (e.stages||[["queued","—"]]).map(([s,t])=>{
+    const key = s.split(" ")[0].replace("PR","pr_open").toLowerCase();
+    const c = (STAGE[key]||{}).c || "var(--queued)";
+    return `<div class="s"><span class="dot" style="background:${c}"></span>${s}<span class="t num">${t}</span></div>`;
+  }).join("");
+
+  const verdict = e.verdict ? `
+    <div class="d-sec">
+      <div class="h">Review verdict — gate failed closed</div>
+      <div class="verdict">
+        <span class="vt">⚠ ${e.verdict.unresolved} unresolved multi-review findings</span>
+        <ul>${e.verdict.items.map(i=>`<li>${i}</li>`).join("")}</ul>
+      </div>
+    </div>` : "";
+
+  const term = e.live ? `
+    <div class="d-sec">
+      <div class="h">Live session — ${e.session} @ ${e.host}</div>
+      <div class="term mono"><span class="tm">⏺</span> Task(Implement ClassGroupService CRUD)
+  <span class="td">⎿ 42 tool uses · 8.2k tokens</span>
+<span class="ta">✻</span> Writing tests for timetable slot validation…
+<span class="tm">⏺</span> Update(api/src/classes/service.ts)
+  <span class="td">⎿ Updated service.ts with 84 additions</span>
+<span class="tm">⏺</span> Bash(pnpm test --filter api)
+  <span class="td">⎿ 47 passed, 0 failed</span>
+<span class="cursor"></span></div>
+    </div>` : "";
+
+  const actions = [];
+  if (e.stage === "escalated"){
+    actions.push(`<button class="btn primary" onclick="toast('Mockup: PR #${e.pr} squash-merged → #${e.num} merged; scheduler recomputes graph')">Approve &amp; merge PR #${e.pr}</button>`);
+    actions.push(`<button class="btn">Retry epic</button>`);
+  }
+  if (e.live) actions.push(`<button class="btn primary" onclick="toast('Mockup: would open the real session view — same terminal you use today')">Open full session</button>`);
+  if (e.pr) actions.push(`<button class="btn">PR #${e.pr} ↗</button>`);
+  actions.push(`<button class="btn">Issue #${e.num} ↗</button>`);
+
+  drawer.innerHTML = `
+    <div class="d-head">
+      <h2><span class="inum num">#${e.num}</span> ${e.title}</h2>
+      <button class="btn d-close" onclick="closeDrawer()" aria-label="close">✕</button>
+    </div>
+    <div class="d-sub">
+      <span class="chip"><span class="dot" style="background:${st.c}"></span>${st.label}</span>
+      ${e.live?'<span class="dot working live"></span><span>agent working</span>':""}
+      <span class="provider">${e.provider}</span>
+      <span class="mono">${repoOf(e)}</span>
+    </div>
+    <div class="d-body">
+      ${verdict}
+      ${term}
+      <div class="d-sec"><div class="h">Actions</div><div class="d-actions">${actions.join("")}</div></div>
+      <div class="d-sec">
+        <div class="h">Pipeline stages</div>
+        <div class="stagelist">${stageRows}</div>
+      </div>
+      <div class="d-sec">
+        <div class="h">Details</div>
+        <div class="kv">
+          <span class="k">Branch</span><span class="mono">${slug(e)}</span>
+          <span class="k">Blocked by</span><span>${e.deps.length? e.deps.map(d=>"#"+d).join(", ") : "—"}</span>
+          <span class="k">Host</span><span>${e.host || "aigallery"}</span>
+          <span class="k">Autonomy</span><span>${(e.labels||[]).includes("pr-gate") ? "pr-gate (human merges)" : "auto-merge on green"}</span>
+        </div>
+      </div>
+    </div>`;
+  scrim.style.display = "block";
+  drawer.classList.add("open");
+  drawer.querySelector(".d-close").focus();
+}
+function closeDrawer(){
+  drawer.classList.remove("open");
+  scrim.style.display = "none";
+}
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeDrawer(); });
+
+// ---------- toast ----------
+let toastTimer;
+function toast(msg){
+  const t = document.getElementById("toastEl");
+  t.textContent = msg;
+  t.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ t.style.display = "none"; }, 3200);
+}
+</script>
