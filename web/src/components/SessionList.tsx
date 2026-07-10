@@ -92,7 +92,7 @@ export function SessionList({
                         name={row.session.name}
                         paneId={row.pane.id}
                       />
-                      <ProviderTag provider={providerOf(row.session.command)} />
+                      <ProviderTag provider={providerOf(row.pane.command)} />
                     </span>
                     <div className="text-xs text-muted-foreground">{row.server.name} · {row.session.cwd || "—"}</div>
                   </div>

@@ -75,7 +75,7 @@ export function Sidebar({
                     name={row.session.name}
                     paneId={row.pane.id}
                     state={stateOf(row)}
-                    provider={providerOf(row.session.command)}
+                    provider={providerOf(row.pane.command)}
                   />
                   <div className="truncate text-xs text-muted-foreground">{row.session.cwd || "—"}</div>
                 </div>

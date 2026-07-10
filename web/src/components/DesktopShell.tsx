@@ -5,8 +5,7 @@ import { usePanes, GRID_TILE_CAP } from "@/store/panes";
 import { useFocusedSeen } from "@/hooks/useFocusedSeen";
 import type { SessionRow } from "@/components/SessionList";
 import type { SeenRequest, ServerSummary, SessionState } from "@/lib/contracts";
-import { paneIdentity } from "@/lib/pane-identity";
-import { providerOf, type Provider } from "@/lib/provider";
+import { providerByIdent } from "@/lib/provider";
 
 export function DesktopShell({
   servers, rows, query, onQueryChange, stateOf, livePaneIds, readyServers,
@@ -29,14 +28,7 @@ export function DesktopShell({
   useFocusedSeen(focusedReq);
   const [notice, setNotice] = React.useState<string | null>(null);
   const noticeTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
-  const providers = React.useMemo(() => {
-    const m = new Map<string, Provider>();
-    for (const row of rows) {
-      const p = providerOf(row.session.command);
-      if (p) m.set(paneIdentity(row.server.id, row.session.target, row.pane.id), p);
-    }
-    return m;
-  }, [rows]);
+  const providers = React.useMemo(() => providerByIdent(rows), [rows]);
 
   // Clear the notice timer on unmount to avoid setState-on-unmounted-component.
   React.useEffect(() => () => clearTimeout(noticeTimer.current), []);

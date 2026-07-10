@@ -9,9 +9,10 @@ const LABELS: Record<Provider, string> = { claude: "Claude Code", codex: "Codex"
 export function ProviderTag({ provider, className }: { provider?: Provider; className?: string }) {
   if (!provider) return null;
   return (
+    // No aria-label: ARIA prohibits naming a generic <span>, so AT reads the
+    // visible text; `title` still gives sighted users the full product name.
     <span
       title={LABELS[provider]}
-      aria-label={LABELS[provider]}
       className={cn("flex-none text-xs text-muted-foreground", className)}
     >
       {provider}

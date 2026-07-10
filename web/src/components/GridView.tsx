@@ -72,6 +72,7 @@ export function GridView({ livePaneIds, readyServers, providers }: {
         {panes.map((p, i) => {
           const expanded = activeId === p.id;
           const hidden = activeId !== null && !expanded;
+          const ident = paneIdentity(p.serverId, p.target, p.paneId);
           // Confirmed-gone only on fresh data; TerminalView further requires the
           // socket to be disconnected, so a stale list can never mask a live pane.
           const ended = paneEnded(readyServers, livePaneIds, p.serverId, p.target, p.paneId);
@@ -80,7 +81,7 @@ export function GridView({ livePaneIds, readyServers, providers }: {
               // Key by the session-independent pane identity so a session RENAME
               // (which changes p.id) does NOT remount the tile and tear down its
               // WebSocket. p.id still drives focus/close/expand below.
-              key={paneIdentity(p.serverId, p.target, p.paneId)}
+              key={ident}
               className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
               style={{ display: hidden ? "none" : "flex" }}
               // Sync the keyboard-focus target ONLY when focus actually lands in the
@@ -109,7 +110,7 @@ export function GridView({ livePaneIds, readyServers, providers }: {
                     {p.serverName} ·
                   </button>
                   <SessionNameEditor className="min-w-0" serverId={p.serverId} target={p.target} name={p.session} paneId={p.paneId} />
-                  <ProviderTag provider={providers?.get(paneIdentity(p.serverId, p.target, p.paneId))} />
+                  <ProviderTag provider={providers?.get(ident)} />
                 </span>
                 <span className="flex flex-none items-center gap-1">
                   {expanded ? (

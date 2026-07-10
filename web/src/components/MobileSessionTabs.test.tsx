@@ -7,10 +7,13 @@ import type { OpenTab } from "@/store/mobile-open-tabs";
 import type { SessionState } from "@/lib/contracts";
 
 const servers = [{ id: "s1", name: "host-1", labels: [], enabled: true }];
+// session.command ("zsh") deliberately DIVERGES from the pane's own command
+// ("claude"): the provider tests below only pass if buildTabs derives from
+// row.pane.command — the pane each tab shows — not tmux's active-pane session.command.
 function mkSession(name: string, winId: string, paneId: string) {
   return {
-    name, server: "s1", target: "default", cwd: `/home/${name}`, command: "claude",
-    windows: [{ id: winId, index: "0", name: "m", panes: [{ id: paneId, command: "c", cwd: `/home/${name}` }] }],
+    name, server: "s1", target: "default", cwd: `/home/${name}`, command: "zsh",
+    windows: [{ id: winId, index: "0", name: "m", panes: [{ id: paneId, command: "claude", cwd: `/home/${name}` }] }],
   };
 }
 const byServer = { s1: [mkSession("alpha", "@0", "%0"), mkSession("beta", "@1", "%1"), mkSession("gamma", "@2", "%2")] };

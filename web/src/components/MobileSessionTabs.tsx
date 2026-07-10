@@ -71,7 +71,7 @@ export function buildTabs(
       paneId: row.pane.id,
       state: stateOf(row),
       active,
-      provider: providerOf(row.session.command),
+      provider: providerOf(row.pane.command),
     });
   }
   if (!matched) {
@@ -109,7 +109,17 @@ export function MobileSessionTabs({
 }) {
   return (
     <nav aria-label="Sessions" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-      {tabs.map((tab) => (
+      {tabs.map((tab) => {
+        // One copy of the tab body — the active/inactive branches differ only in
+        // their wrapper (plain span vs switch button), so additions land once.
+        const body = (
+          <>
+            <StateDot state={tab.state} />
+            <span className="max-w-[8rem] truncate">{tab.name}</span>
+            <ProviderTag provider={tab.provider} />
+          </>
+        );
+        return (
         <span
           key={tab.key}
           aria-current={tab.active ? "page" : undefined}
@@ -119,20 +129,14 @@ export function MobileSessionTabs({
           )}
         >
           {tab.active ? (
-            <span className="flex min-w-0 items-center gap-1">
-              <StateDot state={tab.state} />
-              <span className="max-w-[8rem] truncate">{tab.name}</span>
-              <ProviderTag provider={tab.provider} />
-            </span>
+            <span className="flex min-w-0 items-center gap-1">{body}</span>
           ) : (
             <button
               type="button"
               onClick={() => onSwitch(tab)}
               className="flex min-w-0 items-center gap-1 hover:opacity-80"
             >
-              <StateDot state={tab.state} />
-              <span className="max-w-[8rem] truncate">{tab.name}</span>
-              <ProviderTag provider={tab.provider} />
+              {body}
             </button>
           )}
           <button
@@ -144,7 +148,8 @@ export function MobileSessionTabs({
             ×
           </button>
         </span>
-      ))}
+        );
+      })}
     </nav>
   );
 }
