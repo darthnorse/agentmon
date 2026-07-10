@@ -58,10 +58,10 @@ export function Sidebar({
       </div>
       <div className="flex-1 overflow-y-auto">
         {groups.map(({ id, serverName, list, serverState, sessionLess }) => (
-          <div key={id}>
+          <div key={id} className="border-b border-border pb-1">
             <div className="flex items-center gap-2 px-3 py-1">
               {sessionLess && serverState !== "unknown" && <StateDot state={serverState} />}
-              <span className="text-base font-semibold uppercase text-muted-foreground">{serverName}</span>
+              <span className="text-sm font-semibold uppercase text-white">{serverName}</span>
             </div>
             {list.map((row) => (
               <div
