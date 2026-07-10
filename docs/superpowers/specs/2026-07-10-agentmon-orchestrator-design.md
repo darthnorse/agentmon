@@ -249,7 +249,13 @@ Reference mockup: `docs/superpowers/specs/2026-07-10-orchestrator-board-mockup.h
   (via GitHub contents API) with Approve / send-guidance actions — reviewing a
   runner's plan from a phone is one tap.
 - **Header**: run pill (`Running · 1/1 slot`), max-parallel stepper, Run issue…,
-  Pause project. Stat strip: Merged / Working / Needs you / PRs open / Queued.
+  Pause project, and **Plan epics…** — spawns an interactive session on the project
+  host with kickoff `claude "/plan-epics"` (no autonomy flags; the human drives)
+  and opens its terminal. Implementation-wise this is a New-Session-with-command
+  preset: once sub-project 2 lands agent-side `Command` execution, the hub
+  handler's M10 `Command` rejection is lifted for user session-creates too (adds
+  no capability an rw terminal doesn't already grant). Stat strip: Merged /
+  Working / Needs you / PRs open / Queued.
 - Escalations also ride the existing M9 alerts/web-push path.
 - Stage colors (validated against the dark surface, always paired with text):
   queued `#6b7280`, planning `#8b5cf6`, implementing `#d97706`, reviewing `#0284c7`,
