@@ -125,8 +125,11 @@ queued → starting → planning → implementing → reviewing → pr_open → 
 - **Ready** = all blocked-by issues closed/merged ∧ project not paused ∧
   orchestrator-owned running sessions < `max_parallel`.
 - Trigger: any state change or sync event; plus periodic tick.
-- Spawn via existing new-session directive on the project host: session
-  `epic-N-slug`, kickoff `/epic-pipeline N` (provider-appropriate invocation).
+- Spawn via the existing hub→agent create-session call with the (already-defined,
+  currently rejected) `Command` field carrying the provider kickoff — e.g.
+  `claude "/epic-pipeline N"`; the agent-side command execution ships in
+  sub-project 2. Session named `epic-N`. Session liveness for stall detection is
+  polled from the hub's state projection (vanished sessions emit no event).
 - **Worktrees are the runner's job** (`git worktree add ../<repo>-epic-N`): moot at
   `max_parallel=1`, ready for >1. Hub stays git-ignorant.
 - **Epic import** (no hub code): a `gh`-based script/skill turns `docs/plan/epic-*.md`
@@ -161,9 +164,11 @@ A runner session must:
 1. Read the epic issue (`gh issue view N`).
 2. Work on branch `epic/N-slug` (own worktree when parallel).
 3. Report transitions: `agentmon report --epic N --stage <stage> [--note …]`.
-   The CLI talks to the local agent only (localhost/unix socket, no credentials);
-   the agent forwards over its existing authenticated WS. The hub validates that
-   reports for epic N come from the assigned host/session.
+   The CLI posts to a loopback-only endpoint on the local agent (mirroring the
+   existing Claude-hook intake; no credentials); the agent buffers reports and the
+   **hub drains them over its existing poll channel** (the hub dials agents — there
+   is no agent→hub connection, so pull matches the architecture). The hub validates
+   that reports for epic N come from the assigned host/session.
 4. Scale process to the issue: full flow by default — plan (committed plan doc) →
    implement with subagent/TDD discipline → multi-review → fix loop. `pipeline:light`
    label skips heavy planning for small fixes. The epic issue body is the
