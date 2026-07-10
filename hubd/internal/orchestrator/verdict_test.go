@@ -50,3 +50,22 @@ func TestParseVerdictMalformed(t *testing.T) {
 		t.Fatalf("malformed block must be a distinct error, got %v", err)
 	}
 }
+
+func TestParseVerdictRejectsWrongOrMissingSchema(t *testing.T) {
+	// A block that merely MENTIONS the key (comment/prose) unmarshals to a
+	// zero Verdict — Schema "" — and must fail closed, not read as clean.
+	if _, err := ParseVerdict("```yaml\n# see agentmon-verdict format docs\nother: thing\n```"); err == nil {
+		t.Fatal("comment-only mention must not parse as a verdict")
+	}
+	if _, err := ParseVerdict("```yaml\nagentmon-verdict: v2\nepic: 1\n```"); err == nil {
+		t.Fatal("unknown schema version must fail closed")
+	}
+}
+
+func TestParseVerdictRejectsNegativeCounts(t *testing.T) {
+	body := "```yaml\nagentmon-verdict: v1\nepic: 1\n" +
+		"findings: {found: 1, resolved: 2, unresolved: -1}\ntests: {passed: 1, failed: 0}\n```"
+	if _, err := ParseVerdict(body); err == nil {
+		t.Fatal("negative counts must fail closed")
+	}
+}

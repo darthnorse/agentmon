@@ -40,3 +40,12 @@ func TestBoardBroadcastCancelIdempotent(t *testing.T) {
 	cancel() // must not panic
 	b.Publish(BoardChange{EpicID: "x"})
 }
+
+func TestBoardBroadcastCancelClosesChannel(t *testing.T) {
+	b := NewBoardBroadcaster()
+	_, ch, cancel := b.Subscribe()
+	cancel()
+	if _, ok := <-ch; ok {
+		t.Fatal("cancel must close the channel (state.Broadcaster contract)")
+	}
+}

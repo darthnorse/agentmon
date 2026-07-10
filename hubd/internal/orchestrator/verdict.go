@@ -4,6 +4,7 @@ package orchestrator
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -51,6 +52,16 @@ func ParseVerdict(prBody string) (*Verdict, error) {
 		var v Verdict
 		if err := yaml.Unmarshal([]byte(block), &v); err != nil {
 			return nil, err
+		}
+		// Fail closed on anything that isn't a well-formed v1 verdict: a block
+		// that merely mentions the key (comment, prose) unmarshals to zero
+		// values — Schema "" — and must not read as a clean self-report.
+		if v.Schema != "v1" {
+			return nil, fmt.Errorf("orchestrator: unknown verdict schema %q", v.Schema)
+		}
+		if v.Findings.Found < 0 || v.Findings.Resolved < 0 || v.Findings.Unresolved < 0 ||
+			v.Tests.Passed < 0 || v.Tests.Failed < 0 {
+			return nil, fmt.Errorf("orchestrator: negative counts in verdict")
 		}
 		return &v, nil
 	}

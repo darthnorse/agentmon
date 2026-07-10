@@ -114,10 +114,11 @@ func TestMergePR(t *testing.T) {
 	defer srv.Close()
 	c := NewClient("t")
 	c.Base = srv.URL
-	if err := c.MergePR(context.Background(), "o/r", 58); err != nil {
+	if err := c.MergePR(context.Background(), "o/r", 58, "abc123"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.MergePR(context.Background(), "o/r", 59); !errors.Is(err, ErrNotMergeable) {
+	// 409 = head moved after gate evaluation (SHA pin) — must read not-mergeable.
+	if err := c.MergePR(context.Background(), "o/r", 59, "abc123"); !errors.Is(err, ErrNotMergeable) {
 		t.Fatalf("want ErrNotMergeable, got %v", err)
 	}
 }
@@ -145,5 +146,83 @@ func TestWriteBackCalls(t *testing.T) {
 	// RemoveLabel tolerates 404 (label already absent)
 	if err := c.RemoveLabel(ctx, "o/r", 15, "gone"); err != nil {
 		t.Fatalf("404 remove should be nil, got %v", err)
+	}
+}
+
+func TestMergePRSendsSHAPin(t *testing.T) {
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		json.NewEncoder(w).Encode(map[string]any{"merged": true})
+	}))
+	defer srv.Close()
+	c := NewClient("t")
+	c.Base = srv.URL
+	if err := c.MergePR(context.Background(), "o/r", 58, "headsha1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["sha"] != "headsha1" || gotBody["merge_method"] != "squash" {
+		t.Fatalf("merge body = %v", gotBody)
+	}
+}
+
+func TestListCheckRunsFailsClosedOnPartialView(t *testing.T) {
+	srv := fakeGH(t, map[string]any{
+		"GET /repos/o/r/commits/sha1/check-runs": map[string]any{
+			"total_count": 47,
+			"check_runs": []map[string]any{
+				{"name": "ci", "status": "completed", "conclusion": "success"},
+			},
+		},
+	}, nil, nil)
+	defer srv.Close()
+	c := NewClient("t")
+	c.Base = srv.URL
+	if _, err := c.ListCheckRuns(context.Background(), "o/r", "sha1"); err == nil {
+		t.Fatal("partial check-run view must error (gate escalates), not read green")
+	}
+}
+
+func TestListIssuesSincePaginates(t *testing.T) {
+	pagesServed := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pagesServed++
+		page := r.URL.Query().Get("page")
+		issues := make([]map[string]any, 0, 100)
+		if page == "1" {
+			for i := 1; i <= 100; i++ {
+				issues = append(issues, map[string]any{"number": i, "title": "x", "state": "open",
+					"labels": []map[string]any{}})
+			}
+		} else {
+			issues = append(issues, map[string]any{"number": 101, "title": "tail", "state": "open",
+				"labels": []map[string]any{}})
+		}
+		json.NewEncoder(w).Encode(issues)
+	}))
+	defer srv.Close()
+	c := NewClient("t")
+	c.Base = srv.URL
+	got, err := c.ListIssuesSince(context.Background(), "o/r", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pagesServed != 2 || len(got) != 101 || got[100].Number != 101 {
+		t.Fatalf("pages=%d issues=%d", pagesServed, len(got))
+	}
+}
+
+func TestInvalidRepoAndRefRejected(t *testing.T) {
+	c := NewClient("t")
+	c.Base = "http://127.0.0.1:1" // must never be dialed
+	ctx := context.Background()
+	if _, err := c.GetIssue(ctx, "o/r/pulls/1/merge?", 1); err == nil {
+		t.Fatal("path-injection repo must be rejected")
+	}
+	if _, err := c.ListCheckRuns(ctx, "o/r", "abc/../secret"); err == nil {
+		t.Fatal("traversal ref must be rejected")
+	}
+	if err := c.MergePR(ctx, "not-a-repo", 1, "s"); err == nil {
+		t.Fatal("repo without owner segment must be rejected")
 	}
 }

@@ -2,12 +2,22 @@ package orchestrator
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
+// PROVENANCE CONTRACT: the Verdict is the assigned runner's self-report,
+// parsed from the PR body. The gate defends against a runner ARGUING past it
+// (verdict is data, not argument) — it does NOT authenticate the author. The
+// v1 threat model is private repos where PR bodies are editable only by the
+// owner and the runners; callers assembling GateInput MUST source the PR via
+// the epic's tracked PRNumber and pass Epic so a copied/foreign verdict
+// escalates. Merges are additionally SHA-pinned at the client (MergePR), so
+// code pushed after evaluation cannot ride a stale verdict in.
 type GateInput struct {
 	Verdict         *Verdict
 	VerdictErr      error
+	Epic            int // expected issue number; 0 skips the binding check
 	Labels          []string
 	RequiredReviews []string
 	ChecksGreen     bool
@@ -33,10 +43,13 @@ func Decide(in GateInput) GateResult {
 	if in.VerdictErr != nil || in.Verdict == nil {
 		return GateResult{Reason: "missing or malformed verdict"}
 	}
+	v := in.Verdict
+	if in.Epic != 0 && v.Epic != in.Epic {
+		return GateResult{Reason: fmt.Sprintf("verdict epic %d != issue %d", v.Epic, in.Epic)}
+	}
 	if !in.ChecksGreen {
 		return GateResult{Reason: "CI checks failing"}
 	}
-	v := in.Verdict
 	if v.Uncertain {
 		return GateResult{Reason: "runner flagged uncertainty"}
 	}
@@ -53,12 +66,7 @@ func Decide(in GateInput) GateResult {
 }
 
 func hasLabel(labels []string, want string) bool {
-	for _, l := range labels {
-		if l == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(labels, want)
 }
 
 func missingReviews(required, got []string) []string {

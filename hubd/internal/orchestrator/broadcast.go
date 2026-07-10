@@ -35,13 +35,16 @@ func (b *BoardBroadcaster) Subscribe() (uint64, <-chan BoardChange, func()) {
 	b.nextID++
 	ch := make(chan BoardChange, boardSubBufCap)
 	b.subs[id] = ch
-	var once sync.Once
+	// Mirror state.Broadcaster exactly: cancel removes the subscription and
+	// CLOSES ch (consumers use `c, ok := <-ch` close-detection); the map
+	// lookup makes double-cancel safe without a sync.Once.
 	cancel := func() {
-		once.Do(func() {
-			b.mu.Lock()
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if existing, ok := b.subs[id]; ok {
 			delete(b.subs, id)
-			b.mu.Unlock()
-		})
+			close(existing)
+		}
 	}
 	return id, ch, cancel
 }
@@ -54,14 +57,15 @@ func (b *BoardBroadcaster) Publish(c BoardChange) {
 		select {
 		case ch <- c:
 		default:
-			select { // drop oldest, then retry once
+			// Buffer full: evict the oldest, then send. The post-eviction
+			// send cannot block — Publish is the sole sender and holds b.mu,
+			// and consumers only ever remove (same invariant as
+			// state/broadcaster.go).
+			select {
 			case <-ch:
 			default:
 			}
-			select {
-			case ch <- c:
-			default:
-			}
+			ch <- c
 		}
 	}
 }

@@ -43,3 +43,14 @@ func TestDecide(t *testing.T) {
 		})
 	}
 }
+
+func TestDecideBindsVerdictToEpic(t *testing.T) {
+	v := cleanVerdict() // Epic: 15
+	got := Decide(GateInput{Verdict: v, Epic: 16, ChecksGreen: true})
+	if got.Merge || got.Wait || !strings.Contains(got.Reason, "epic 15 != issue 16") {
+		t.Fatalf("foreign-epic verdict must escalate, got %+v", got)
+	}
+	if got := Decide(GateInput{Verdict: v, Epic: 15, ChecksGreen: true}); !got.Merge {
+		t.Fatalf("matching epic must still merge, got %+v", got)
+	}
+}

@@ -28,18 +28,23 @@ func ValidTransition(from, to shared.EpicStage) bool {
 		return to == shared.EpicStarting || to == shared.EpicCanceled
 	case shared.EpicEscalated:
 		switch to {
-		case shared.EpicQueued, shared.EpicImplementing, shared.EpicMerging, shared.EpicCanceled:
+		// → merged: a human merging the PR in GitHub is a spec-promised
+		// recovery (§6); reconcile/webhook observe it and must close the epic.
+		case shared.EpicQueued, shared.EpicImplementing, shared.EpicMerging,
+			shared.EpicMerged, shared.EpicCanceled:
 			return true
 		}
 		return false
 	case shared.EpicStalled:
 		switch to {
-		case shared.EpicQueued, shared.EpicFailed, shared.EpicCanceled:
+		case shared.EpicQueued, shared.EpicMerged, shared.EpicFailed, shared.EpicCanceled:
 			return true
 		}
 		return false
 	}
-	// from is an active stage
+	if !activeStages[from] {
+		return false // unknown stage: nothing is legal from it
+	}
 	switch to {
 	case shared.EpicEscalated, shared.EpicStalled, shared.EpicCanceled:
 		return true

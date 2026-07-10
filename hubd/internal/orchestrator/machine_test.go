@@ -42,3 +42,22 @@ func TestValidTransition(t *testing.T) {
 		}
 	}
 }
+
+func TestValidTransitionRecoveryToMerged(t *testing.T) {
+	// Spec §6: a human merging the PR in GitHub must work from escalated (and
+	// a stalled epic whose PR was merged must be closeable by reconcile).
+	if !ValidTransition(shared.EpicEscalated, shared.EpicMerged) {
+		t.Fatal("escalated→merged must be valid (human GitHub merge recovery)")
+	}
+	if !ValidTransition(shared.EpicStalled, shared.EpicMerged) {
+		t.Fatal("stalled→merged must be valid (reconcile of merged PR)")
+	}
+}
+
+func TestValidTransitionRejectsUnknownStages(t *testing.T) {
+	for _, from := range []shared.EpicStage{"bogus", "", "deployed"} {
+		if ValidTransition(from, shared.EpicCanceled) {
+			t.Fatalf("unknown from-stage %q must not transition anywhere", from)
+		}
+	}
+}
