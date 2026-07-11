@@ -4059,12 +4059,12 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestTwoEpicChain -v`
 Expected: PASS immediately (it exercises Task 15 code; if it fails, that's a Task 15 bug — fix there).
 
-- [ ] **Step 3: Wire main.go**
+- [x] **Step 3: Wire main.go**
 
 In `hubd/cmd/agentmon-hubd/main.go`, after the poller/push wiring (~line 105), gated so an unconfigured hub runs exactly as before:
 
@@ -4106,7 +4106,7 @@ In `hubd/cmd/agentmon-hubd/main.go`, after the poller/push wiring (~line 105), g
 	}
 ```
 
-- [ ] **Step 4: Full verification**
+- [x] **Step 4: Full verification**
 
 Run: `cd /root/agentmon/hubd && go build ./... && go test ./... && cd /root/agentmon/agent && go build ./... && cd /root/agentmon/shared && go test ./`
 Expected: everything green across all three modules.
@@ -4116,7 +4116,7 @@ Then boot smoke-test (no GitHub token → orchestrator disabled, hub behaves exa
 Run: `cd /root/agentmon/hubd && go run ./cmd/agentmon-hubd -config /dev/null 2>&1 | head -5 || true`
 Expected: starts (or fails on config parse of /dev/null identically to current main — if `Load` errors on empty file, use a minimal temp yaml instead: `listen: ":0"`). The point: no panic from nil orchestrator wiring.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): wire orchestrator into main — gated on github token"
@@ -4142,7 +4142,7 @@ arrives.
 - Consumes: Task 3 store, Task 15 `evaluateGates`, Task 18 register handler.
 - Produces: `db.Project.RequireCI bool`, persisted and honored by the gate path.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `hubd/internal/db/projects_test.go`:
 
@@ -4201,12 +4201,12 @@ func TestRequireCIHoldsMergeUntilChecksRegister(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProjectRequireCI -v && go test ./internal/orchestrator/ -run TestRequireCI -v`
 Expected: FAIL — `p.RequireCI undefined` / `d.SetProjectRequireCI undefined` (compile errors).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/db/migrations/0006_require_ci.sql`:
 
@@ -4238,12 +4238,12 @@ In `hubd/internal/orchestrator/orchestrator.go` `evaluateGates`, after computing
 In `hubd/internal/api/orchestrator.go`: accept `require_ci` (json `require_ci`)
 in the project-register body and pass it through; include it in the project DTO.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd /root/agentmon/hubd && go build ./... && go test ./... `
 Expected: PASS (all packages).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): per-project require_ci closes the pre-check-registration merge window"
