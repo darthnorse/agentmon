@@ -1584,7 +1584,7 @@ Report: tasks 7–12 committed, full gate green. WAIT for explicit fix instructi
 - Consumes: `config.Load`, `shared.ReportableStage`, the intake wire shape (Task 4).
 - Produces: `reportMain(args, stdout) error`; helpers `postReport(cfgPath string, payload map[string]any, dryRun bool) (string, error)`, `repoFromGit(dir string) (string, error)`, `normalizeRepoURL(u string) (string, error)` — Task 16 reuses `postReport` and `repoFromGit`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/cmd/agentmon-agent/report_cli_test.go`:
 
@@ -1606,16 +1606,21 @@ import (
 
 // reportTestServer returns an httptest server and an agent.toml whose listen
 // port points at it (mirrors the hook-test pattern: the CLI derives the intake
-// URL from the config's listen port).
+// URL from the config's listen port). config.Load resolves hub_token and
+// directive_key unconditionally and every secret must be an env:/file: ref
+// (bare literals are rejected) — mirror writeAgentConfig in hooks_cli_test.go.
 func reportTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, string) {
 	t.Helper()
+	t.Setenv("RPT_HUB", "h")
+	t.Setenv("RPT_DK", "d")
+	t.Setenv("RPT_HOOK", "htok")
 	srv := httptest.NewServer(handler)
 	_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(t.TempDir(), "agent.toml")
-	cfg := fmt.Sprintf("listen = \"127.0.0.1:%s\"\nserver_id = \"t\"\nhook_token = \"htok\"\n", port)
+	cfg := fmt.Sprintf("listen = \"127.0.0.1:%s\"\nserver_id = \"t\"\nhub_token = \"env:RPT_HUB\"\ndirective_key = \"env:RPT_DK\"\nhook_token = \"env:RPT_HOOK\"\n", port)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1708,12 +1713,12 @@ func TestNormalizeRepoURL(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/ -run 'TestReport|TestNormalize'`
 Expected: FAIL to build — `undefined: reportMain`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/cmd/agentmon-agent/report_cli.go`:
 
@@ -1860,11 +1865,11 @@ In `agent/cmd/agentmon-agent/main.go`, add to the subcommand switch (after the `
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon report subcommand — posts runner stage reports to the loopback intake"
@@ -2249,6 +2254,24 @@ func TestImportDryRunCallsNothing(t *testing.T) {
 	if len(calls) != 0 {
 		t.Fatalf("dry-run must not call gh: %v", calls)
 	}
+	// Dry-run still previews the dependency pass; unstamped siblings resolve
+	// to their symbolic basename.
+	if !strings.Contains(out.String(), "Blocked-by: <epic-01-auth>") {
+		t.Fatalf("dry-run must preview the planned dependency edit:\n%s", out.String())
+	}
+}
+
+func TestImportDryRunStillValidatesRefs(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ntitle: X\nblocked-by: epic-99\n---\nbody"
+	if err := os.WriteFile(filepath.Join(dir, "epic-01-x.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []ghCall
+	var out bytes.Buffer
+	if err := importEpics([]string{"--dir", dir, "--repo", "o/r", "--dry-run"}, &out, fakeGH(t, &calls)); err == nil {
+		t.Fatal("dry-run must reject an unresolvable blocked-by ref")
+	}
 }
 
 func TestImportUnresolvableRefErrors(t *testing.T) {
@@ -2383,55 +2406,67 @@ func importEpics(args []string, stdout io.Writer, run cmdRunner) error {
 		fmt.Fprintf(stdout, "+ %s → #%d\n", filepath.Base(e.Path), e.Issue)
 	}
 	// Phase 2: resolve blocked-by refs and write the dependency lines the hub
-	// parses (ParseBlockedBy: "Blocked-by: #a, #b").
+	// parses (ParseBlockedBy: "Blocked-by: #a, #b"). Dry-run MUST still walk
+	// this phase for unstamped epics (Issue==0 because phase 1 only printed):
+	// its whole point is validating refs before a real run creates issues.
 	for _, e := range epics {
-		if len(e.BlockedBy) == 0 || e.Issue == 0 {
+		if len(e.BlockedBy) == 0 || (e.Issue == 0 && !*dryRun) {
 			continue
 		}
-		nums := make([]string, 0, len(e.BlockedBy))
+		refs := make([]string, 0, len(e.BlockedBy))
 		for _, ref := range e.BlockedBy {
-			n, err := resolveRef(ref, epics)
+			tok, err := resolveRef(ref, epics, *dryRun)
 			if err != nil {
 				return fmt.Errorf("%s: %w", e.Path, err)
 			}
-			nums = append(nums, "#"+strconv.Itoa(n))
+			refs = append(refs, tok)
 		}
-		body := e.Body + "\n\nBlocked-by: " + strings.Join(nums, ", ")
 		if *dryRun {
-			fmt.Fprintf(stdout, "[dry-run] gh issue edit %d --body … (Blocked-by: %s)\n", e.Issue, strings.Join(nums, ", "))
+			target := "#" + strconv.Itoa(e.Issue)
+			if e.Issue == 0 {
+				target = "<" + strings.TrimSuffix(filepath.Base(e.Path), ".md") + ">"
+			}
+			fmt.Fprintf(stdout, "[dry-run] gh issue edit %s --body … (Blocked-by: %s)\n", target, strings.Join(refs, ", "))
 			continue
 		}
+		body := e.Body + "\n\nBlocked-by: " + strings.Join(refs, ", ")
 		if _, err := run(".", "gh", "issue", "edit", strconv.Itoa(e.Issue), "--repo", r, "--body", body); err != nil {
 			return fmt.Errorf("edit #%d: %w", e.Issue, err)
 		}
-		fmt.Fprintf(stdout, "~ #%d Blocked-by: %s\n", e.Issue, strings.Join(nums, ", "))
+		fmt.Fprintf(stdout, "~ #%d Blocked-by: %s\n", e.Issue, strings.Join(refs, ", "))
 	}
 	return nil
 }
 
-// resolveRef maps a blocked-by ref to an issue number: "#12"/"12" directly;
-// "epic-01" by unique basename-prefix match against the sibling files.
-func resolveRef(ref string, epics []*epicfile.Epic) (int, error) {
+// resolveRef maps a blocked-by ref to its "#N" token: "#12"/"12" directly;
+// "epic-01" by unique basename-prefix match against the sibling files. Missing
+// and ambiguous refs are ALWAYS errors. An unstamped sibling is an error on a
+// real run (phase 1 stamps before phase 2 reaches it) but legal in dry-run,
+// where creates were only printed: it resolves to a symbolic "<basename>".
+func resolveRef(ref string, epics []*epicfile.Epic, dryRun bool) (string, error) {
 	if n, err := strconv.Atoi(strings.TrimPrefix(ref, "#")); err == nil && n > 0 {
-		return n, nil
+		return "#" + strconv.Itoa(n), nil
 	}
 	var match *epicfile.Epic
 	for _, e := range epics {
 		base := strings.TrimSuffix(filepath.Base(e.Path), ".md")
 		if base == ref || strings.HasPrefix(base, ref+"-") {
 			if match != nil {
-				return 0, fmt.Errorf("blocked-by ref %q is ambiguous", ref)
+				return "", fmt.Errorf("blocked-by ref %q is ambiguous", ref)
 			}
 			match = e
 		}
 	}
 	if match == nil {
-		return 0, fmt.Errorf("blocked-by ref %q matches no epic file", ref)
+		return "", fmt.Errorf("blocked-by ref %q matches no epic file", ref)
 	}
 	if match.Issue == 0 {
-		return 0, fmt.Errorf("blocked-by ref %q resolves to unstamped %s", ref, filepath.Base(match.Path))
+		if dryRun {
+			return "<" + strings.TrimSuffix(filepath.Base(match.Path), ".md") + ">", nil
+		}
+		return "", fmt.Errorf("blocked-by ref %q resolves to unstamped %s", ref, filepath.Base(match.Path))
 	}
-	return match.Issue, nil
+	return "#" + strconv.Itoa(match.Issue), nil
 }
 ```
 
@@ -2600,6 +2635,21 @@ func TestDoctorCodexConfigChecked(t *testing.T) {
 		t.Fatalf("err=%v out:\n%s", err, out.String())
 	}
 }
+
+func TestDoctorCodexReadOnlySandboxFails(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	// writable_roots and network_access are valid — only the active sandbox
+	// is explicitly read-only, which cannot commit or run test gates.
+	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"),
+		[]byte("sandbox_mode = \"read-only\"\n[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"\"]\nnetwork_access = true\n"), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err == nil || !strings.Contains(out.String(), "✗ codex sandbox config") {
+		t.Fatalf("err=%v out:\n%s", err, out.String())
+	}
+}
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2731,6 +2781,7 @@ func statFile(p string) error {
 // codexConfig is the subset of ~/.codex/config.toml the doctor validates
 // (spec §12: without these, runner sessions cannot commit or pass test gates).
 type codexConfig struct {
+	SandboxMode           string `toml:"sandbox_mode"`
 	SandboxWorkspaceWrite struct {
 		WritableRoots []string `toml:"writable_roots"`
 		NetworkAccess bool     `toml:"network_access"`
@@ -2741,6 +2792,12 @@ func checkCodexConfig(path string) error {
 	var c codexConfig
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
+	}
+	// Unset defaults to workspace-write for interactive sessions (the kickoff
+	// path). An explicit read-only sandbox passes the checks below yet cannot
+	// commit or run test gates — the exact misconfig the doctor exists to catch.
+	if c.SandboxMode != "" && c.SandboxMode != "workspace-write" && c.SandboxMode != "danger-full-access" {
+		return fmt.Errorf("%s: sandbox_mode %q cannot write the workspace (runner sessions must commit)", path, c.SandboxMode)
 	}
 	if !c.SandboxWorkspaceWrite.NetworkAccess {
 		return fmt.Errorf("%s: [sandbox_workspace_write] network_access must be true (httptest loopback binds)", path)
@@ -3074,12 +3131,12 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): installer distri
 ### Task 19: docs — config reference + README
 
 **Files:**
-- Modify: `deploy/agent.example.toml` (append)
+- Modify: `deploy/agent.example.toml` (insert BEFORE the `[[targets]]` table — see Step 1)
 - Modify: `README.md` (Agent config reference section, line ~249)
 
 - [ ] **Step 1: Document the runner surfaces**
 
-Append to `deploy/agent.example.toml`:
+Insert into `deploy/agent.example.toml` immediately BEFORE the `[[targets]]` line, alongside the other top-level keys (hub_token, directive_key). Do NOT append at the end of the file: the file ends inside the `[[targets]]` table, so an appended example a user later uncomments would define `targets[].hook_token` — a key config ignores — and the report intake would stay silently disabled:
 
 ```toml
 # hook_token (written by the installer when hooks are provisioned) also gates

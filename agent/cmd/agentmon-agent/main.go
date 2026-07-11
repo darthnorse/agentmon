@@ -48,6 +48,11 @@ func main() {
 				log.Fatal(err)
 			}
 			return
+		case "report":
+			if err := reportMain(os.Args[2:], os.Stdout); err != nil {
+				log.Fatal(err)
+			}
+			return
 		}
 	}
 
