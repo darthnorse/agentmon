@@ -63,7 +63,7 @@ Design doc (authoritative for WHY): `docs/superpowers/specs/2026-07-10-orchestra
 - Consumes: `shared.OrchestratorReport` (exists).
 - Produces: `shared.OrchestratorReportBatch` — the drain wire format for Tasks 3, 5, 10, 11.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `shared/orchestrator_test.go`:
 
@@ -86,12 +86,12 @@ func TestOrchestratorReportBatchJSONShape(t *testing.T) {
 
 If `strings` or `encoding/json` are not already imported in the test file, add them.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/shared && go test ./... -run TestOrchestratorReportBatchJSONShape`
 Expected: FAIL — `undefined: OrchestratorReportBatch`.
 
-- [ ] **Step 3: Write the type**
+- [x] **Step 3: Write the type**
 
 Append to `shared/orchestrator.go`:
 
@@ -110,12 +110,12 @@ type OrchestratorReportBatch struct {
 }
 ```
 
-- [ ] **Step 4: Run the full gate**
+- [x] **Step 4: Run the full gate**
 
 Run the Global Constraints gate command.
 Expected: PASS everywhere (hubd still compiles — nothing references the new type yet).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add shared/ && git commit -m "feat(shared): OrchestratorReportBatch — ack-on-next-drain wire format"

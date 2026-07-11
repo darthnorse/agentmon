@@ -49,3 +49,16 @@ type OrchestratorReport struct {
 	Session string    `json:"session"`
 	Ts      string    `json:"ts"`
 }
+
+// OrchestratorReportBatch is one drain response (ack-on-next-drain protocol).
+// Instance identifies the agent store's lifetime (minted at agent start): an
+// ack whose instance does not match the store's current one deletes nothing,
+// so a hub cursor that predates an agent restart can never delete fresh
+// reports. Cursor is the highest buffered seq contained in Reports (0 when
+// empty); the hub echoes instance+cursor on its NEXT drain to acknowledge —
+// at-least-once delivery, duplicates rejected by the hub's guarded transitions.
+type OrchestratorReportBatch struct {
+	Instance string               `json:"instance"`
+	Cursor   uint64               `json:"cursor"`
+	Reports  []OrchestratorReport `json:"reports"`
+}
