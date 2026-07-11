@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `feat/orchestrator-core`
-Status: stopped during Task 21 because its prescribed integration verdict uses epic 0 while the gate binds it to issue 1.
+Status: complete — Tasks 1–22 implemented, verified, and committed.
 
 ## Completed tasks
 
@@ -46,6 +46,10 @@ Status: stopped during Task 21 because its prescribed integration verdict uses e
   - Commit: `e369476 feat(hub): board SSE stream`
 - Task 20: guidance injection over the agent websocket.
   - Commit: `5c15d0a feat(hub): send guidance text into live sessions over agent ws`
+- Task 21: main wiring and two-epic end-to-end integration.
+  - Commit: `e6a299d feat(hub): wire orchestrator into main — gated on github token`
+- Task 22: per-project CI requirement.
+  - Commit: `24ffe45 feat(hub): per-project require_ci closes the pre-check-registration merge window`
 
 ## Verification
 
@@ -92,6 +96,8 @@ Task-specific verification also passed:
 - Task 18: complete API package tests.
 - Task 19: complete API package tests under `go test -race`.
 - Task 20: agentws and API tests.
+- Task 21: two-epic integration, all-module verification, and no-token boot smoke test.
+- Task 22: project persistence, gate behavior, and complete hub suite.
 
 ## Resolved plan mismatch
 
@@ -117,7 +123,7 @@ IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"
 
 After that correction, the entire Task 15 race suite passed, as did the final full-module build and test gate.
 
-## Task 21 stop condition
+## Resolved Task 21 fixtures
 
 Task 21 Step 1 added the prescribed two-epic integration test. The session-name fixture was corrected by plan commit `c7e0e4b` to use `sessionName(1)` and `sessionName(2)`. Step 2 then ran:
 
@@ -125,9 +131,12 @@ Task 21 Step 1 added the prescribed two-epic integration test. The session-name 
 GOCACHE=/tmp/agentmon-go-cache go test ./internal/orchestrator/ -run TestTwoEpicChain -v
 ```
 
-It advanced through scheduling and report ingestion, then failed because the prescribed verdict body contains `epic: 0` for issue 1. The checkpoint-2 gate contract correctly bound `GateInput.Epic` to issue 1 and escalated with `verdict epic 0 != issue 1`. The test expected the epic to be merged. Changing the fixture to `epic: 1` appears necessary, but Task 21 was stopped without altering another prescribed input. Task 22 was not started.
+The stale verdict fixture was corrected by plan commit `37969a1` to carry `epic: 1`, matching the checkpoint-2 binding contract. The integration test then passed and Task 21 completed.
 
-## Worktree at stop
+## Final verification
 
-- `hubd/internal/orchestrator/integration_test.go` contains Task 21 Step 1 with the explicitly authorized `sessionName` correction and remains uncommitted.
-- Plan checkbox updates through Task 21 Step 1 remain uncommitted.
+- `hubd`: `go build ./... && go test ./...` passed, including `internal/agentws`, `internal/api`, `internal/github`, and `internal/orchestrator`.
+- `agent`: `go build ./...` passed.
+- `shared`: `go test ./` passed.
+- No GitHub token: the hub boot smoke test reached `agentmon-hubd dev listening on :0` without a nil-orchestrator panic.
+- No pushes were performed.
