@@ -1887,7 +1887,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon repo
 - Consumes: stdlib only.
 - Produces: `epicfile.Epic`, `Parse(path) (Epic, error)`, `StampIssue(path, n) error` — Task 15's file layer.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/internal/epicfile/epicfile_test.go`:
 
@@ -1985,12 +1985,12 @@ func TestStampIssueInsertsAndReplaces(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/epicfile/`
 Expected: FAIL to build — package does not exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/internal/epicfile/epicfile.go`:
 
@@ -2118,11 +2118,11 @@ func StampIssue(path string, n int) error {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/epicfile/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): epicfile — strict epic front-matter parser with issue stamp-back"
