@@ -678,6 +678,45 @@ In `hubd/internal/api/orchestrator_events.go`, replace the inline assembly (line
 
 (The later `writeSSE(w, "board-snapshot", map[string]any{"projects": projDTOs, "epics": epics})` keeps its variable names — keep `projDTOs`/`epics` as above.)
 
+**Dormant-hub fix (Finding 13):** the board stream is mounted app-wide in the web (Task 8), but this handler currently 503s when `d.BoardBcast == nil` (dormant hub, no github.token) — native EventSource then reconnect-loops every ~3s forever for every authenticated user. Replace the early `if d.BoardBcast == nil { writeJSONError(503) …}` (orchestrator_events.go:22-25) with an **idle stream**: set the SSE headers, send one empty `board-snapshot`, and heartbeat until the client disconnects (no Subscribe, no deltas). Add this near the top of the handler, BEFORE the `d.BoardBcast.Subscribe()` block:
+
+```go
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeJSONError(w, http.StatusInternalServerError, "stream unsupported")
+			return
+		}
+		if d.BoardBcast == nil {
+			// Dormant hub: keep the stream OPEN and idle rather than 503, so the
+			// app-wide EventSource doesn't reconnect-loop. No projects exist yet,
+			// so the snapshot is empty and no deltas ever arrive.
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			writeSSE(w, "board-snapshot", map[string]any{"projects": []projectDTO{}, "epics": []epicDTO{}})
+			flusher.Flush()
+			hb := d.SSEHeartbeat
+			if hb <= 0 {
+				hb = 25 * time.Second
+			}
+			t := time.NewTicker(hb)
+			defer t.Stop()
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-t.C:
+					fmt.Fprint(w, ": ping\n\n")
+					flusher.Flush()
+				}
+			}
+		}
+```
+
+(The existing handler already fetches `flusher` further down; if this early block adds a second `flusher, ok :=`, rename the later one or hoist this one — the executor should reconcile to a single declaration. The existing handler already imports `fmt` and `time`.)
+
+Add a test `TestBoardEventsDormant`: `Deps{DB: database}` (no BoardBcast) → the handler writes a `board-snapshot` with empty arrays and does NOT 503. Reuse the `pipeResponseWriter` harness from `orchestrator_events_test.go`.
+
 In `hubd/internal/api/router.go`, after line 59:
 
 ```go
@@ -687,7 +726,7 @@ In `hubd/internal/api/router.go`, after line 59:
 - [ ] **Step 4: Run tests (new + existing events tests must stay green)**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run 'TestAllBoard|TestBoardEvents' -v`
-Expected: PASS (the SSE snapshot behavior is unchanged by the refactor).
+Expected: PASS (the non-dormant SSE snapshot behavior is unchanged by the refactor).
 
 - [ ] **Step 5: Full gate + commit**
 
@@ -779,7 +818,7 @@ Expected: FAIL — `GetContents` undefined.
 
 - [ ] **Step 3: Implement**
 
-Append to `hubd/internal/github/client.go` (add `"encoding/base64"` and `"net/url"` imports):
+Append to `hubd/internal/github/client.go` (add only `"encoding/base64"` — `"net/url"` is ALREADY imported at client.go:13; adding it again is a compile error):
 
 ```go
 // ErrTooLarge marks a contents fetch rejected by the size cap.
@@ -1235,6 +1274,11 @@ Append to `web/src/lib/api-client.ts` (extend the type-only import from `./contr
 export const allBoardKey = () => ["board"] as const;
 export const projectBoardKey = (projectId: string) => ["board", projectId] as const;
 export const epicPlanKey = (projectId: string, epicId: string) => ["epic-plan", projectId, epicId] as const;
+// A runner session lives under the project's TARGET socket. Key by target so
+// same-host projects on different targets don't collide; an empty target
+// reuses the home screen's sessionsKey (identical default-target list).
+export const boardSessionsKey = (serverId: string, target: string) =>
+  target ? (["sessions", serverId, target] as const) : sessionsKey(serverId);
 
 export const getAllBoard = () => request<AllBoardResponse>("GET", "/orchestrator/board");
 export const getProjectBoard = (projectId: string) =>
@@ -1780,8 +1824,19 @@ export function useBoardStream(deps?: BoardStreamDeps, onAttention?: (f: BoardDe
       deps,
     );
     stream.open();
+    // Visibility-resume (parity with ws-terminal.ts:72): a backgrounded PWA may
+    // have missed deltas even if the EventSource never fully dropped. On resume,
+    // refetch the board so the UI can't sit on stale state. (When the browser
+    // DID drop the connection, native reconnect also replays the snapshot.)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void queryClient.invalidateQueries({ queryKey: ["board"] });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
       stream.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2662,7 +2717,10 @@ export function ProjectsIndexRoute() {
 }
 
 export function ProjectDetailRoute() {
-  const { projectId } = useParams({ from: "/auth/projects/$projectId" });
+  // strict:false reads params without binding to a generated route id — the
+  // repo's own terminal.tsx does exactly this (routes/terminal.tsx:23), which
+  // sidesteps guessing the pathless-authRoute id.
+  const { projectId } = useParams({ strict: false }) as { projectId: string };
   return <ProjectsShell projectId={projectId} />;
 }
 
@@ -2793,7 +2851,11 @@ function DormantNotice() {
   );
 }
 
-function ZeroProjects() {
+// onNew is optional so Task 12 can render this before the create flow exists;
+// Task 19 passes `onNew={() => setCreating(true)}` from ProjectsShell (setCreating
+// lives in that scope — it must be passed IN as a prop, never referenced inside
+// this standalone component).
+function ZeroProjects({ onNew }: { onNew?: () => void }) {
   return (
     <div className="mx-auto max-w-lg rounded-lg border border-border bg-card p-4 text-sm">
       <div className="font-semibold">No projects yet</div>
@@ -2801,8 +2863,11 @@ function ZeroProjects() {
         A project binds a GitHub repo to a host: the orchestrator turns issues into epics, runs them in tmux
         sessions on the host, and opens PRs — summoning you only at decision points.
       </p>
-      {/* Task 19 replaces this hint with the New-project button + form. */}
-      <p className="mt-2 text-muted-foreground">Registration UI lands later in this branch (Task 19).</p>
+      {onNew ? (
+        <Button size="sm" className="mt-3" onClick={onNew}>New project</Button>
+      ) : (
+        <p className="mt-2 text-muted-foreground">Registration UI lands later in this branch (Task 19).</p>
+      )}
     </div>
   );
 }
@@ -2832,14 +2897,14 @@ const projectRoute = createRoute({
 
 and extend the tree: `authRoute.addChildren([indexRoute, terminalRoute, projectsRoute, projectRoute])`.
 
-**Route-id note:** `ProjectDetailRoute` uses `useParams({ from: "/auth/projects/$projectId" })` — the authRoute is a pathless layout with `id: "auth"`, so verify the generated route id (log `projectRoute.id` or check how `terminal.tsx` names its `from`). If it differs, use the actual id or `useParams({ strict: false })`.
+**Route-id note:** `ProjectDetailRoute` uses `useParams({ strict: false })` — the repo idiom (routes/terminal.tsx:23 does the same), avoiding any dependence on the pathless authRoute's generated id.
 
 - [ ] **Step 5: Add the header Projects button**
 
 In `web/src/routes/index.tsx`, inside the header's right-side cluster (before the "New session" button):
 
 ```tsx
-          <Button variant="outline" size="sm" className="relative" onClick={() => navigate({ to: "/projects" })}>
+          <Button variant="outline" size="sm" className="relative" onClick={() => navigate({ to: "/projects", search: { tab: "board", epic: "" } })}>
             Projects
             {needsTotal > 0 && (
               <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
@@ -3528,7 +3593,7 @@ export function EpicDrawer({ epic, project, onClose }: {
             </div>
           )}
 
-          {/* Task 16 mounts <PlanPanel epic={epic}/> here when planGate. */}
+          {/* Task 16 mounts <PlanPanel epic={epic} project={project}/> here when planGate. */}
           {planGate && null}
 
           {/* Task 17 mounts <TerminalPreview project={project} epic={epic} …/> here when running. */}
@@ -3604,6 +3669,7 @@ export function EpicDrawer({ epic, project, onClose }: {
               <span className="text-muted-foreground">Blocked by</span>
               <span>{(epic.blocked_by ?? []).length > 0 ? (epic.blocked_by ?? []).map((n) => `#${n}`).join(", ") : "—"}</span>
               <span className="text-muted-foreground">Session</span><span className="font-mono">{epic.session || "—"}</span>
+              <span className="text-muted-foreground">Host</span><span className="font-mono">{project.server_id}{project.target ? ` · ${project.target}` : ""}</span>
               <span className="text-muted-foreground">Autonomy</span><span>{mergeMode(epic.labels)}</span>
               <span className="text-muted-foreground">Queued</span><span>{epic.queued_at || "—"}</span>
               <span className="text-muted-foreground">Started</span><span>{epic.started_at || "—"}</span>
@@ -3716,12 +3782,16 @@ vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }))
 
 import { PlanPanel } from "@/components/board/PlanPanel";
 import { ApiError } from "@/lib/api-client";
-import type { EpicDTO } from "@/lib/contracts";
+import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const wrapper = ({ children }: { children: ReactNode }) => (
   <QueryClientProvider client={qc}>{children}</QueryClientProvider>
 );
+const project: ProjectDTO = {
+  id: "p1", name: "school", repo: "o/r", server_id: "h1", target: "", workdir: "/w",
+  base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: true,
+};
 const epic: EpicDTO = {
   id: "e1", project_id: "p1", issue: 7, title: "t", labels: [], blocked_by: [],
   stage: "escalated", attempt: 1, session: "", branch: "epic/7-x", pr: 0,
@@ -3734,16 +3804,17 @@ describe("PlanPanel", () => {
 
   it("renders the plan markdown with path/ref and an approve action", async () => {
     h.getEpicPlan.mockResolvedValue({ path: "docs/plans/epic-7.md", ref: "epic/7-x", markdown: "# The Plan\n\n- step one" });
-    render(<PlanPanel epic={epic} />, { wrapper });
+    render(<PlanPanel epic={epic} project={project} />, { wrapper });
     await waitFor(() => expect(screen.getByRole("heading", { name: "The Plan" })).toBeInTheDocument());
     expect(screen.getByText(/docs\/plans\/epic-7.md @ epic\/7-x/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve plan" })).toBeInTheDocument();
   });
 
-  it("shows the hub's 404 message verbatim", async () => {
+  it("shows the hub's 404 message verbatim with a GitHub fallback link", async () => {
     h.getEpicPlan.mockRejectedValue(new ApiError(404, "no plan doc found at docs/plans/epic-7.md on epic/7-x"));
-    render(<PlanPanel epic={epic} />, { wrapper });
+    render(<PlanPanel epic={epic} project={project} />, { wrapper });
     await waitFor(() => expect(screen.getByText(/no plan doc found/)).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: /View the branch on GitHub/ })).toHaveAttribute("href", "https://github.com/o/r/tree/epic/7-x");
   });
 });
 ```
@@ -3782,12 +3853,21 @@ import { useQuery } from "@tanstack/react-query";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { useEpicActions } from "@/hooks/useEpicActions";
 import { ApiError, epicPlanKey, getEpicPlan } from "@/lib/api-client";
-import type { EpicDTO } from "@/lib/contracts";
+import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 
 // Plan review "plan mode" (spec §8.2): render the plan committed on the epic
-// branch; approving resumes the runner. Reviewing a plan from a phone is the
-// whole point — real markdown, not a <pre>.
-export function PlanPanel({ epic }: { epic: EpicDTO }) {
+// branch. Reviewing a plan from a phone is the whole point — real markdown,
+// not a <pre>.
+//
+// APPROVAL MECHANISM (verified against the runner skill + Orchestrator):
+// a plan-gate epic is `escalated` with NO PR, so `Approve()` — which requires
+// PRNumber>0 and merges — returns "no PR to merge" (orchestrator.go:793-805).
+// The runner's epic-pipeline skill resumes past a plan gate on RETRY: a fresh
+// session's assess-artifacts step finds the committed plan and continues
+// (agent/internal/runnerfiles/files/claude/epic-pipeline.md:43,116-117;
+// Retry() transitions escalated→queued + kills the session, orchestrator.go:849).
+// So "Approve plan" fires the RETRY action, not approve.
+export function PlanPanel({ epic, project }: { epic: EpicDTO; project: ProjectDTO }) {
   const { act, busy } = useEpicActions(epic.project_id);
   const q = useQuery({
     queryKey: epicPlanKey(epic.project_id, epic.id),
@@ -3795,6 +3875,9 @@ export function PlanPanel({ epic }: { epic: EpicDTO }) {
     staleTime: 30_000,
     retry: false,
   });
+  // Fallback when the proxy can't return the doc (missing / >256 KiB): a link
+  // to the branch on GitHub so the human can still read the plan (spec §11).
+  const branchUrl = epic.branch ? `https://github.com/${project.repo}/tree/${epic.branch}` : `https://github.com/${project.repo}`;
 
   return (
     <section className="flex flex-col gap-2">
@@ -3803,7 +3886,10 @@ export function PlanPanel({ epic }: { epic: EpicDTO }) {
         <div className="text-xs text-muted-foreground">Loading plan…</div>
       ) : q.isError ? (
         <div className="rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
-          {q.error instanceof ApiError ? q.error.message : "Couldn't load the plan."}
+          <div>{q.error instanceof ApiError ? q.error.message : "Couldn't load the plan."}</div>
+          <a href={branchUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-primary underline">
+            View the branch on GitHub ↗
+          </a>
         </div>
       ) : q.data ? (
         <>
@@ -3813,7 +3899,7 @@ export function PlanPanel({ epic }: { epic: EpicDTO }) {
           </div>
           <ConfirmButton label="Approve plan" confirmLabel="Approve — runner resumes?" variant="default"
             className="self-start" disabled={busy !== null}
-            onConfirm={() => void act({ action: "approve", epic_id: epic.id }, `Plan approved — #${epic.issue} resumes`)} />
+            onConfirm={() => void act({ action: "retry", epic_id: epic.id }, `Plan approved — #${epic.issue} resumes`)} />
         </>
       ) : null}
     </section>
@@ -3824,7 +3910,7 @@ export function PlanPanel({ epic }: { epic: EpicDTO }) {
 In `web/src/components/board/EpicDrawer.tsx`, replace the plan-gate mount point (`{planGate && null}`) with:
 
 ```tsx
-          {planGate && <PlanPanel epic={epic} />}
+          {planGate && <PlanPanel epic={epic} project={project} />}
 ```
 
 plus `import { PlanPanel } from "@/components/board/PlanPanel";`.
@@ -3921,7 +4007,7 @@ Expected: FAIL — module not found.
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { TerminalView } from "@/components/TerminalView";
-import { listSessions, sessionsKey } from "@/lib/api-client";
+import { boardSessionsKey, listSessions } from "@/lib/api-client";
 import type { EpicDTO, ProjectDTO, Session } from "@/lib/contracts";
 import { themeOf } from "@/lib/terminal-themes";
 import { usePrefs } from "@/store/prefs";
@@ -3934,7 +4020,12 @@ export function TerminalPreview({ project, epic, onOpenFull }: {
   project: ProjectDTO; epic: EpicDTO; onOpenFull(): void;
 }) {
   const theme = usePrefs((s) => s.terminalTheme);
-  const q = useQuery({ queryKey: sessionsKey(project.server_id), queryFn: () => listSessions(project.server_id) });
+  // Query the project's TARGET, not just its server — the runner session lives
+  // under that socket (Finding: non-default target would show "session ended").
+  const q = useQuery({
+    queryKey: boardSessionsKey(project.server_id, project.target),
+    queryFn: () => listSessions(project.server_id, project.target || undefined),
+  });
   const session: Session | undefined = q.data?.find(
     (s) => s.name === epic.session && (project.target === "" || s.target === project.target),
   );
@@ -3982,7 +4073,12 @@ and add inside the component (with imports `useNavigate` from `@tanstack/react-r
   const navigate = useNavigate();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
-  const sessionsQ = useQuery({ queryKey: sessionsKey(project.server_id), queryFn: () => listSessions(project.server_id) });
+  // Pass the project's TARGET (Finding: a non-default-target project's runner
+  // lives under that socket, not the agent default). Key by target too so two
+  // projects on the same host under different targets don't collide in cache;
+  // an empty target reuses the home screen's sessionsKey (same default list).
+  const sessKey = boardSessionsKey(project.server_id, project.target);
+  const sessionsQ = useQuery({ queryKey: sessKey, queryFn: () => listSessions(project.server_id, project.target || undefined) });
 
   // Open the runner session exactly as today's UI would (spec §8.3): desktop
   // grid tile via the pane store + home, mobile the /t terminal route.
@@ -4019,7 +4115,13 @@ and add inside the component (with imports `useNavigate` from `@tanstack/react-r
 
 (Use `paneKey` from `@/store/panes` for the focus id instead of hand-joining if it's exported — it is: `paneKey(serverId, target, session, paneId)`.)
 
-Testing note: the drawer's existing tests mock `useMediaQuery` and don't exercise `openFullSession` (navigation) — covered by the toy-stack pass.
+**Test fix (REQUIRED — Task 17 adds `useNavigate` to the drawer):** `useNavigate()` runs during render, so the Task-15 `EpicDrawer.test.tsx` (which has only `QueryClientProvider`, no router) will now throw. Add a router mock to that test file — the repo precedent is `routes/terminal.test.tsx:21`:
+
+```tsx
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+```
+
+Put it beside the existing `vi.mock("@/lib/use-media-query", …)` in `EpicDrawer.test.tsx`. The tests don't exercise navigation; this only satisfies the hook at render. (openFullSession's real navigation is covered by the toy-stack pass.)
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -4061,10 +4163,10 @@ Create `web/src/components/board/open-session.test.ts`:
 ```ts
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ createSession: vi.fn(), setQueryData: vi.fn(), invalidateQueries: vi.fn() }));
+const h = vi.hoisted(() => ({ createSession: vi.fn(), listSessions: vi.fn(), setQueryData: vi.fn(), invalidateQueries: vi.fn() }));
 vi.mock("@/lib/api-client", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api-client")>();
-  return { ...mod, createSession: h.createSession };
+  return { ...mod, createSession: h.createSession, listSessions: h.listSessions };
 });
 vi.mock("@/lib/query-client", () => ({ queryClient: { setQueryData: h.setQueryData, invalidateQueries: h.invalidateQueries } }));
 
@@ -4074,7 +4176,7 @@ import { ApiError } from "@/lib/api-client";
 const session = { name: "plan-school", server: "h1", target: "default", cwd: "/w", command: "", windows: [{ id: "w1", index: "0", name: "", panes: [{ id: "pane1", command: "", cwd: "/w" }] }] };
 
 describe("openOrFocusSession", () => {
-  beforeEach(() => { h.createSession.mockReset(); h.setQueryData.mockReset(); h.invalidateQueries.mockReset(); });
+  beforeEach(() => { h.createSession.mockReset(); h.listSessions.mockReset(); h.setQueryData.mockReset(); h.invalidateQueries.mockReset(); });
 
   it("mobile: creates then navigates to /t", async () => {
     h.createSession.mockResolvedValue(session);
@@ -4084,12 +4186,21 @@ describe("openOrFocusSession", () => {
     expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ to: "/t/$serverId/$paneId" }));
   });
 
-  it("treats an existing-session 409 as success and opens it", async () => {
+  it("treats an existing-session 409 as success and opens the re-listed session", async () => {
     h.createSession.mockRejectedValue(new ApiError(409, "session already exists"));
+    h.listSessions.mockResolvedValue([session]); // the 409 re-list finds it
     const navigate = vi.fn();
-    // Should not throw; falls back to navigating to home so the user can find it.
     await openOrFocusSession({ serverId: "h1", serverName: "h1", target: "", name: "plan-school" }, true, navigate);
+    expect(h.listSessions).toHaveBeenCalledWith("h1", undefined);
     expect(navigate).toHaveBeenCalled();
+  });
+
+  it("a failed 409 re-list still navigates home rather than throwing", async () => {
+    h.createSession.mockRejectedValue(new ApiError(409, "session already exists"));
+    h.listSessions.mockRejectedValue(new Error("network"));
+    const navigate = vi.fn();
+    await openOrFocusSession({ serverId: "h1", serverName: "h1", target: "", name: "plan-school" }, true, navigate);
+    expect(navigate).toHaveBeenCalledWith({ to: "/" });
   });
 });
 ```
@@ -4102,7 +4213,12 @@ import type { Session } from "@/lib/contracts";
 import { queryClient } from "@/lib/query-client";
 import { paneKey, usePanes } from "@/store/panes";
 
-type Navigate = (opts: unknown) => unknown;
+// `any` in PARAM position (not the return) is deliberate: under strict
+// function types, TanStack's real navigate — `(opts: SpecificShape) => …` —
+// is NOT assignable to `(opts: unknown) => …` (a fn taking a narrow arg
+// can't stand in for one called with `unknown`). `any` disables that check so
+// ProjectHeader/DoctorVerify can pass `useNavigate()`'s result verbatim.
+type Navigate = (opts: any) => unknown;
 
 interface OpenOpts {
   serverId: string; serverName: string; target: string; name: string; cwd?: string; command?: string;
@@ -4124,9 +4240,15 @@ export async function openOrFocusSession(opts: OpenOpts, isDesktop: boolean, nav
     ]);
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 409) throw err;
-    // Already exists — find it in a fresh list.
-    const list = await listSessions(opts.serverId, opts.target || undefined);
-    session = list.find((s) => s.name === opts.name);
+    // Already exists — find it in a fresh list. A failed re-list must NOT
+    // throw out of this helper: fall through to the home navigation below so
+    // the button click always resolves.
+    try {
+      const list = await listSessions(opts.serverId, opts.target || undefined);
+      session = list.find((s) => s.name === opts.name);
+    } catch {
+      /* re-list failed — session stays undefined → navigate home */
+    }
   }
   void queryClient.invalidateQueries({ queryKey: sessionsKey(opts.serverId) });
   const pane = session?.windows[0]?.panes[0];
@@ -4185,6 +4307,12 @@ describe("ProjectHeader", () => {
     expect(screen.getByText(/1\/2 slots/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "increase max parallel" }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_max_parallel", value: 3 });
+  });
+
+  it("toggles require-CI via set_require_ci", () => {
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /CI gate/ }));
+    expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_require_ci", on: false });
   });
 
   it("pause confirms, and Plan epics spawns an interactive session", async () => {
@@ -4277,6 +4405,14 @@ export function ProjectHeader({ project, epics, onEdit }: {
         )}>
         Plan epics…
       </Button>
+      {/* require-CI is action-backed (set_require_ci), not a PATCH field —
+          spec §9 wants pause/max-parallel/require-CI presented together. */}
+      <Button variant="outline" size="sm" disabled={busy !== null}
+        title="Require CI green before the merge gate lets an epic through"
+        onClick={() => void act({ action: "set_require_ci", on: !project.require_ci },
+          project.require_ci ? "CI gate off" : "CI gate on")}>
+        CI gate: {project.require_ci ? "on" : "off"}
+      </Button>
       <Button variant="outline" size="sm" onClick={onEdit}>Edit…</Button>
       {project.paused ? (
         <Button variant="outline" size="sm" disabled={busy !== null}
@@ -4367,9 +4503,14 @@ vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }))
 import { ProjectForm } from "@/components/board/ProjectForm";
 import type { ServerSummary } from "@/lib/contracts";
 
+// listServers (Registry.List) returns ACTIVE registrations only, always
+// enabled:true, with NO connectivity/health field — so the picker cannot
+// distinguish "offline" and must not pretend to (Finding 10). Real
+// connectivity is proven by the doctor-verify step, which fails loudly on a
+// dead host.
 const servers: ServerSummary[] = [
   { id: "h1", name: "aigallery", labels: [], enabled: true },
-  { id: "h2", name: "offline-box", labels: [], enabled: false },
+  { id: "h2", name: "carepath-dev", labels: [], enabled: true },
 ];
 
 describe("ProjectForm create", () => {
@@ -4402,10 +4543,12 @@ describe("ProjectForm create", () => {
     );
   });
 
-  it("disables offline servers in the picker", () => {
+  it("lists every registered server as selectable", () => {
     render(<ProjectForm mode="create" servers={servers} onDone={() => {}} />);
-    const opt = screen.getByRole("option", { name: /offline-box/ }) as HTMLOptionElement;
-    expect(opt.disabled).toBe(true);
+    for (const name of ["aigallery", "carepath-dev"]) {
+      const opt = screen.getByRole("option", { name: new RegExp(name) }) as HTMLOptionElement;
+      expect(opt.disabled).toBe(false);
+    }
   });
 });
 ```
@@ -4441,7 +4584,7 @@ export function ProjectForm(props: Mode) {
   const init = editing ? props.project : undefined;
   const [name, setName] = React.useState(init?.name ?? "");
   const [repo, setRepo] = React.useState(init?.repo ?? "");
-  const [serverId, setServerId] = React.useState(init?.server_id ?? (props.mode === "create" ? props.servers.find((s) => s.enabled)?.id ?? "" : ""));
+  const [serverId, setServerId] = React.useState(init?.server_id ?? (props.mode === "create" ? props.servers[0]?.id ?? "" : ""));
   const [target, setTarget] = React.useState(init?.target ?? "");
   const [workdir, setWorkdir] = React.useState(init?.workdir ?? "");
   const [baseBranch, setBaseBranch] = React.useState(init?.base_branch ?? "main");
@@ -4511,10 +4654,11 @@ export function ProjectForm(props: Mode) {
         {props.mode === "create"
           ? field("pf-server", "Host",
               <select id="pf-server" aria-label="Host" value={serverId} onChange={(e) => setServerId(e.target.value)} className={selectCls}>
+                {/* listServers returns active registrations only (all
+                    enabled:true, no health field) — every one is selectable;
+                    doctor-verify catches a host that's actually down. */}
                 {props.servers.map((s) => (
-                  <option key={s.id} value={s.id} disabled={!s.enabled}>
-                    {s.name}{s.enabled ? "" : " — agent must be connected"}
-                  </option>
+                  <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>)
           : field("pf-server", "Host (immutable)", <Input id="pf-server" value={init?.server_id ?? ""} disabled />)}
@@ -4607,7 +4751,7 @@ In `web/src/routes/projects.tsx`: add `const [creating, setCreating] = React.use
         )}
 ```
 
-Replace the `ZeroProjects` CTA hint with a working button (`onClick={() => setCreating(true)}`), and render the form as a modal-ish panel when `creating`:
+Pass the create callback INTO `ZeroProjects` via its `onNew` prop — change the Task-12 render site `<ZeroProjects />` to `<ZeroProjects onNew={() => setCreating(true)} />` (do NOT reference `setCreating` inside `ZeroProjects`; it lives in `ProjectsShell`). Then render the form as a modal-ish panel when `creating`:
 
 ```tsx
         {creating && (
@@ -4941,13 +5085,15 @@ export function registerSwNavigation(): void {
   navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
     const d = event.data as { kind?: string; url?: string } | undefined;
     if (!d || d.kind !== "navigate" || typeof d.url !== "string") return;
+    // Use the low-level history API, NOT the typed router.navigate: the URL is
+    // a runtime string (path + search), and router.navigate's `to`/`search`
+    // are strictly typed to the route registry — a plain string won't satisfy
+    // the "board"|"timeline" tab union. history.push takes a raw path and lets
+    // the router match + parse search itself. Keep it same-origin only.
     try {
       const u = new URL(d.url, location.origin);
-      const params = new URLSearchParams(u.search);
-      void router.navigate({
-        to: u.pathname,
-        search: Object.fromEntries(params.entries()),
-      });
+      if (u.origin !== location.origin) return;
+      router.history.push(u.pathname + u.search);
     } catch {
       /* malformed URL from a push — ignore */
     }
@@ -5079,3 +5225,25 @@ Ran the plan against the spec with fresh eyes:
 - Board query keys all share the `["board", …]` prefix so a single `invalidateQueries({queryKey:["board"]})` refreshes All + per-project boards + is what the stream fires.
 - Task 21 gate adds `npm run build` because the service worker is only bundled at build time; typecheck won't catch an sw.ts regression.
 - Column count is FIVE with the Done column absorbing merged+failed+canceled (the board query returns terminal epics), reconciled against the mockup's five columns.
+
+## Cross-model plan review (Codex, 2026-07-11) — 13 findings, all confirmed & fixed
+
+Ran `codex exec` (gpt-5.6-sol, read-only) over this whole plan against the repo before any implementation. It returned 13 findings + 5 explicit "confirmed good" notes and correctly validated the `useParams({strict:false})` fix. I adversarially validated every finding against the actual code — **all 13 were real (zero false positives this round)** — and amended the plan/spec:
+
+1. **[hard] Task 16 plan-approval** — `Approve()` requires `PRNumber>0` ("no PR to merge"); a plan-gate epic has no PR. The runner skill resumes a plan gate on **Retry** (epic-pipeline.md:43,116-117). Fixed: PlanPanel's "Approve plan" now fires `{action:"retry"}`.
+2. **[hard] Task 17 target** — `listSessions(server_id)` omitted `project.target`; a non-default-target project's runner would show "session ended". Fixed: pass target + new `boardSessionsKey(serverId, target)` to avoid cache collision (TerminalPreview + drawer).
+3. **[hard] Task 17 test** — adding `useNavigate` to the drawer breaks the router-less Task-15 test. Fixed: mock `@tanstack/react-router` in `EpicDrawer.test.tsx` (repo precedent terminal.test.tsx:21).
+4. **[hard] Task 18 test** — the 409 test didn't mock the re-list `listSessions`. Fixed: mock it + guard the re-list in the impl (a failed re-list navigates home, never throws) + an extra test.
+5. **[hard] Task 18 TS** — `type Navigate = (opts: unknown) => unknown` rejects the real `useNavigate` under strictFunctionTypes. Fixed: `(opts: any) => unknown`.
+6. **[hard] Task 12 TS** — home→`/projects` navigate omitted required `search`. Fixed: pass `{tab:"board", epic:""}`.
+7. **[hard] Task 19 scope** — `ZeroProjects` referenced `setCreating` from another scope. Fixed: `onNew` prop threaded from ProjectsShell.
+8. **[hard] Task 21 TS** — typed `router.navigate({to:string,search})` won't satisfy the route schema. Fixed: `router.history.push(path)` (same-origin guarded).
+9. **[hard] Task 4 import** — `net/url` already imported at client.go:13; adding it duplicates. Fixed: add only `encoding/base64`.
+10. **[soft] Task 19 offline servers** — `Registry.List` returns active servers only, always `enabled:true`, no health. Fixed: list all as selectable (doctor-verify is the real check); spec §9 + test corrected.
+11. **[soft] edit require-CI** — `set_require_ci` had no UI. Fixed: CI-gate toggle added to ProjectHeader.
+12. **[soft] detail states** — added Host/Target to the drawer Details; a GitHub-branch fallback link to PlanPanel's error state.
+13. **[soft] dormant stream + visibility** — the app-wide board SSE 503-loops on a dormant hub. Fixed: events handler serves an idle empty stream when `BoardBcast==nil`; `useBoardStream` adds a `visibilitychange`→invalidate.
+
+Confirmed-good by Codex (no change needed): all Task 1-6 Go signatures/fields (`db.Project/Epic`, `execFound`, `TransitionEpic/SetEpicPR/UpsertEpicIssue/GetEpic`, `Deps`), auth/CSRF/router/audit wiring, the GitHub JSON contents shape + base64/newline/QueryEscape handling, all questioned TS exports (`TerminalView`, `openPane/paneKey`, `request<T>` CSRF, `prefs` partialize, `themeOf/audioCue/useMediaQuery/toast`), the session-create `command` path (M10 rejection lifted), and `parseVerdict`'s capitalized-key reading.
+
+**Verdict: the plan-review step earned its place again** — 13 real defects (7 hard compile/runtime/test blockers) caught before a single line of implementation. Plan is now execution-ready.

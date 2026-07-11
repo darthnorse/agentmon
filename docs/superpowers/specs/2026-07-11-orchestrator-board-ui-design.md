@@ -240,8 +240,12 @@ Sections render only when relevant:
 1. **Needs attention** (escalated/stalled): `needs` text + parsed verdict block —
    unresolved items list, findings/tests counts, `uncertain` flag.
 2. **Plan review** (plan-gate): fetches §5.2, renders markdown (react-markdown +
-   GFM, HTML escaped, code blocks scroll). Below: **Approve plan** (confirm →
-   `approve` action; runner resumes) + guidance box.
+   GFM, HTML escaped, code blocks scroll). Below: **Approve plan** + guidance
+   box. NOTE (verified against the runner skill + `Orchestrator`): a plan-gate
+   epic is `escalated` with NO PR, so the merge-oriented `Approve` action returns
+   "no PR to merge". The runner resumes past a plan gate on **Retry** (a fresh
+   session's assess-artifacts step finds the committed plan and continues), so
+   "Approve plan" fires the `retry` action, not `approve`.
 3. **Live session** (running epics): existing `TerminalView` as a preview with an
    input-blocking overlay — watch live; **Open full session** opens the pane as
    today (desktop grid tile via pane store / mobile `/t/…` route), resolved by
@@ -267,8 +271,11 @@ not-found state.
 halves:
 
 - **Form**: name · repo (`owner/name`, validated as the hub validates) · server
-  picker from registered agents (online/offline dots; offline disabled — create
-  requires an active server) · target (defaults to the agent's default) · workdir
+  picker from registered agents (NOTE: `listServers`/`Registry.List` returns
+  active registrations only, always `enabled:true`, with no connectivity/health
+  field — the picker lists every registered host as selectable and does NOT fake
+  an offline state; the doctor-verify step is the real connectivity check and
+  fails loudly on a dead host) · target (defaults to the agent's default) · workdir
   (absolute path hint) · base branch (default `main`) · provider (claude/codex
   with tags) · require-CI toggle · required reviews (pre-filled `cross-model`,
   the sub-2 convention) · max parallel (default 1, hub ceiling 32).
