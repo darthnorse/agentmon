@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"agentmon/hubd/internal/config"
@@ -19,17 +20,22 @@ type fakeGH struct {
 	prs      map[int]github.PullRequest
 	checks   map[string][]github.CheckRun
 	merged   []int
-	labels   [][2]string // [issue-or-pr, label]
+	labels   [][2]string // [issue number, label]
 	comments []string
 }
 
 func (f *fakeGH) GetIssue(_ context.Context, _ string, n int) (github.Issue, error) {
 	return f.issues[n], nil
 }
-func (f *fakeGH) ListIssuesSince(_ context.Context, _, _ string) ([]github.Issue, error) {
+func (f *fakeGH) ListIssuesLabeledSince(_ context.Context, _, label, _ string) ([]github.Issue, error) {
 	var out []github.Issue
 	for _, is := range f.issues {
-		out = append(out, is)
+		for _, l := range is.Labels {
+			if l == label {
+				out = append(out, is)
+				break
+			}
+		}
 	}
 	return out, nil
 }
@@ -52,11 +58,10 @@ func (f *fakeGH) CreateIssueComment(_ context.Context, _ string, _ int, body str
 }
 func (f *fakeGH) AddLabels(_ context.Context, _ string, n int, ls []string) error {
 	for _, l := range ls {
-		f.labels = append(f.labels, [2]string{SessionNameFor(n), l})
+		f.labels = append(f.labels, [2]string{strconv.Itoa(n), l})
 	}
 	return nil
 }
-func (f *fakeGH) RemoveLabel(_ context.Context, _ string, _ int, _ string) error { return nil }
 
 type fakeAgents struct {
 	created  []shared.CreateSessionRequest
@@ -83,11 +88,22 @@ func (fakeReg) Get(_ context.Context, id string) (db.Server, bool, error) {
 	return db.Server{ID: id, URL: "http://a", Bearer: "b", Status: "active"}, true, nil
 }
 
+// fakeLive mimics the projection's real behavior: views carry the AGENT-
+// resolved target label ("default"), never the project's raw Target config.
 type fakeLive struct{ alive map[string]bool }
 
-func (f fakeLive) Session(_, _, name string) (state.SessionView, bool) {
-	return state.SessionView{Session: name}, f.alive[name]
+func (f fakeLive) Server(_ string) []state.SessionView {
+	var out []state.SessionView
+	for name, ok := range f.alive {
+		if ok {
+			out = append(out, state.SessionView{Target: "default", Session: name})
+		}
+	}
+	return out
 }
+
+// sessionName is the expected spawned name for the default test project.
+func sessionName(issue int) string { return SessionNameFor("proj", issue, 1) }
 
 func newTestOrch(t *testing.T, gh *fakeGH, ag *fakeAgents, live fakeLive) (*Orchestrator, *db.DB) {
 	t.Helper()
@@ -127,7 +143,7 @@ func TestTickSyncsAndSpawns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Stage != "starting" || e.SessionName != "epic-16" || e.Attempt != 1 {
+	if e.Stage != "starting" || e.SessionName != sessionName(16) || e.Attempt != 1 {
 		t.Fatalf("epic = %+v", e)
 	}
 	if len(ag.created) != 1 || ag.created[0].Command != `IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"` || ag.created[0].Cwd != "/w" {
@@ -148,12 +164,12 @@ func TestReportsAdvanceAndGateMerges(t *testing.T) {
 		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
 	}
 	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{"epic-16": true}})
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
 	ctx := context.Background()
 	o.Tick(ctx) // sync + spawn → starting
 	ag.reports = []shared.OrchestratorReport{
-		{Repo: "o/r", Epic: 16, Stage: shared.EpicImplementing, Session: "epic-16", Ts: "t"},
-		{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: "epic-16", Ts: "t"},
+		{Repo: "o/r", Epic: 16, Stage: shared.EpicImplementing, Session: sessionName(16), Ts: "t"},
+		{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"},
 	}
 	o.Tick(ctx) // drain → pr_open, then gate → merged
 	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
@@ -162,6 +178,10 @@ func TestReportsAdvanceAndGateMerges(t *testing.T) {
 	}
 	if len(gh.merged) != 1 || gh.merged[0] != 61 {
 		t.Fatalf("merged = %v", gh.merged)
+	}
+	// merged write-back label lands on the ISSUE number
+	if len(gh.labels) != 1 || gh.labels[0] != [2]string{"16", "agentmon:merged"} {
+		t.Fatalf("labels = %v", gh.labels)
 	}
 }
 
@@ -175,10 +195,10 @@ func TestGateEscalatesOnUnresolvedAndApproveRecovers(t *testing.T) {
 		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
 	}
 	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{"epic-16": true}})
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
 	ctx := context.Background()
 	o.Tick(ctx)
-	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: "epic-16", Ts: "t"}}
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
 	o.Tick(ctx)
 	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
 	if e.Stage != "escalated" || e.Needs == "" {
@@ -199,11 +219,136 @@ func TestStallOnDeadSession(t *testing.T) {
 	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}}) // session never alive
 	ctx := context.Background()
 	o.Tick(ctx) // spawn → starting
-	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicImplementing, Session: "epic-16", Ts: "t"}}
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicImplementing, Session: sessionName(16), Ts: "t"}}
 	o.Tick(ctx)
 	o.Tick(ctx) // grace tick passed; session still gone → stalled
 	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
 	if e.Stage != "stalled" {
 		t.Fatalf("epic = %+v", e)
+	}
+}
+
+func TestAttemptsExhaustedReachesFailed(t *testing.T) {
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	ctx := context.Background()
+	o.Tick(ctx) // attempt 1 spawns
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	// simulate two stall+retry cycles exhausting MaxAttempts=2
+	for i := 0; i < 2; i++ {
+		e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+		if e.Stage == "starting" {
+			o.Tick(ctx)
+			o.Tick(ctx) // dead session → stalled
+		}
+		e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+		if e.Stage != "stalled" {
+			t.Fatalf("cycle %d: expected stalled, got %+v", i, e)
+		}
+		if err := o.Retry(ctx, e.ID, "user:admin"); err != nil {
+			t.Fatal(err)
+		}
+		o.Tick(ctx) // respawn or terminalize
+	}
+	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "failed" {
+		t.Fatalf("attempts exhausted must reach failed (not wedge in queued), got %+v", e)
+	}
+}
+
+func TestHumanMergeOfEscalatedEpicObservedAtRuntime(t *testing.T) {
+	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
+		"findings: {found: 3, resolved: 1, unresolved: 2}\ntests: {passed: 5, failed: 0}\n" +
+		"uncertain: false\n```"
+	gh := &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s"}},
+		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
+	}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ctx := context.Background()
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx) // gate escalates on unresolved findings
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "escalated" {
+		t.Fatalf("epic = %+v", e)
+	}
+	// human merges the PR directly in GitHub — NO Approve click
+	pr := gh.prs[61]
+	pr.Merged = true
+	gh.prs[61] = pr
+	o.Tick(ctx) // runtime observation must close the epic (not just boot reconcile)
+	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("human-merged escalated epic must reach merged at runtime, got %+v", e)
+	}
+}
+
+func TestPROpenReportWithoutPRRejected(t *testing.T) {
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ctx := context.Background()
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 0, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx)
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage == "pr_open" {
+		t.Fatalf("pr_open without a PR number must be rejected (would wedge), got %+v", e)
+	}
+}
+
+func TestEmptySessionReportRejectedOnceAssigned(t *testing.T) {
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ctx := context.Background()
+	o.Tick(ctx) // spawn assigns the session name
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicImplementing, Session: "", Ts: "t"}}
+	o.Tick(ctx)
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "starting" {
+		t.Fatalf("empty-session report must not bypass provenance, got %+v", e)
+	}
+}
+
+func TestReportsRoutedByRepoAcrossProjects(t *testing.T) {
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true, "epic-other-16": true}})
+	ctx := context.Background()
+	// second project on the SAME host with the SAME issue number
+	if err := d.CreateProject(ctx, db.Project{ID: "p2", Name: "other", Repo: "o/other",
+		ServerID: "h1", Workdir: "/w2", BaseBranch: "main", Provider: "claude", MaxParallel: 1}); err != nil {
+		t.Fatal(err)
+	}
+	e2, err := d.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p2", IssueNumber: 16, Title: "other-epic",
+		Labels: []string{"agentmon:epic"}, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := d.TransitionEpic(ctx, e2.ID, "queued", "starting", "hub", "", "t1"); !ok {
+		t.Fatal("seed transition")
+	}
+	if ok, _ := d.SetEpicAssignment(ctx, e2.ID, "epic-other-16", 1); !ok {
+		t.Fatal("seed assignment")
+	}
+	o.Tick(ctx) // spawns p1's epic 16
+	// a report for p2's epic arrives in the buffer p1 drains first
+	ag.reports = []shared.OrchestratorReport{
+		{Repo: "o/other", Epic: 16, Stage: shared.EpicImplementing, Session: "epic-other-16", Ts: "t"},
+	}
+	o.Tick(ctx)
+	got, _ := d.GetEpicByIssue(ctx, "p2", 16)
+	if got.Stage != "implementing" {
+		t.Fatalf("cross-project report must route by repo, got %+v", got)
+	}
+	p1e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if p1e.Stage == "implementing" {
+		t.Fatalf("report must NOT apply to the draining project's epic: %+v", p1e)
 	}
 }

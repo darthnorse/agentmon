@@ -48,3 +48,12 @@ func TestEpicFromIssue(t *testing.T) {
 		t.Fatalf("got %+v", e)
 	}
 }
+
+func TestParseBlockedByIgnoresUnblocked(t *testing.T) {
+	if got := ParseBlockedBy("this is now unblocked by #5"); got != nil {
+		t.Fatalf("'unblocked by' must not register a dependency, got %v", got)
+	}
+	if got := ParseBlockedBy("Blocked by #5"); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("real blocked-by must still parse, got %v", got)
+	}
+}

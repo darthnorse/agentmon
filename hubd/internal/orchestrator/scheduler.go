@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"agentmon/hubd/internal/db"
 	"agentmon/shared"
@@ -71,7 +72,34 @@ func KickoffCommand(provider string, issue int) string {
 	return fmt.Sprintf(`IS_SANDBOX=1 claude --dangerously-skip-permissions %q`, prompt)
 }
 
-func SessionNameFor(issue int) string { return fmt.Sprintf("epic-%d", issue) }
+// SessionNameFor is the tmux session name for one epic attempt. The project
+// slug keeps names unique across projects sharing a host (tmux names are
+// host-global); the attempt suffix keeps a retry from colliding with a
+// still-alive previous session (tmux rejects duplicate names with 409).
+func SessionNameFor(project string, issue, attempt int) string {
+	name := fmt.Sprintf("epic-%s-%d", projectSlug(project), issue)
+	if attempt > 1 {
+		name += fmt.Sprintf("-r%d", attempt)
+	}
+	return name
+}
+
+// projectSlug reduces a project name to a short tmux-safe token.
+func projectSlug(name string) string {
+	var b []byte
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b = append(b, byte(r))
+		}
+		if len(b) == 12 {
+			break
+		}
+	}
+	if len(b) == 0 {
+		return "proj"
+	}
+	return string(b)
+}
 
 // ProviderFor resolves the runner: per-epic agent:* label beats project default.
 func ProviderFor(projectDefault string, labels []string) string {

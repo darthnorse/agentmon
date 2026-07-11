@@ -7,7 +7,7 @@ import (
 )
 
 func qe(issue int, stage, issueState string, deps ...int) db.Epic {
-	return db.Epic{ID: SessionNameFor(issue), IssueNumber: issue, Stage: stage,
+	return db.Epic{ID: SessionNameFor("proj", issue, 1), IssueNumber: issue, Stage: stage,
 		IssueState: issueState, BlockedBy: deps}
 }
 
@@ -49,8 +49,14 @@ func TestKickoffAndProvider(t *testing.T) {
 	if got := KickoffCommand("codex", 16); got != `codex -a never "/epic-pipeline 16"` {
 		t.Fatalf("codex kickoff = %q", got)
 	}
-	if SessionNameFor(16) != "epic-16" {
-		t.Fatal("session name")
+	if SessionNameFor("School-Platform", 16, 1) != "epic-schoolplatfo-16" {
+		t.Fatalf("session name = %q", SessionNameFor("School-Platform", 16, 1))
+	}
+	if SessionNameFor("proj", 16, 3) != "epic-proj-16-r3" {
+		t.Fatal("retry attempts must produce distinct session names")
+	}
+	if SessionNameFor("--", 16, 1) != "epic-proj-16" {
+		t.Fatal("empty slug must fall back")
 	}
 	if ProviderFor("claude", []string{"agent:codex"}) != "codex" {
 		t.Fatal("label override to codex")

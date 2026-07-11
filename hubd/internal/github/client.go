@@ -51,6 +51,7 @@ type Issue struct {
 	State     string
 	Labels    []string
 	UpdatedAt string
+	IsPR      bool // the issues API returns PRs too; callers must be able to tell
 }
 
 type PullRequest struct {
@@ -150,7 +151,8 @@ type wireIssue struct {
 }
 
 func (w wireIssue) issue() Issue {
-	is := Issue{Number: w.Number, Title: w.Title, Body: w.Body, State: w.State, UpdatedAt: w.UpdatedAt}
+	is := Issue{Number: w.Number, Title: w.Title, Body: w.Body, State: w.State,
+		UpdatedAt: w.UpdatedAt, IsPR: w.PullRequest != nil}
 	for _, l := range w.Labels {
 		is.Labels = append(is.Labels, l.Name)
 	}
@@ -173,6 +175,13 @@ func (c *Client) GetIssue(ctx context.Context, repo string, num int) (Issue, err
 // on boot (empty since = full listing, newest-created first), which would
 // permanently skip older epics once the sync watermark advances.
 func (c *Client) ListIssuesSince(ctx context.Context, repo, since string) ([]Issue, error) {
+	return c.ListIssuesLabeledSince(ctx, repo, "", since)
+}
+
+// ListIssuesLabeledSince scopes the listing to one label — the sync loop only
+// mirrors labeled issues, and label scoping keeps boot syncs on mature repos
+// to a page or two instead of the full state=all history.
+func (c *Client) ListIssuesLabeledSince(ctx context.Context, repo, label, since string) ([]Issue, error) {
 	if err := validRepo(repo); err != nil {
 		return nil, err
 	}
@@ -182,6 +191,9 @@ func (c *Client) ListIssuesSince(ctx context.Context, repo, since string) ([]Iss
 		q := url.Values{"state": {"all"}, "per_page": {strconv.Itoa(perPage)}, "page": {strconv.Itoa(page)}}
 		if since != "" {
 			q.Set("since", since)
+		}
+		if label != "" {
+			q.Set("labels", label)
 		}
 		var ws []wireIssue
 		_, err := c.do(ctx, "GET", fmt.Sprintf("/repos/%s/issues?%s", repo, q.Encode()), nil, &ws, 200)

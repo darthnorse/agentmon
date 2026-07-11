@@ -12,7 +12,8 @@ import (
 // blockedByRe matches the body convention: "Blocked by #13" / "Blocked-by: #12, #14".
 // (GitHub's native issue-relationships API can replace this later; the body
 // convention is the v1 contract the import script writes.)
-var blockedByRe = regexp.MustCompile(`(?i)blocked[ -]by:?\s*((?:#\d+[,\s]*)+)`)
+// \b anchor: without it "unblocked by #5" registers a phantom dependency.
+var blockedByRe = regexp.MustCompile(`(?i)\bblocked[ -]by:?\s*((?:#\d+[,\s]*)+)`)
 var issueRefRe = regexp.MustCompile(`#(\d+)`)
 
 func ParseBlockedBy(body string) []int {

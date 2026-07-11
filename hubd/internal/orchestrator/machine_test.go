@@ -61,3 +61,9 @@ func TestValidTransitionRejectsUnknownStages(t *testing.T) {
 		}
 	}
 }
+
+func TestValidTransitionQueuedToFailed(t *testing.T) {
+	if !ValidTransition(shared.EpicQueued, shared.EpicFailed) {
+		t.Fatal("queued→failed must be valid (attempts-exhausted terminalization)")
+	}
+}

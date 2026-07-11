@@ -54,10 +54,13 @@ const epicCols = `id, project_id, issue_number, title, labels, blocked_by, stage
 var (
 	terminalStagesSQL = fmt.Sprintf("('%s','%s','%s')",
 		shared.EpicMerged, shared.EpicFailed, shared.EpicCanceled)
+	// needs is set from the transition note when ENTERING escalated/stalled
+	// and cleared otherwise — atomically under the same stage guard, so a
+	// lost transition race can never strand a stale needs text.
 	transitionSQL = fmt.Sprintf(`UPDATE epics SET stage=?, stage_updated_at=?,
 	   started_at = CASE WHEN ?='%s' AND started_at='' THEN ? ELSE started_at END,
 	   merged_at  = CASE WHEN ?='%s' THEN ? ELSE merged_at END,
-	   needs      = CASE WHEN ? IN ('%s','%s') THEN needs ELSE '' END,
+	   needs      = CASE WHEN ? IN ('%s','%s') THEN ? ELSE '' END,
 	   updated_at = datetime('now')
 	 WHERE id = ? AND stage = ?`,
 		shared.EpicStarting, shared.EpicMerged, shared.EpicEscalated, shared.EpicStalled)
@@ -135,10 +138,11 @@ func (d *DB) listEpics(ctx context.Context, q string, args ...any) ([]Epic, erro
 // TransitionEpic performs the guarded stage move. The returned bool ALONE
 // reports whether the stage moved; a failed epic_events append is logged and
 // swallowed (two statements, no tx — the DB is single-writer and the design
-// treats events as narrative, stage as authoritative).
+// treats events as narrative, stage as authoritative). The note doubles as
+// the needs-attention text when entering escalated/stalled.
 func (d *DB) TransitionEpic(ctx context.Context, id, from, to, source, note, now string) (bool, error) {
 	res, err := d.sql.ExecContext(ctx, transitionSQL,
-		to, now, to, now, to, now, to, id, from)
+		to, now, to, now, to, now, to, note, id, from)
 	if err != nil {
 		return false, err
 	}

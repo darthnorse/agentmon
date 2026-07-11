@@ -25,7 +25,8 @@ func ValidTransition(from, to shared.EpicStage) bool {
 	case shared.EpicMerged, shared.EpicFailed, shared.EpicCanceled:
 		return false // terminal
 	case shared.EpicQueued:
-		return to == shared.EpicStarting || to == shared.EpicCanceled
+		// → failed: attempts-exhausted terminalization by the scheduler.
+		return to == shared.EpicStarting || to == shared.EpicCanceled || to == shared.EpicFailed
 	case shared.EpicEscalated:
 		switch to {
 		// → merged: a human merging the PR in GitHub is a spec-promised

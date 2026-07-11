@@ -76,18 +76,18 @@ func (c *Client) DrainReports(ctx context.Context, srv db.Server, target string)
 	req.Header.Set("Authorization", "Bearer "+srv.Bearer)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dial agent %s: %w", srv.ID, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("agent reports: %d", resp.StatusCode)
+		return nil, fmt.Errorf("agent %s reports returned %d", srv.ID, resp.StatusCode)
 	}
 	var out []shared.OrchestratorReport
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("agent %s reports decode: %w", srv.ID, err)
 	}
 	return out, nil
 }
