@@ -63,6 +63,11 @@ func main() {
 				log.Fatal(err)
 			}
 			return
+		case "install-skills":
+			if err := installSkillsMain(os.Args[2:], os.Stdout); err != nil {
+				log.Fatal(err)
+			}
+			return
 		}
 	}
 

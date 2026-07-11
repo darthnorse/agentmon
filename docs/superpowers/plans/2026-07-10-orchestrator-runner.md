@@ -2857,7 +2857,7 @@ Report: tasks 13–16 committed, full gate green. WAIT for explicit fix instruct
 - Consumes: the three authored skill files; stdlib `embed`.
 - Produces: `runnerfiles.InstallSkills(home) ([]string, error)`, `installSkillsMain` — Task 18's installer target.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `agent/internal/runnerfiles/runnerfiles_test.go`:
 
@@ -2906,12 +2906,12 @@ func TestInstallSkillsRequiresHome(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/agent && go test ./internal/runnerfiles/`
 Expected: FAIL to build — package `runnerfiles.go` does not exist (only `files/` do).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/internal/runnerfiles/runnerfiles.go`:
 
@@ -3019,11 +3019,11 @@ In `main.go`, add the switch case:
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/runnerfiles/ ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): embed runner skills in the binary + agentmon install-skills"
