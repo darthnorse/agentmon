@@ -1102,7 +1102,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): execute Creat
 - Consumes: `registry.Client.CreateSession` (already marshals the whole `CreateSessionRequest`, `Command` included — no client change).
 - Produces: hub-side New-Session-with-command capability (board uses it in sub-3; the orchestrator's own spawn path never passes through this handler).
 
-- [ ] **Step 1: Replace the rejection test**
+- [x] **Step 1: Replace the rejection test**
 
 In `hubd/internal/api/sessions_test.go`: DELETE `TestServerCreateSessionCommandRejectedIs400` (lines 244–254) and add (it uses the existing `depsWith`, `createReq`, `createListBody` helpers in this file):
 
@@ -1138,23 +1138,23 @@ func TestServerCreateSessionForwardsCommand(t *testing.T) {
 
 (Add `io` to imports if missing.)
 
-- [ ] **Step 2: Run tests to verify the new one fails**
+- [x] **Step 2: Run tests to verify the new one fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestServerCreateSessionForwardsCommand`
 Expected: FAIL — hub returns 400 "custom commands are not supported".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/api/sessions.go`:
 
 1. DELETE lines 100–105 (the "Reject custom commands early" comment + block).
 2. In the handler doc comment (lines 74–80), replace "the agent enforces the cwd allow-list + rejects custom commands (mapped here from its 400)" with "the agent enforces the cwd allow-list and executes an optional command (design doc D13: no new authz permission — session-create + send-keys already grant arbitrary exec on the target)".
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): forward CreateSessionRequest.Command to the agent — New-Session-with-command"

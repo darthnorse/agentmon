@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -241,14 +242,31 @@ func TestServerCreateSessionMalformedBodyIs400(t *testing.T) {
 	}
 }
 
-// TestServerCreateSessionCommandRejectedIs400: a non-empty command is rejected at
-// the hub (shell-only v1) WITHOUT contacting the agent (its URL is unreachable).
-func TestServerCreateSessionCommandRejectedIs400(t *testing.T) {
-	d := depsWith(db.Server{ID: "server-a", URL: "http://127.0.0.1:0", Bearer: "tok-a", Status: "active"})
-	r, w := createReq(t, "server-a", "", `{"name":"ok","command":"rm -rf /"}`)
+// TestServerCreateSessionForwardsCommand: the hub forwards a non-empty command
+// to the agent verbatim (the agent is the exec boundary; design doc D13 — no
+// new capability beyond existing session-create + send-keys).
+func TestServerCreateSessionForwardsCommand(t *testing.T) {
+	var gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			b, _ := io.ReadAll(r.Body)
+			gotBody = string(b)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"name":"newproj"}`))
+		case http.MethodGet:
+			_, _ = w.Write([]byte(createListBody))
+		}
+	}))
+	defer ts.Close()
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a", Status: "active"})
+	r, w := createReq(t, "server-a", "default", `{"name":"newproj","command":"claude \"/epic-pipeline 4\""}`)
 	d.ServerCreateSessionHandler()(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("non-empty command must be 400, got %d body %s", w.Code, w.Body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	if !strings.Contains(gotBody, `"command":"claude \"/epic-pipeline 4\""`) {
+		t.Fatalf("agent did not receive the command: %s", gotBody)
 	}
 }
 
