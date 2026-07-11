@@ -15,3 +15,18 @@ enroll_rate_limit: { max_attempts: 30, window: "1m" }
 # Servers are no longer listed here — they self-register via
 # `curl <external_origin>/install.sh | sudo bash` and are admitted with
 # `agentmon-hubd server approve <hostname>`.
+
+# ── Orchestrator (optional) ──────────────────────────────────────────────
+# The epic orchestrator stays completely DORMANT until `github.token` is set.
+# Use a fine-grained PAT scoped to ONLY the repos you register as projects
+# (issues: read; pull requests + contents: read/write; checks: read).
+# Config is read at startup — `docker compose restart agentmon-hub` to apply.
+# github:
+#   token: "github_pat_..."
+#   webhook_secret: ""    # optional; polling covers everything, a webhook only lowers latency
+# orchestrator:           # optional tuning; defaults shown
+#   tick: 15s             # poll/scheduling cadence
+#   planning_timeout: 2h  # stage timeouts before an epic is marked stalled
+#   implementing_timeout: 8h
+#   reviewing_timeout: 2h
+#   max_attempts: 2       # spawn attempts per epic before it is marked failed

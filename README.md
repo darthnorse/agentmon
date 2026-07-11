@@ -113,6 +113,13 @@ enroll_rate_limit: { max_attempts: 30, window: "1m" }
 
 # Optional. Web-Push needs a VAPID "subject" (a mailto:/URL contact); defaults to external_origin.
 # vapid_subject: "mailto:you@example.com"
+
+# Optional. The epic orchestrator stays completely DORMANT until github.token is
+# set (and does nothing until a project is registered). Fine-grained PAT scoped
+# to ONLY the orchestrated repos: issues read, PRs + contents read/write, checks read.
+# github:
+#   token: "github_pat_..."
+#   webhook_secret: ""   # optional; polling covers everything, a webhook only lowers latency
 ```
 
 Apply config-only changes with `docker compose restart agentmon-hub` (config is read at startup).
@@ -245,6 +252,8 @@ Without hooks, sessions still show and are fully usable — they just read `unkn
 | `session_cookie` | `{ name, ttl }` for the login cookie. |
 | `login_rate_limit` / `enroll_rate_limit` | `{ max_attempts, window }`. |
 | `vapid_subject` | Web-Push contact (`mailto:`/URL); defaults to `external_origin`. |
+| `github` | `{ token, webhook_secret }` — orchestrator credentials; unset = orchestrator dormant. |
+| `orchestrator` | Optional tuning: `{ tick: 15s, planning_timeout: 2h, implementing_timeout: 8h, reviewing_timeout: 2h, max_attempts: 2 }` (defaults shown). |
 
 ### Agent (`agent.toml`)
 
