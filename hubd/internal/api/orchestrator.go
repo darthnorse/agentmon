@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -556,5 +557,80 @@ func (d Deps) OrchestratorAllBoardHandler() http.HandlerFunc {
 			"projects":             projects,
 			"epics":                epics,
 		})
+	}
+}
+
+// ContentsFetcher is the slice of the GitHub client the plan proxy needs.
+type ContentsFetcher interface {
+	GetContents(ctx context.Context, repo, path, ref string) ([]byte, error)
+}
+
+var (
+	planNoteRe = regexp.MustCompile(`plan ready at (\S+)`)
+	planPathRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+)
+
+// planDocPath resolves the plan document path from the escalation note
+// (runner-skill convention: "plan-gate: plan ready at <path>"), falling back
+// to the docs/plans convention. The note is runner-controlled text, so
+// sanitization failure falls back silently — never an error, never a 500.
+func planDocPath(needs string, issue int) string {
+	def := fmt.Sprintf("docs/plans/epic-%d.md", issue)
+	m := planNoteRe.FindStringSubmatch(needs)
+	if m == nil {
+		return def
+	}
+	p := m[1]
+	if len(p) > 512 || strings.HasPrefix(p, "/") || strings.Contains(p, "..") || !planPathRe.MatchString(p) {
+		return def
+	}
+	return p
+}
+
+// OrchestratorEpicPlanHandler proxies the epic's committed plan doc off its
+// branch (spec §5.2). Hub-side because the PAT never reaches the browser; it
+// can only ever read from the project's registered repo.
+func (d Deps) OrchestratorEpicPlanHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, ok := d.authorizeOr403(w, r, authz.OrchestratorView, "project:"+id); !ok {
+			return
+		}
+		if d.Contents == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		e, err := d.DB.GetEpic(r.Context(), r.PathValue("epicID"))
+		switch {
+		case errors.Is(err, sql.ErrNoRows) || (err == nil && e.ProjectID != id):
+			writeJSONError(w, http.StatusNotFound, "epic not found in project")
+			return
+		case err != nil:
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if e.Branch == "" {
+			writeJSONError(w, http.StatusConflict, "epic has no branch yet — the plan is committed once the runner starts")
+			return
+		}
+		p, err := d.DB.GetProject(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		path := planDocPath(e.Needs, e.IssueNumber)
+		b, err := d.Contents.GetContents(r.Context(), p.Repo, path, e.Branch)
+		switch {
+		case errors.Is(err, github.ErrNotFound):
+			writeJSONError(w, http.StatusNotFound, fmt.Sprintf("no plan doc found at %s on %s", path, e.Branch))
+		case errors.Is(err, github.ErrTooLarge):
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "plan doc exceeds 256 KiB — open it on GitHub")
+		case err != nil:
+			log.Printf("api: epic plan fetch: %v", err)
+			writeJSONError(w, http.StatusBadGateway, "plan fetch failed")
+		default:
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]string{"path": path, "ref": e.Branch, "markdown": string(b)})
+		}
 	}
 }

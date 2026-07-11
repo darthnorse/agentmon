@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
+	"agentmon/hubd/internal/github"
 	"agentmon/hubd/internal/registry"
 )
 
@@ -272,5 +274,102 @@ func TestBoardEventsDormant(t *testing.T) {
 	pr.Close()
 	if rw.code == http.StatusServiceUnavailable || !strings.Contains(all.String(), "event: board-snapshot") {
 		t.Fatalf("dormant stream code=%d body=%s", rw.code, all.String())
+	}
+}
+
+type fakeContents struct {
+	body            []byte
+	err             error
+	repo, path, ref string
+}
+
+func (f *fakeContents) GetContents(_ context.Context, repo, path, ref string) ([]byte, error) {
+	f.repo, f.path, f.ref = repo, path, ref
+	return f.body, f.err
+}
+
+func TestPlanDocPath(t *testing.T) {
+	for needs, want := range map[string]string{
+		"": "docs/plans/epic-7.md",
+		"plan-gate: plan ready at docs/plans/epic-7.md": "docs/plans/epic-7.md",
+		"plan-gate: plan ready at docs/x/plan.md":       "docs/x/plan.md",
+		"plan-gate: plan ready at ../../etc/passwd":     "docs/plans/epic-7.md",
+		"plan-gate: plan ready at /abs/path.md":         "docs/plans/epic-7.md",
+		"something else entirely":                       "docs/plans/epic-7.md",
+	} {
+		if got := planDocPath(needs, 7); got != want {
+			t.Fatalf("planDocPath(%q) = %q, want %q", needs, got, want)
+		}
+	}
+}
+
+func TestEpicPlanHandler(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	fc := &fakeContents{body: []byte("# Plan")}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Contents: fc}
+
+	// No branch yet → 409.
+	r, w := orchReq("GET", "/api/v1/orchestrator/projects/p1/epics/"+e.ID+"/plan", "")
+	r.SetPathValue("id", "p1")
+	r.SetPathValue("epicID", e.ID)
+	d.OrchestratorEpicPlanHandler()(w, r)
+	if w.Code != 409 {
+		t.Fatalf("branchless = %d %s", w.Code, w.Body.String())
+	}
+
+	if ok, err := database.SetEpicPR(ctx, e.ID, 0, "epic/7-x"); err != nil || !ok {
+		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
+	}
+
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/epics/"+e.ID+"/plan", "")
+	r.SetPathValue("id", "p1")
+	r.SetPathValue("epicID", e.ID)
+	d.OrchestratorEpicPlanHandler()(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"markdown":"# Plan"`) {
+		t.Fatalf("plan = %d %s", w.Code, w.Body.String())
+	}
+	if fc.repo != "o/r" || fc.path != "docs/plans/epic-7.md" || fc.ref != "epic/7-x" {
+		t.Fatalf("fetch args %+v", fc)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q", cc)
+	}
+
+	// Wrong project → 404 (cross-project guard).
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p2/epics/"+e.ID+"/plan", "")
+	r.SetPathValue("id", "p2")
+	r.SetPathValue("epicID", e.ID)
+	d.OrchestratorEpicPlanHandler()(w, r)
+	if w.Code != 404 {
+		t.Fatalf("cross-project = %d", w.Code)
+	}
+
+	// GitHub 404 → friendly 404; too large → 413; other errors → 502.
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{{github.ErrNotFound, 404}, {github.ErrTooLarge, 413}, {errors.New("boom"), 502}} {
+		fc.err = tc.err
+		r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/epics/"+e.ID+"/plan", "")
+		r.SetPathValue("id", "p1")
+		r.SetPathValue("epicID", e.ID)
+		d.OrchestratorEpicPlanHandler()(w, r)
+		if w.Code != tc.want {
+			t.Fatalf("err %v = %d, want %d", tc.err, w.Code, tc.want)
+		}
+	}
+
+	// Contents unset (dormant) → 503.
+	d.Contents = nil
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/epics/"+e.ID+"/plan", "")
+	r.SetPathValue("id", "p1")
+	r.SetPathValue("epicID", e.ID)
+	d.OrchestratorEpicPlanHandler()(w, r)
+	if w.Code != 503 {
+		t.Fatalf("dormant = %d", w.Code)
 	}
 }

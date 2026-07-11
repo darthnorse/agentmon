@@ -109,9 +109,11 @@ func main() {
 
 	var orch *orchestrator.Orchestrator
 	var boardBcast *orchestrator.BoardBroadcaster
+	var gh *github.Client
 	if cfg.GitHub.Token != "" {
+		gh = github.NewClient(cfg.GitHub.Token)
 		boardBcast = orchestrator.NewBoardBroadcaster()
-		orch = orchestrator.New(orchestrator.Deps{DB: database, GH: github.NewClient(cfg.GitHub.Token), Agents: agentClient, Reg: reg, Bcast: boardBcast, Audit: rec, Cfg: cfg.Orchestrator, Now: nowRFC3339})
+		orch = orchestrator.New(orchestrator.Deps{DB: database, GH: gh, Agents: agentClient, Reg: reg, Bcast: boardBcast, Audit: rec, Cfg: cfg.Orchestrator, Now: nowRFC3339})
 		go orch.Run(ctx)
 		go orchestrator.RunBoardPushDispatcher(ctx, orchestrator.BoardPushDeps{Bcast: boardBcast, Presence: presence, Store: database, Send: pushSender, Now: nowRFC3339})
 	}
@@ -123,6 +125,7 @@ func main() {
 		apiDeps.Orch = orch
 		apiDeps.WebhookSecret = cfg.GitHub.WebhookSecret
 		apiDeps.BoardBcast = boardBcast
+		apiDeps.Contents = gh
 	}
 	router := api.NewRouter(api.RouterDeps{
 		Version:             version,
