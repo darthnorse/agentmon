@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -224,5 +225,61 @@ func TestInvalidRepoAndRefRejected(t *testing.T) {
 	}
 	if err := c.MergePR(ctx, "not-a-repo", 1, "s"); err == nil {
 		t.Fatal("repo without owner segment must be rejected")
+	}
+}
+
+func TestGetContents(t *testing.T) {
+	plan := "# Plan\n\ndo the thing\n"
+	b64 := base64.StdEncoding.EncodeToString([]byte(plan))
+	// GitHub wraps base64 at 60 cols; make sure we strip embedded newlines.
+	wrapped := b64[:4] + "\n" + b64[4:]
+	var seen []*http.Request
+	srv := fakeGH(t, map[string]any{
+		"GET /repos/o/r/contents/docs/plans/epic-7.md": map[string]any{
+			"type": "file", "encoding": "base64", "size": len(plan), "content": wrapped,
+		},
+		"GET /repos/o/r/contents/big.md": map[string]any{
+			"type": "file", "encoding": "base64", "size": 300 << 10, "content": "",
+		},
+		"GET /repos/o/r/contents/huge.md": map[string]any{
+			"type": "file", "encoding": "none", "size": 2 << 20, "content": "",
+		},
+	}, nil, &seen)
+	defer srv.Close()
+	c := NewClient("tok")
+	c.Base = srv.URL
+
+	got, err := c.GetContents(context.Background(), "o/r", "docs/plans/epic-7.md", "epic/7-x")
+	if err != nil || string(got) != plan {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+	if q := seen[0].URL.RawQuery; q != "ref=epic%2F7-x" {
+		t.Fatalf("ref query = %q", q)
+	}
+	if _, err := c.GetContents(context.Background(), "o/r", "big.md", "main"); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("size guard: %v", err)
+	}
+	if _, err := c.GetContents(context.Background(), "o/r", "huge.md", "main"); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("encoding=none guard: %v", err)
+	}
+	if _, err := c.GetContents(context.Background(), "o/r", "nope.md", "main"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing file: %v", err)
+	}
+}
+
+func TestGetContentsRejectsBadInputs(t *testing.T) {
+	c := NewClient("tok")
+	c.Base = "http://127.0.0.1:1" // must never be dialed
+	for _, tc := range []struct{ repo, path, ref string }{
+		{"o/r", "../secrets", "main"},
+		{"o/r", "/abs/path", "main"},
+		{"o/r", "a b.md", "main"},
+		{"o/r", "", "main"},
+		{"o/r", "ok.md", "bad..ref"},
+		{"bad repo", "ok.md", "main"},
+	} {
+		if _, err := c.GetContents(context.Background(), tc.repo, tc.path, tc.ref); err == nil {
+			t.Fatalf("want reject for %+v", tc)
+		}
 	}
 }
