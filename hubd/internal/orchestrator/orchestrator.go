@@ -61,22 +61,29 @@ type Deps struct {
 
 const maxPendingReports = 256
 
+type pendingReport struct {
+	ProjectID string
+	R         shared.OrchestratorReport
+}
+
 type Orchestrator struct {
 	d    Deps
 	wake chan struct{}
 
-	// tickMu serializes Tick: production always calls it from the Run
-	// goroutine (external triggers use Wake), the mutex makes direct calls
-	// safe for tests and future callers.
+	// tickMu serializes Tick AND every mutating action method — a Cancel
+	// racing schedule() could otherwise spawn a runner for an epic that just
+	// went terminal.
 	tickMu     sync.Mutex
 	watermarks map[string]string // projectID → last successful sync watermark
 	syncSkip   map[string]int    // projectID → ticks left to skip after sync failures
 	syncFails  map[string]int    // projectID → consecutive sync failures
 	stallSeen  map[string]int    // epicID → consecutive ticks with dead session
 	// pending holds reports the hub drained but could not apply due to a
-	// transient error. Drains are destructive on the agent, so once drained
-	// the hub owns them; retried next tick, capped to bound memory.
-	pending []shared.OrchestratorReport
+	// transient error, with their already-resolved project. Drains are
+	// destructive on the agent, so once drained the hub owns them; retried
+	// next tick, capped to bound memory (in-memory only: a hub crash loses
+	// them — the peek/ack drain protocol in sub-project 2 closes that).
+	pending []pendingReport
 }
 
 func New(d Deps) *Orchestrator {
@@ -172,10 +179,11 @@ var orchestratedLabels = []string{"agentmon:epic", "agentmon:run"}
 func (o *Orchestrator) syncProject(ctx context.Context, p db.Project, now string) error {
 	since := o.watermarks[p.ID]
 	seen := map[int]bool{}
-	// Watermark advances from GitHub-attributed time (issue updated_at), not
-	// the hub clock — clock skew against GitHub would otherwise open a
-	// permanent blind window. Fallback: pre-request hub time.
-	next := now
+	// Watermark advances ONLY from GitHub-attributed time (issue updated_at):
+	// seeding it from the hub clock would re-open the skew blind window the
+	// moment the hub runs ahead of GitHub. No issues → watermark unchanged
+	// (label-scoped listings make the re-list cheap).
+	next := since
 	for _, label := range orchestratedLabels {
 		issues, err := o.d.GH.ListIssuesLabeledSince(ctx, p.Repo, label, since)
 		if err != nil {
@@ -236,7 +244,19 @@ func (o *Orchestrator) routeReport(ctx context.Context, drained db.Project, r sh
 	if r.Repo != "" && !strings.EqualFold(r.Repo, p.Repo) {
 		other, err := o.d.DB.GetProjectByRepo(ctx, r.Repo)
 		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) && len(o.pending) < maxPendingReports {
+				o.pending = append(o.pending, pendingReport{R: r})
+				return
+			}
 			log.Printf("orchestrator[%s]: dropped report for unknown repo %q: %+v", drained.Name, r.Repo, r)
+			return
+		}
+		// Trust boundary: a report drained from one agent may only drive
+		// projects on that same server+target — cross-host claims are noise
+		// or spoofing, never legitimate.
+		if other.ServerID != drained.ServerID || other.Target != drained.Target {
+			log.Printf("orchestrator[%s]: dropped cross-host report for %q (server %s≠%s)",
+				drained.Name, r.Repo, other.ServerID, drained.ServerID)
 			return
 		}
 		p = other
@@ -254,9 +274,11 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		// Transient DB error: the report is already gone from the agent, so
 		// the hub must own it — stash for retry instead of dropping.
 		if len(o.pending) < maxPendingReports {
-			o.pending = append(o.pending, r)
+			o.pending = append(o.pending, pendingReport{ProjectID: p.ID, R: r})
+			log.Printf("orchestrator[%s]: report deferred (db error): %v", p.Name, err)
+		} else {
+			log.Printf("orchestrator[%s]: report DROPPED (pending queue full): %+v", p.Name, r)
 		}
-		log.Printf("orchestrator[%s]: report deferred (db error): %v", p.Name, err)
 		return
 	}
 	if !shared.ReportableStage(r.Stage) {
@@ -292,15 +314,24 @@ func (o *Orchestrator) retryPending(ctx context.Context) {
 	}
 	batch := o.pending
 	o.pending = nil
-	for _, r := range batch {
-		if r.Repo == "" {
-			continue // cannot route without a repo
-		}
-		p, err := o.d.DB.GetProjectByRepo(ctx, r.Repo)
-		if err != nil {
+	for _, pr := range batch {
+		var p db.Project
+		var err error
+		switch {
+		case pr.ProjectID != "":
+			p, err = o.d.DB.GetProject(ctx, pr.ProjectID)
+		case pr.R.Repo != "":
+			p, err = o.d.DB.GetProjectByRepo(ctx, pr.R.Repo)
+		default:
 			continue
 		}
-		o.applyReport(ctx, p, r)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) && len(o.pending) < maxPendingReports {
+				o.pending = append(o.pending, pr) // still transient: keep owning it
+			}
+			continue
+		}
+		o.applyReport(ctx, p, pr.R)
 	}
 }
 
@@ -324,6 +355,10 @@ func (o *Orchestrator) checkStalls(ctx context.Context, p db.Project, now string
 			views = o.d.Live.Server(p.ServerID)
 			viewsLoaded = true
 		}
+		// Name-scan limitation: a same-named session on ANOTHER target of
+		// this server would mask death. Slugged+attempt names make that
+		// practically impossible; target-resolved matching arrives with the
+		// sub-2 agent contract.
 		alive := false
 		for _, v := range views {
 			if v.Session == e.SessionName {
@@ -462,12 +497,25 @@ func (o *Orchestrator) mergeEpic(ctx context.Context, p db.Project, e db.Epic, s
 			return fmt.Errorf("epic #%d: stage moved concurrently", e.IssueNumber)
 		}
 		e.Stage = string(shared.EpicMerging)
+		// Pin the APPROVED head: a merge retry after a transient failure must
+		// never adopt a fresher HeadSHA — code pushed after the gate/human
+		// decision would merge unevaluated.
+		_, _ = o.d.DB.SetEpicApprovedSHA(ctx, e.ID, sha)
+		e.ApprovedSHA = sha
+	} else if e.ApprovedSHA != "" {
+		sha = e.ApprovedSHA
 	}
 	if err := o.d.GH.MergePR(ctx, p.Repo, e.PRNumber, sha); err != nil {
 		if errors.Is(err, github.ErrNotMergeable) {
 			// 405/409 covers "already merged" and "head moved" — re-fetch
 			// before declaring a conflict.
-			if pr, err2 := o.d.GH.GetPullRequest(ctx, p.Repo, e.PRNumber); err2 == nil && pr.Merged {
+			pr, err2 := o.d.GH.GetPullRequest(ctx, p.Repo, e.PRNumber)
+			if err2 != nil {
+				// Cannot verify: stay in merging and retry next tick rather
+				// than mislabeling a possibly-merged PR as a conflict.
+				return err2
+			}
+			if pr.Merged {
 				o.finishMerged(ctx, p, e, source, "")
 				return nil
 			}
@@ -476,7 +524,8 @@ func (o *Orchestrator) mergeEpic(ctx context.Context, p db.Project, e db.Epic, s
 			return fmt.Errorf("epic #%d: %s", e.IssueNumber, reason)
 		}
 		// Transient failure: stay in merging; the next tick retries the merge
-		// without re-running the gate, so an Approve survives a network blip.
+		// (pinned to the approved SHA) without re-running the gate, so an
+		// Approve survives a network blip.
 		return err
 	}
 	o.finishMerged(ctx, p, e, source, "")
@@ -572,6 +621,8 @@ func (o *Orchestrator) transition(ctx context.Context, e db.Epic, to shared.Epic
 }
 
 func (o *Orchestrator) Approve(ctx context.Context, epicID, source string) error {
+	o.tickMu.Lock()
+	defer o.tickMu.Unlock()
 	e, err := o.d.DB.GetEpic(ctx, epicID)
 	if err != nil {
 		return err
@@ -598,6 +649,8 @@ func (o *Orchestrator) Approve(ctx context.Context, epicID, source string) error
 }
 
 func (o *Orchestrator) Retry(ctx context.Context, epicID, source string) error {
+	o.tickMu.Lock()
+	defer o.tickMu.Unlock()
 	e, err := o.d.DB.GetEpic(ctx, epicID)
 	if err != nil {
 		return err
@@ -614,6 +667,8 @@ func (o *Orchestrator) Retry(ctx context.Context, epicID, source string) error {
 }
 
 func (o *Orchestrator) Cancel(ctx context.Context, epicID, source string) error {
+	o.tickMu.Lock()
+	defer o.tickMu.Unlock()
 	e, err := o.d.DB.GetEpic(ctx, epicID)
 	if err != nil {
 		return err
@@ -625,6 +680,8 @@ func (o *Orchestrator) Cancel(ctx context.Context, epicID, source string) error 
 }
 
 func (o *Orchestrator) RunIssue(ctx context.Context, projectID string, issue int) error {
+	o.tickMu.Lock()
+	defer o.tickMu.Unlock()
 	p, err := o.d.DB.GetProject(ctx, projectID)
 	if err != nil {
 		return err
@@ -637,13 +694,14 @@ func (o *Orchestrator) RunIssue(ctx context.Context, projectID string, issue int
 		return fmt.Errorf("#%d is a pull request, not an issue", issue)
 	}
 	if !hasLabel(is.Labels, "agentmon:run") {
-		is.Labels = append(is.Labels, "agentmon:run")
-		// Label the REAL issue too: sync and webhooks filter on GitHub-side
+		// Label the REAL issue first: sync and webhooks filter on GitHub-side
 		// labels, so a mirror-only label would orphan this epic from all
-		// future GitHub truth (close, edits, dials).
+		// future GitHub truth (close, edits, dials). Fail the action rather
+		// than schedule an orphan — the user just clicks again.
 		if err := o.d.GH.AddLabels(ctx, p.Repo, issue, []string{"agentmon:run"}); err != nil {
-			log.Printf("orchestrator[%s]: label run issue #%d: %v", p.Name, issue, err)
+			return fmt.Errorf("labeling issue #%d on GitHub failed (not scheduled): %w", issue, err)
 		}
+		is.Labels = append(is.Labels, "agentmon:run")
 	}
 	if _, err := o.d.DB.UpsertEpicIssue(ctx, EpicFromIssue(p, is, o.d.Now())); err != nil {
 		return err
@@ -653,6 +711,8 @@ func (o *Orchestrator) RunIssue(ctx context.Context, projectID string, issue int
 }
 
 func (o *Orchestrator) IngestWebhook(ctx context.Context, ev github.Event) error {
+	o.tickMu.Lock()
+	defer o.tickMu.Unlock()
 	switch ev.Kind {
 	case "issues":
 		if ev.Issue == nil || !IsOrchestratedIssue(ev.Issue.Labels) {

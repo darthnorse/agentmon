@@ -26,6 +26,7 @@ type Epic struct {
 	SessionName    string
 	Branch         string
 	Verdict        string // raw JSON of the parsed verdict, "" until pr_open
+	ApprovedSHA    string // head SHA the gate/human approved; merge retries pin to it
 	Needs          string // human-readable needs-attention reason
 	IssueState     string // "open" | "closed"
 	QueuedAt       string
@@ -46,7 +47,7 @@ type EpicEvent struct {
 
 const epicCols = `id, project_id, issue_number, title, labels, blocked_by, stage, attempt,
  session_name, branch, pr_number, verdict, needs, issue_state,
- queued_at, started_at, stage_updated_at, merged_at`
+ queued_at, started_at, stage_updated_at, merged_at, approved_sha`
 
 // SQL fragments are built from the shared stage constants so the db layer
 // cannot silently drift when a stage is added or renamed. Values are trusted
@@ -71,7 +72,7 @@ func scanEpic(row interface{ Scan(...any) error }) (Epic, error) {
 	var labels, blocked string
 	if err := row.Scan(&e.ID, &e.ProjectID, &e.IssueNumber, &e.Title, &labels, &blocked,
 		&e.Stage, &e.Attempt, &e.SessionName, &e.Branch, &e.PRNumber, &e.Verdict, &e.Needs,
-		&e.IssueState, &e.QueuedAt, &e.StartedAt, &e.StageUpdatedAt, &e.MergedAt); err != nil {
+		&e.IssueState, &e.QueuedAt, &e.StartedAt, &e.StageUpdatedAt, &e.MergedAt, &e.ApprovedSHA); err != nil {
 		return Epic{}, err
 	}
 	e.Labels = unmarshalStrings(labels)
@@ -167,6 +168,10 @@ func (d *DB) SetEpicPR(ctx context.Context, id string, pr int, branch string) (b
 
 func (d *DB) SetEpicVerdict(ctx context.Context, id, verdictJSON string) (bool, error) {
 	return d.execFound(ctx, `UPDATE epics SET verdict=?, updated_at=datetime('now') WHERE id=?`, verdictJSON, id)
+}
+
+func (d *DB) SetEpicApprovedSHA(ctx context.Context, id, sha string) (bool, error) {
+	return d.execFound(ctx, `UPDATE epics SET approved_sha=?, updated_at=datetime('now') WHERE id=?`, sha, id)
 }
 
 func (d *DB) SetEpicNeeds(ctx context.Context, id, needs string) (bool, error) {

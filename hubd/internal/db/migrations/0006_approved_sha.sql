@@ -1,0 +1,1 @@
+ALTER TABLE epics ADD COLUMN approved_sha TEXT NOT NULL DEFAULT '';

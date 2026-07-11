@@ -16,12 +16,13 @@ import (
 // ---- fakes ----
 
 type fakeGH struct {
-	issues   map[int]github.Issue
-	prs      map[int]github.PullRequest
-	checks   map[string][]github.CheckRun
-	merged   []int
-	labels   [][2]string // [issue number, label]
-	comments []string
+	issues     map[int]github.Issue
+	prs        map[int]github.PullRequest
+	checks     map[string][]github.CheckRun
+	merged     []int
+	mergedSHAs []string
+	labels     [][2]string // [issue number, label]
+	comments   []string
 }
 
 func (f *fakeGH) GetIssue(_ context.Context, _ string, n int) (github.Issue, error) {
@@ -45,8 +46,9 @@ func (f *fakeGH) GetPullRequest(_ context.Context, _ string, n int) (github.Pull
 func (f *fakeGH) ListCheckRuns(_ context.Context, _, ref string) ([]github.CheckRun, error) {
 	return f.checks[ref], nil
 }
-func (f *fakeGH) MergePR(_ context.Context, _ string, n int, _ string) error {
+func (f *fakeGH) MergePR(_ context.Context, _ string, n int, sha string) error {
 	f.merged = append(f.merged, n)
+	f.mergedSHAs = append(f.mergedSHAs, sha)
 	pr := f.prs[n]
 	pr.Merged = true
 	f.prs[n] = pr
@@ -350,5 +352,41 @@ func TestReportsRoutedByRepoAcrossProjects(t *testing.T) {
 	p1e, _ := d.GetEpicByIssue(ctx, "p1", 16)
 	if p1e.Stage == "implementing" {
 		t.Fatalf("report must NOT apply to the draining project's epic: %+v", p1e)
+	}
+}
+
+func TestMergingRetryPinsApprovedSHA(t *testing.T) {
+	gh := &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", HeadSHA: "NEWSHA", HeadRef: "epic/16-x"}},
+	}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	ctx := context.Background()
+	// Seed an epic parked in merging with a previously-approved SHA — the
+	// state after a gate/human decision followed by a transient merge failure.
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 16,
+		Labels: []string{"agentmon:epic"}, IssueState: "open", QueuedAt: "t0", StageUpdatedAt: "t0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range [][2]string{{"queued", "starting"}, {"starting", "pr_open"}, {"pr_open", "merging"}} {
+		if ok, _ := d.TransitionEpic(ctx, e.ID, tr[0], tr[1], "hub", "", "t1"); !ok {
+			t.Fatalf("seed transition %v", tr)
+		}
+	}
+	if ok, _ := d.SetEpicPR(ctx, e.ID, 61, "epic/16-x"); !ok {
+		t.Fatal("seed pr")
+	}
+	if ok, _ := d.SetEpicApprovedSHA(ctx, e.ID, "APPROVEDSHA"); !ok {
+		t.Fatal("seed approved sha")
+	}
+	o.Tick(ctx) // merging retry: must pin to the APPROVED sha, not the fresh head
+	if len(gh.mergedSHAs) != 1 || gh.mergedSHAs[0] != "APPROVEDSHA" {
+		t.Fatalf("merge retry must use the approved SHA, got %v", gh.mergedSHAs)
+	}
+	got, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if got.Stage != "merged" {
+		t.Fatalf("epic = %+v", got)
 	}
 }

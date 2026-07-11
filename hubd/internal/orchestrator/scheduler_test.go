@@ -49,14 +49,20 @@ func TestKickoffAndProvider(t *testing.T) {
 	if got := KickoffCommand("codex", 16); got != `codex -a never "/epic-pipeline 16"` {
 		t.Fatalf("codex kickoff = %q", got)
 	}
-	if SessionNameFor("School-Platform", 16, 1) != "epic-schoolplatfo-16" {
-		t.Fatalf("session name = %q", SessionNameFor("School-Platform", 16, 1))
+	if SessionNameFor("proj", 16, 1) != "epic-proj-16" {
+		t.Fatalf("session name = %q", SessionNameFor("proj", 16, 1))
 	}
 	if SessionNameFor("proj", 16, 3) != "epic-proj-16-r3" {
 		t.Fatal("retry attempts must produce distinct session names")
 	}
-	if SessionNameFor("--", 16, 1) != "epic-proj-16" {
-		t.Fatal("empty slug must fall back")
+	// lossy slugs (truncated or emptied) must stay collision-free via the hash
+	a := SessionNameFor("school-platform-api", 16, 1)
+	b := SessionNameFor("school-platform-web", 16, 1)
+	if a == b {
+		t.Fatalf("truncated slugs must not collide: %q == %q", a, b)
+	}
+	if SessionNameFor("--", 16, 1) == SessionNameFor("++", 16, 1) {
+		t.Fatal("punctuation-only names must not collide")
 	}
 	if ProviderFor("claude", []string{"agent:codex"}) != "codex" {
 		t.Fatal("label override to codex")

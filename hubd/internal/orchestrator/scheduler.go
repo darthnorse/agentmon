@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 
@@ -96,19 +97,25 @@ func SessionNameFor(project string, issue, attempt int) string {
 	return name
 }
 
-// projectSlug reduces a project name to a short tmux-safe token.
+// projectSlug reduces a project name to a short tmux-safe token. Project
+// names are UNIQUE in the DB, but truncation could collide two long names —
+// when the slug is lossy (truncated or emptied), a 4-hex hash of the full
+// name keeps it collision-free.
 func projectSlug(name string) string {
 	var b []byte
+	total := 0
 	for _, r := range strings.ToLower(name) {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b = append(b, byte(r))
-		}
-		if len(b) == 12 {
-			break
+			total++
+			if len(b) < 12 {
+				b = append(b, byte(r))
+			}
 		}
 	}
-	if len(b) == 0 {
-		return "proj"
+	if len(b) == 0 || total > len(b) {
+		h := fnv.New32a()
+		h.Write([]byte(name))
+		return fmt.Sprintf("%s%04x", string(b), h.Sum32()&0xffff)
 	}
 	return string(b)
 }
