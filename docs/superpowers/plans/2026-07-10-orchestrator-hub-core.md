@@ -2340,7 +2340,7 @@ Tasks 6–11 (GitHub client, webhook, verdict, gate, machine, broadcaster) are a
 
 Ready rules: stage `queued` ∧ `issue_state == "open"` ∧ every `blocked_by` issue's epic (matched by `IssueNumber` within the slice) is stage `merged` OR `issue_state == "closed"`; a dep with NO epic row blocks (fail closed) — the sync loop surfaces it via the epic's `needs` later. Capacity = `maxParallel − count(stage ∈ activeStages)`; `paused` ⇒ empty. Order by ascending issue number, truncate to capacity.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/scheduler_test.go`:
 
@@ -2411,12 +2411,12 @@ func TestKickoffAndProvider(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestReadyEpics|TestKickoff' -v`
 Expected: FAIL — `ReadyEpics undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/scheduler.go`:
 
@@ -2508,12 +2508,12 @@ func ProviderFor(projectDefault string, labels []string) string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestReadyEpics|TestKickoff' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/orchestrator/ && git commit -m "feat(hub): dependency-aware scheduler + kickoff commands"
@@ -2531,7 +2531,7 @@ git add hubd/internal/orchestrator/ && git commit -m "feat(hub): dependency-awar
 - Consumes: `shared.OrchestratorReport` (Task 5), existing `Client` internals (follow `Sessions` at `client.go:34` exactly: same bearer header, same target query param, same error style).
 - Produces: `func (c *Client) DrainReports(ctx context.Context, srv db.Server, target string) ([]shared.OrchestratorReport, error)` — `GET {srv.URL}/orchestrator/reports?drain=1[&target=…]`; **HTTP 404 returns `(nil, nil)`** (agent predates sub-project 2 — tolerated, not an error).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `hubd/internal/registry/client_test.go` (match the file's existing fake-agent helper style; if it has a helper that builds an `httptest.Server` + `db.Server`, reuse it, else inline as below):
 
@@ -2570,12 +2570,12 @@ func TestDrainReportsOldAgent404(t *testing.T) {
 
 (Adjust `NewClient()` to the constructor's real signature — check the top of `client.go`; if it takes a timeout or http client, pass what existing tests pass.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ -run TestDrainReports -v`
 Expected: FAIL — `c.DrainReports undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Append to `hubd/internal/registry/client.go` (mirror `Sessions`' request construction — bearer, target param, timeout):
 
@@ -2614,12 +2614,12 @@ func (c *Client) DrainReports(ctx context.Context, srv db.Server, target string)
 
 (If the unexported http client field has a different name in `client.go`, use that name; add missing imports `net/url`, `encoding/json`, `fmt` as needed.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ -v`
 Expected: PASS (existing + 2 new).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/registry/ && git commit -m "feat(hub): drain orchestrator reports from agents"
@@ -2640,7 +2640,7 @@ cd /root/agentmon && git add hubd/internal/registry/ && git commit -m "feat(hub)
   - `func IsOrchestratedIssue(labels []string) bool` — has `agentmon:epic` OR `agentmon:run`
   - `func EpicFromIssue(p db.Project, is github.Issue, now string) db.Epic` — fills mirror fields (`ProjectID, IssueNumber, Title, Labels, BlockedBy, IssueState, QueuedAt: now, StageUpdatedAt: now`)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/sync_test.go`:
 
@@ -2697,12 +2697,12 @@ func TestEpicFromIssue(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestParseBlockedBy|TestIsOrchestrated|TestEpicFromIssue' -v`
 Expected: FAIL — `ParseBlockedBy undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/sync.go`:
 
@@ -2764,12 +2764,12 @@ func EpicFromIssue(p db.Project, is github.Issue, now string) db.Epic {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v`
 Expected: PASS (all orchestrator tests so far).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): issue mirror sync helpers"
@@ -2845,7 +2845,7 @@ Tick pipeline per project (order matters):
 - `reconcile` (before first tick): for each non-terminal epic with `PRNumber > 0`: PR merged ⇒ `merged`; PR closed unmerged ⇒ `canceled` (source `github`, note "reconcile").
 - All stage moves go through one funnel `o.transition(ctx, epic, to, source, note)` → `ValidTransition` check + `db.TransitionEpic` + `Bcast.Publish(BoardChange{…, Needs: epic-after.Needs})`.
 
-- [ ] **Step 1: Write the failing test (fakes + three scenarios)**
+- [x] **Step 1: Write the failing test (fakes + three scenarios)**
 
 Create `hubd/internal/orchestrator/orchestrator_test.go`:
 
@@ -2982,7 +2982,7 @@ func TestTickSyncsAndSpawns(t *testing.T) {
 	if e.Stage != "starting" || e.SessionName != "epic-16" || e.Attempt != 1 {
 		t.Fatalf("epic = %+v", e)
 	}
-	if len(ag.created) != 1 || ag.created[0].Command != `claude "/epic-pipeline 16"` || ag.created[0].Cwd != "/w" {
+	if len(ag.created) != 1 || ag.created[0].Command != `IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"` || ag.created[0].Cwd != "/w" {
 		t.Fatalf("created = %+v", ag.created)
 	}
 	if _, err := d.GetEpicByIssue(ctx, "p1", 99); err == nil {
@@ -3061,12 +3061,12 @@ func TestStallOnDeadSession(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestTick|TestReports|TestGate|TestStall' -v`
 Expected: FAIL — `New undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/orchestrator.go`. This is the largest file (~300 lines); the structure is fixed by the interfaces block above and the tick pipeline order. Key implementation notes an engineer must follow:
 
