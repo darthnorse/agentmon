@@ -104,7 +104,16 @@ Then `cd` there and STAY there for everything that follows.
    - Epic issue body carries requirements only. If it embeds a plan anyway,
      VALIDATE it against the current code and adapt — never transcribe blind.
 2. Commit the plan: `docs/plans/epic-N.md`, message `docs: plan for epic #N`.
-3. **`plan-gate` label?** → `agentmon report --epic N --stage escalated --note "plan-gate: plan ready at docs/plans/epic-N.md"`
+3. **Cross-model plan review — BEFORE any implementation.** Plans, not
+   their transcription, are where defects originate; review the plan like
+   code while a fix is still one edit. If `claude` is on PATH, pipe it the
+   committed plan:
+   `IS_SANDBOX=1 claude --dangerously-skip-permissions -p "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-N.md)"`
+   No claude → run your own review in a fresh context with the same brief.
+   Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
+   verify each finding against the repo (empirically when cheap) before
+   acting; amend + commit the plan for the confirmed ones, drop the refuted.
+4. **`plan-gate` label?** → `agentmon report --epic N --stage escalated --note "plan-gate: plan ready at docs/plans/epic-N.md"`
    and stop (escalation protocol semantics). When a human approves and
    retries, the fresh session's Step 2 finds the plan and continues here.
 

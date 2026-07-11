@@ -104,7 +104,16 @@ the repo tree.)
      VALIDATE it against the current code and adapt — never transcribe blind.
 2. Commit the plan: `docs/plans/epic-$ARGUMENTS.md`, message
    `docs: plan for epic #$ARGUMENTS`.
-3. **`plan-gate` label?** → `agentmon report --epic $ARGUMENTS --stage escalated --note "plan-gate: plan ready at docs/plans/epic-$ARGUMENTS.md"`
+3. **Cross-model plan review — BEFORE any implementation.** Plans, not
+   their transcription, are where defects originate; review the plan like
+   code while a fix is still one edit. If `codex` is on PATH, pipe it the
+   committed plan:
+   `codex exec --skip-git-repo-check "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-$ARGUMENTS.md)"`
+   No codex → dispatch a fresh-context subagent with the same brief.
+   Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
+   verify each finding against the repo (empirically when cheap) before
+   acting; amend + commit the plan for the confirmed ones, drop the refuted.
+4. **`plan-gate` label?** → `agentmon report --epic $ARGUMENTS --stage escalated --note "plan-gate: plan ready at docs/plans/epic-$ARGUMENTS.md"`
    and end your turn (escalation protocol semantics). When a human approves
    and retries, the fresh session's Step 2 finds the plan and continues here.
 
