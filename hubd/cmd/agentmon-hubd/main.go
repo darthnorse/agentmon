@@ -24,6 +24,8 @@ import (
 	"agentmon/hubd/internal/config"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/directive"
+	"agentmon/hubd/internal/github"
+	"agentmon/hubd/internal/orchestrator"
 	"agentmon/hubd/internal/registry"
 	"agentmon/hubd/internal/state"
 	"agentmon/hubd/internal/webui"
@@ -95,16 +97,32 @@ func main() {
 	if err != nil {
 		log.Fatalf("vapid: %v", err)
 	}
+	pushSender := state.NewWebPushSender(vapid, vapidSubject(cfg))
 	go state.RunPushDispatcher(ctx, state.DispatcherDeps{
 		Bcast:      bcast,
 		Presence:   presence,
 		Store:      database,
-		Send:       state.NewWebPushSender(vapid, vapidSubject(cfg)),
+		Send:       pushSender,
 		NowRFC3339: func() string { return time.Now().UTC().Format(time.RFC3339) },
 	})
 
+	var orch *orchestrator.Orchestrator
+	var boardBcast *orchestrator.BoardBroadcaster
+	if cfg.GitHub.Token != "" {
+		boardBcast = orchestrator.NewBoardBroadcaster()
+		orch = orchestrator.New(orchestrator.Deps{DB: database, GH: github.NewClient(cfg.GitHub.Token), Agents: agentClient, Reg: reg, Live: proj, Bcast: boardBcast, Audit: rec, Cfg: cfg.Orchestrator, Now: func() string { return time.Now().UTC().Format(time.RFC3339) }})
+		go orch.Run(ctx)
+		go orchestrator.RunBoardPushDispatcher(ctx, orchestrator.BoardPushDeps{Bcast: boardBcast, Presence: presence, Store: database, Send: pushSender, Now: func() string { return time.Now().UTC().Format(time.RFC3339) }})
+	}
+
 	relayCap := authn.NewGauge(32) // Phase 5: ≤32 concurrent terminal relays per principal
 
+	apiDeps := api.Deps{DB: database, Reg: reg, Agent: agentClient, Audit: rec, AuditRepo: database, HealthTimeout: 3 * time.Second, TrustForwardedProto: cfg.TrustForwardedProto, Minter: directive.Minter{}, ExternalOrigin: cfg.ExternalOrigin, Proj: proj, Seen: database, Bcast: bcast, SSEHeartbeat: sseHeartbeat(cfg), Push: database, VAPIDPublic: vapid.Public, Presence: presence, RelayCap: relayCap}
+	if orch != nil {
+		apiDeps.Orch = orch
+		apiDeps.WebhookSecret = cfg.GitHub.WebhookSecret
+		apiDeps.BoardBcast = boardBcast
+	}
 	router := api.NewRouter(api.RouterDeps{
 		Version:             version,
 		Auth:                auth,
@@ -126,24 +144,7 @@ func main() {
 			CookieName:          cfg.SessionCookie.Name,
 			TrustForwardedProto: cfg.TrustForwardedProto,
 		},
-		API: api.Deps{
-			Reg:                 reg,
-			Agent:               agentClient,
-			Audit:               rec,
-			AuditRepo:           database,
-			HealthTimeout:       3 * time.Second,
-			TrustForwardedProto: cfg.TrustForwardedProto,
-			Minter:              directive.Minter{}, // defaults: time.Now, CSPRNG nonce, uuid requestId
-			ExternalOrigin:      cfg.ExternalOrigin,
-			Proj:                proj,
-			Seen:                database,
-			Bcast:               bcast,
-			SSEHeartbeat:        sseHeartbeat(cfg),
-			Push:                database,
-			VAPIDPublic:         vapid.Public,
-			Presence:            presence,
-			RelayCap:            relayCap,
-		},
+		API:     apiDeps,
 		Enroll:  api.EnrollDeps{Servers: database, Audit: rec, TrustForwardedProto: cfg.TrustForwardedProto},
 		Onboard: onboard,
 		Install: api.InstallDeps{HubURL: cfg.ExternalOrigin},
