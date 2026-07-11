@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -128,6 +129,29 @@ func TestUpdateProject(t *testing.T) {
 	}
 	if ok, err := d.UpdateProject(ctx, Project{ID: "nope", Name: "x", Workdir: "/w", BaseBranch: "main", Provider: "claude"}); err != nil || ok {
 		t.Fatalf("missing project: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestUpdateProjectDuplicateNameIsSentinel(t *testing.T) {
+	d, ctx := projDB(t)
+	// A second project whose name p1's rename will collide with.
+	if err := d.CreateProject(ctx, Project{ID: "p2", Name: "taken", Repo: "o/r2", ServerID: "h1", Workdir: "/w2", BaseBranch: "main", Provider: "claude", MaxParallel: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// UNIQUE(name) violation must surface as the ErrDuplicateName sentinel so
+	// the API can map it to 400 while a genuine failure still becomes a 500.
+	if _, err := d.UpdateProject(ctx, Project{ID: "p1", Name: "taken", Workdir: "/w", BaseBranch: "main", Provider: "claude"}); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("duplicate rename: got %v, want ErrDuplicateName", err)
+	}
+}
+
+func TestUpdateProjectNonConstraintErrorPassesThrough(t *testing.T) {
+	d, ctx := projDB(t)
+	d.Close() // any subsequent statement fails with a non-constraint error
+	// A closed-DB (or lock/IO) failure must NOT be masquerade as ErrDuplicateName —
+	// otherwise the handler would 400 a real outage as "name already in use".
+	if _, err := d.UpdateProject(ctx, Project{ID: "p1", Name: "x", Workdir: "/w", BaseBranch: "main", Provider: "claude"}); err == nil || errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("non-constraint failure must pass through unchanged, got %v", err)
 	}
 }
 

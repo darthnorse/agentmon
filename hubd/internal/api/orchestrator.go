@@ -453,10 +453,15 @@ func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
 			return
 		}
 		found, err := d.DB.UpdateProject(r.Context(), pr)
+		if errors.Is(err, db.ErrDuplicateName) {
+			writeJSONError(w, http.StatusBadRequest, "name already in use")
+			return
+		}
 		if err != nil {
-			// Most likely the UNIQUE(name) constraint; the DB error text is not
-			// for browsers.
-			writeJSONError(w, http.StatusBadRequest, "update failed (name already in use?)")
+			// A genuine backend failure (lock/IO) is not a client error; don't
+			// misreport it as a 400 name collision.
+			log.Printf("api: project update: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		if !found {

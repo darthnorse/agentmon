@@ -174,6 +174,55 @@ func TestProjectPatch(t *testing.T) {
 	}
 }
 
+func TestProjectPatchDuplicateName(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "one", Repo: "o/r1", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	database.CreateProject(ctx, db.Project{ID: "p2", Name: "two", Repo: "o/r2", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	d := Deps{DB: database, Orch: &fakeOrch{}}
+
+	// Renaming p1 onto p2's taken name is a UNIQUE(name) collision → 400,
+	// distinct from a genuine backend failure (which is now a 500).
+	r, w := orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"name":"two"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 400 {
+		t.Fatalf("duplicate name: want 400, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBoardEventsDormantServesProjects(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	// A project registered while the hub had a token, now running dormant
+	// (BoardBcast==nil): the SSE snapshot must still carry it — it must not
+	// drift from GET /board, which serves the real rows.
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "school-platform", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	d := Deps{DB: database, SSEHeartbeat: time.Hour} // BoardBcast nil → dormant
+	pr, pw := io.Pipe()
+	rw := &pipeResponseWriter{pw: pw, header: make(http.Header)}
+	ctx2, cancel := context.WithCancel(ctx)
+	req := withPrincipal(httptest.NewRequest("GET", "/api/v1/orchestrator/events", nil).WithContext(ctx2), authz.Principal{ID: "u1"})
+	done := make(chan struct{})
+	go func() { defer close(done); defer pw.Close(); d.OrchestratorEventsHandler()(rw, req) }()
+
+	sc := bufio.NewScanner(pr)
+	var all strings.Builder
+	for sc.Scan() {
+		all.WriteString(sc.Text())
+		all.WriteByte('\n')
+		if strings.Contains(all.String(), `"projects":[`) { // snapshot arrived
+			break
+		}
+	}
+	cancel()
+	<-done
+	pr.Close()
+	if !strings.Contains(all.String(), `"projects":[{`) || strings.Contains(all.String(), `"projects":[]`) {
+		t.Fatalf("dormant snapshot must include the registered project, got %s", all.String())
+	}
+}
+
 func TestProjectDelete(t *testing.T) {
 	database := orchDB(t)
 	ctx := context.Background()

@@ -20,13 +20,21 @@ func (d Deps) OrchestratorEventsHandler() http.HandlerFunc {
 			return
 		}
 		if d.BoardBcast == nil {
-			// Dormant hub: keep the stream OPEN and idle rather than 503, so the
-			// app-wide EventSource doesn't reconnect-loop. No projects exist yet,
-			// so the snapshot is empty and no deltas ever arrive.
+			// Dormant hub (no GitHub token): keep the stream OPEN and idle rather
+			// than 503, so the app-wide EventSource doesn't reconnect-loop. No
+			// deltas ever arrive (nothing publishes), but projects can still live
+			// in the DB (registered while enabled, then restarted dormant), so
+			// serve the REAL snapshot — GET /board does, and boardSnapshot's
+			// invariant is that the two must never drift.
+			projDTOs, epics, err := d.boardSnapshot(r.Context())
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
-			writeSSE(w, "board-snapshot", map[string]any{"projects": []projectDTO{}, "epics": []epicDTO{}})
+			writeSSE(w, "board-snapshot", map[string]any{"projects": projDTOs, "epics": epics})
 			flusher.Flush()
 			hb := d.SSEHeartbeat
 			if hb <= 0 {
