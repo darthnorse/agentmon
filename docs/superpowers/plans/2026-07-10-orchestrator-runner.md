@@ -724,7 +724,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): orchestrator 
 - Consumes: `report.Store` (Task 3), `config.Config.ResolveTarget` (`agent/internal/config/config.go:60`), `writeError` (Task 4).
 - Produces: `DrainHandler(cfg, st) http.HandlerFunc` — mounted in Task 6, dialed by Task 10.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/internal/report/drain_test.go`:
 
@@ -793,12 +793,12 @@ func TestDrainHandlerErrors(t *testing.T) {
 
 Note: `testCfg` and `rep` come from Tasks 3–4's test files (same package). An empty `?target=` resolves to the FIRST configured target (`ResolveTarget` semantics) — that is why `TestDrainHandlerEmptyIsJSONArrayNotNull` works without a target param.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/`
 Expected: FAIL — `undefined: DrainHandler`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/internal/report/drain.go`:
 
@@ -843,11 +843,11 @@ func DrainHandler(cfg config.Config, st *Store) http.HandlerFunc {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report drain endpoint — ack-on-next-drain protocol"
