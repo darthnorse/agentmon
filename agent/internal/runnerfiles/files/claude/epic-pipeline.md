@@ -24,8 +24,9 @@ otherwise guess.
 3. **Scope discipline.** Touch only what the epic needs. Full build + test
    suite green before EVERY commit. No commit trailers, ever.
 4. **Git discipline.** Work only on your epic branch in your worktree. Push
-   ONLY that branch, only at PR time. NEVER force-push. NEVER touch the base
-   branch or other epics' branches or worktrees.
+   ONLY that branch — at a plan-gate escalation (so a human can review the
+   committed plan off GitHub) and at PR time. NEVER force-push. NEVER touch
+   the base branch or other epics' branches or worktrees.
 5. **Honesty beats green.** The merge gate reads your verdict as data and
    fails closed. An honest `unresolved`/`uncertain` verdict that escalates to
    a human is CORRECT behavior; a polished verdict hiding a doubt is the only
@@ -115,8 +116,12 @@ the repo tree.)
    Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
    verify each finding against the repo (empirically when cheap) before
    acting; amend + commit the plan for the confirmed ones, drop the refuted.
-4. **`plan-gate` label?** → `agentmon report --epic $ARGUMENTS --stage escalated --note "plan-gate: plan ready at docs/plans/epic-$ARGUMENTS.md"`
-   and end your turn (escalation protocol semantics). When a human approves
+4. **`plan-gate` label?** → push the branch so the hub can serve the committed
+   plan during approval, then report THAT SAME branch. Capture it once so the
+   pushed and reported refs cannot diverge, and report only if the push
+   succeeds (`&&`):
+   `b=$(git branch --show-current) && git push -u origin "$b" && agentmon report --epic $ARGUMENTS --stage escalated --branch "$b" --note "plan-gate: plan ready at docs/plans/epic-$ARGUMENTS.md"`
+   Then end your turn (escalation protocol semantics). When a human approves
    and retries, the fresh session's Step 2 finds the plan and continues here.
 
 ## Step 5: Implement (report `implementing`)
@@ -229,5 +234,6 @@ UNCHANGED — worktree, stage reports, escalation, ONE full pre-PR
 | entering implementation | `agentmon report --epic N --stage implementing` |
 | each review (checkpoint/final) | `agentmon report --epic N --stage reviewing` |
 | PR opened | `agentmon report --epic N --stage pr_open --pr <num>` |
-| blocked / plan-gate / DISCUSS | `agentmon report --epic N --stage escalated --note "…"` |
+| blocked / DISCUSS | `agentmon report --epic N --stage escalated --note "…"` |
+| plan-gate (pause after planning) | push branch, then `agentmon report … --stage escalated --branch <branch> --note "plan-gate: …"` — see Step 4 |
 | report CLI broken during escalation | `gh issue comment N --body "ESCALATED: …"` |

@@ -1201,6 +1201,88 @@ The hub surface for sub-3 is complete (board endpoint, plan proxy, PATCH/DELETE,
 
 ---
 
+### Task 6A: Plan-gate branch persistence — runner reports its branch so the plan is viewable during approval
+
+**Why (owner decision — Option 2, added post-checkpoint-1 cross-model review):** the plan proxy (Task 5) returns 409 while `epic.branch` is empty, and the branch column is only ever written alongside a PR (`db.SetEpicPR`). A `plan-gate` escalation carries no PR, so the committed plan is unfetchable during the exact window a human approves it. Fix: at plan-gate the runner pushes its epic branch and reports the branch; the hub persists it, so the proxy fetches the plan off GitHub — no agent port, no SSH, no blind approval. The runner-skill half (push + `--branch`) is **Claude-authored** and already applied to BOTH `epic-pipeline.md` variants — Codex must NOT edit skill content. THIS task is the Go wiring only.
+
+**Deploy note:** this makes board-ui no longer web-only — the merge now also requires an agent fleet update (report CLI/intake/skills), not just a hub rebuild. Mixed-fleet is safe: an old agent sends no `branch`, the hub simply doesn't set it, and the proxy 409s exactly as today (graceful degradation, no hard incompat). Pushing an epic branch does NOT trigger this repo's CI (`.github/workflows/ci.yml` fires on push to `main` + `pull_request` only) — no spurious checks. Reviewed at **CHECKPOINT 2** with Tasks 7–12.
+
+**Files:**
+- Modify: `shared/orchestrator.go` (add `Branch` to `OrchestratorReport`)
+- Modify: `agent/cmd/agentmon-agent/report_cli.go` (`--branch` flag + body field)
+- Modify: `agent/internal/report/intake.go` (`Branch` on `intakeBody`; forward to `OrchestratorReport`)
+- Modify: `hubd/internal/db/epics.go` (add `SetEpicBranch`)
+- Modify: `hubd/internal/orchestrator/orchestrator.go` (persist `r.Branch` in `applyReport`, ~line 409)
+- Tests: `agent/cmd/agentmon-agent/report_cli_test.go`, `hubd/internal/db/epics_test.go`, `hubd/internal/orchestrator/orchestrator_test.go`
+
+**Interfaces:**
+- `OrchestratorReport.Branch string` (json `branch,omitempty`) — optional; the runner sets it ONLY at plan-gate escalation.
+- `db.SetEpicBranch(ctx, id, branch string) (bool, error)` — sets ONLY the `branch` column (never `pr_number`), mirroring `SetProjectPaused` et al.
+- `applyReport`: when `r.Branch != "" && e.Branch == ""`, persist it before the existing `if r.PR > 0` block. The empty-guard prevents clobbering a PR's real HeadRef recorded later.
+
+- [ ] **Step 1 (RED): CLI carries `--branch` on an escalated report.** In `report_cli_test.go` add a NEW test case (do NOT bolt `--branch` onto the `pr_open` happy-path — branch is plan-gate/escalated-only): call `reportMain` with `--stage escalated --branch epic/7-x --note "plan-gate: x"`, capture the posted body, and assert it contains `` `"branch":"epic/7-x"` `` and `` `"stage":"escalated"` ``. Run `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/ -run TestReport -v` → FAIL (unknown flag / branch absent from body).
+
+- [ ] **Step 2 (GREEN): plumb the field through the three layers.**
+  - `shared/orchestrator.go`, in `OrchestratorReport` after `PR`:
+    ```go
+    Branch  string    `json:"branch,omitempty"`
+    ```
+  - `report_cli.go`: add the flag near the others and include it in the posted body map:
+    ```go
+    branch := fs.String("branch", "", "epic branch to record (plan-gate escalation only)")
+    // ...
+    body, err := postReport(*cfgPath, map[string]any{
+        "repo": r, "epic": *epic, "stage": *stage, "note": *note, "pr": *pr, "branch": *branch,
+    }, false)
+    ```
+  - `intake.go`: add `Branch string ` + "`json:\"branch\"`" + ` to `intakeBody`, and pass `Branch: body.Branch` into the `shared.OrchestratorReport{...}` literal.
+  Re-run Step 1's test → PASS.
+
+- [ ] **Step 2b: intake forwarding test.** In `agent/internal/report/intake_test.go`, assert a POST body carrying `"branch":"epic/7-x"` yields a buffered `OrchestratorReport` with `Branch == "epic/7-x"` (mirror the existing intake test's fixture). Locks the agent-side hop.
+
+- [ ] **Step 3 (RED): hub persists a reported branch — and never clobbers it.** In `orchestrator_test.go`, mirror the existing escalated-report test (~line 340, which drives `applyReport`): seed a project + an epic in `planning` with an empty branch (IssueNumber must match the branch prefix — use issue 7 + branch `epic/7-x`), apply an escalated `OrchestratorReport{... Branch: "epic/7-x"}`, then assert the reloaded epic has `Branch == "epic/7-x"` AND `Stage == "escalated"`. **Then, in the same test, apply a later `pr_open` report (`PR>0`, empty `Branch`) and assert `Branch` is STILL `epic/7-x`** — `applyReport` passes `e.Branch` (not `r.Branch`) to `SetEpicPR`, so the plan-gate branch must survive PR reporting (this is the contract, not an accident). Run the orchestrator package tests → FAIL.
+
+- [ ] **Step 4 (GREEN): `SetEpicBranch` + persist in `applyReport`.**
+  - `epics.go`, next to `SetEpicPR`:
+    ```go
+    // SetEpicBranch records the epic's branch WITHOUT a PR — used at plan-gate
+    // escalation so the plan proxy can serve the committed plan off GitHub
+    // before any PR exists. Never touches pr_number.
+    func (d *DB) SetEpicBranch(ctx context.Context, id, branch string) (bool, error) {
+        return d.execFound(ctx, `UPDATE epics SET branch=?, updated_at=datetime('now') WHERE id=?`, branch, id)
+    }
+    ```
+  - `orchestrator.go`, in `applyReport` immediately BEFORE the `if r.PR > 0 {` block (~line 409). Two guards from the cross-model review: (a) bind the branch to THIS epic's convention (`epic/<issue>-…`) so a runner can't persist `main`, a tag, or another epic's branch and make the proxy serve the wrong doc from the repo; (b) on a DB error DEFER to `o.pending` exactly like the `GetEpicByIssue` error path above (~lines 377-384) rather than swallowing it — a plan-gate branch has NO reconcile path (unlike a PR's HeadRef), so a lost write would strand the epic escalated-without-a-branch:
+    ```go
+    if r.Branch != "" && e.Branch == "" && strings.HasPrefix(r.Branch, fmt.Sprintf("epic/%d-", r.Epic)) {
+        ok, err := o.d.DB.SetEpicBranch(ctx, e.ID, r.Branch)
+        if err != nil {
+            if len(o.pending) < maxPendingReports {
+                o.pending = append(o.pending, pendingReport{ProjectID: p.ID, R: r})
+                log.Printf("orchestrator[%s]: report deferred (branch persist: %v)", p.Name, err)
+                return true
+            }
+            log.Printf("orchestrator[%s]: branch persist DROPPED (pending full): %+v", p.Name, r)
+        } else if ok {
+            e.Branch = r.Branch
+        }
+    }
+    ```
+    (Add `strings`/`fmt` to the imports if not already present.)
+  Re-run → PASS. Add a focused test that a NON-conforming branch (e.g. `main`) is IGNORED (epic branch stays empty).
+
+- [ ] **Step 5: db unit test.** In `epics_test.go`, add a `SetEpicBranch` test: create an epic, `SetEpicBranch(id, "epic/9-x")`, reload → `Branch=="epic/9-x"` and `PRNumber==0` (branch set with NO PR); `SetEpicBranch("nope", …)` → `found==false`.
+
+- [ ] **Step 6: full gate + commit.**
+  ```bash
+  cd /root/agentmon && for m in shared agent hubd; do ( cd $m && go build ./... && go test ./... ) || break; done
+  git add shared/orchestrator.go agent/cmd/agentmon-agent/report_cli.go agent/cmd/agentmon-agent/report_cli_test.go agent/internal/report/intake.go hubd/internal/db/epics.go hubd/internal/db/epics_test.go hubd/internal/orchestrator/orchestrator.go hubd/internal/orchestrator/orchestrator_test.go
+  git commit -m "feat(orchestrator): persist runner-reported branch at plan-gate so the plan proxy serves it pre-PR"
+  ```
+  Do NOT touch the `epic-pipeline.md` skills — the push + `--branch` steps are already authored there (Claude-owned). Continue to Task 7.
+
+---
+
 ### Task 7: Web — contracts, API client, pure board logic
 
 **Files:**
