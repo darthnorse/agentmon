@@ -66,6 +66,15 @@ must encode these as instructions; the plan generator must assume them:
   amount of up-front plan quality substitutes.
 - The final pre-PR multi-review reviews the whole branch and feeds the verdict
   block (`reviews:` list must satisfy the project's `required_reviews`).
+- **Review recursion terminates** (cost control — validated on sub-1): recurse
+  only while the delta contains UNREVIEWED JUDGMENT. A large fix round of fresh
+  logic warrants one cross-model review-the-fixes pass (single reviewer, e.g.
+  codex-only, on the fix delta — cp3's found 8 real issues incl. a merge-retry
+  SHA hole); fixes that merely transcribe validated recommendations do NOT
+  trigger another round. Hard cap: one review-of-fixes per checkpoint; the
+  scheduled whole-branch final review is the fixpoint. Observed convergence:
+  18 findings → 8 → (stop). Without this rule an autonomous runner reviews
+  unboundedly.
 
 ## 4. Resume-from-artifacts property
 
