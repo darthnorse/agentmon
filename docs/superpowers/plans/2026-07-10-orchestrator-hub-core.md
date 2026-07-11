@@ -4014,7 +4014,9 @@ import (
 )
 
 func TestTwoEpicChainEndToEnd(t *testing.T) {
-	cleanVerdict := "```yaml\nagentmon-verdict: v1\nepic: 0\nreviews: [codex]\n" +
+	// The gate binds verdicts to their epic (checkpoint-2 fix), so the
+	// fixture must carry the real issue number.
+	cleanVerdict := "```yaml\nagentmon-verdict: v1\nepic: 1\nreviews: [codex]\n" +
 		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
 		"uncertain: false\nlearnings_updated: true\n```"
 	gh := &fakeGH{
