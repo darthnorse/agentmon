@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -164,6 +165,64 @@ func TestDrainAcksPreviousBatchOnNextPoll(t *testing.T) {
 	}
 	if ag.drainAcks[1] != [2]any{"test-instance", uint64(1)} {
 		t.Fatalf("second drain must ack the first batch: %+v", ag.drainAcks[1])
+	}
+}
+
+// spawnEpic16 boots one epic through Tick so it holds a session assignment
+// (mirrors TestTickSyncsAndSpawns' setup).
+func spawnEpic16(t *testing.T, ag *fakeAgents) (*Orchestrator, *db.DB, db.Epic) {
+	t.Helper()
+	gh := &fakeGH{issues: map[int]github.Issue{
+		16: {Number: 16, Title: "Epic", State: "open", Labels: []string{"agentmon:epic"}},
+	}}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	o.Tick(context.Background())
+	e, err := d.GetEpicByIssue(context.Background(), "p1", 16)
+	if err != nil || e.SessionName == "" {
+		t.Fatalf("epic not spawned: %+v err=%v", e, err)
+	}
+	return o, d, e
+}
+
+func TestCancelKillsRunnerSession(t *testing.T) {
+	ag := &fakeAgents{}
+	o, _, e := spawnEpic16(t, ag)
+	if err := o.Cancel(context.Background(), e.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.killed) != 1 || ag.killed[0] != e.SessionName {
+		t.Fatalf("killed = %v, want [%s]", ag.killed, e.SessionName)
+	}
+}
+
+func TestRetryKillsPredecessorSession(t *testing.T) {
+	ag := &fakeAgents{}
+	o, d, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	if ok, err := d.TransitionEpic(ctx, e.ID, "starting", "stalled", "hub", "test", "2026-07-10T14:01:00Z"); err != nil || !ok {
+		t.Fatalf("force stall: ok=%v err=%v", ok, err)
+	}
+	if err := o.Retry(ctx, e.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.killed) != 1 || ag.killed[0] != e.SessionName {
+		t.Fatalf("killed = %v, want [%s]", ag.killed, e.SessionName)
+	}
+}
+
+func TestKillFailureDoesNotBlockRetry(t *testing.T) {
+	ag := &fakeAgents{killErr: errors.New("agent unreachable")}
+	o, d, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	if ok, err := d.TransitionEpic(ctx, e.ID, "starting", "stalled", "hub", "test", "2026-07-10T14:01:00Z"); err != nil || !ok {
+		t.Fatalf("force stall: ok=%v err=%v", ok, err)
+	}
+	if err := o.Retry(ctx, e.ID, "user"); err != nil {
+		t.Fatalf("retry must be best-effort about the kill: %v", err)
+	}
+	got, _ := d.GetEpic(ctx, e.ID)
+	if got.Stage != "queued" {
+		t.Fatalf("stage = %s, want queued", got.Stage)
 	}
 }
 

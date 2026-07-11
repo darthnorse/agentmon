@@ -1441,7 +1441,7 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): orchestrator rem
 - Consumes: `AgentAPI.KillSession` (Task 11), `registry.ErrNoSession` (`hubd/internal/registry/client.go` — import `agentmon/hubd/internal/registry`; no import cycle: registry only imports db/shared/authn-level packages).
 - Produces: `killEpicSession(ctx, e, phase)` — best-effort session retirement (design doc D12).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `hubd/internal/orchestrator/orchestrator_test.go`:
 
@@ -1507,12 +1507,12 @@ func TestKillFailureDoesNotBlockRetry(t *testing.T) {
 
 (Add `errors` to the test imports if missing. If `ValidTransition(starting, canceled)` or `(starting, stalled)` is not permitted by the shipped state machine, STOP per rule 7 and report — do not invent a different path.)
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestCancelKills|TestRetryKills|TestKillFailure'`
 Expected: FAIL — `ag.killed` is empty (nothing calls KillSession yet).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/orchestrator/orchestrator.go`:
 
@@ -1557,17 +1557,17 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 	o.killEpicSession(ctx, e, "retry")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): Cancel/Retry retire the epic's runner session (best-effort KillSession)"
 ```
 
-- [ ] **Step 6: CHECKPOINT 2 — STOP**
+- [x] **Step 6: CHECKPOINT 2 — STOP**
 
 Report: tasks 7–12 committed, full gate green. WAIT for explicit fix instructions or an explicit "continue". Do NOT begin Task 13.
 

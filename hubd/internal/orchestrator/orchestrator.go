@@ -15,6 +15,7 @@ import (
 	"agentmon/hubd/internal/config"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/github"
+	"agentmon/hubd/internal/registry"
 	"agentmon/hubd/internal/state"
 	"agentmon/shared"
 )
@@ -704,6 +705,30 @@ func (o *Orchestrator) Approve(ctx context.Context, epicID, source string) error
 	return o.mergeEpic(ctx, p, e, source, pr.HeadSHA)
 }
 
+// killEpicSession best-effort retires an epic's runner session (design doc
+// D12: Cancel and Retry retire; a mere stall never kills — the human decides,
+// and Retry IS that decision). ErrNoSession is success: the session already
+// ended, e.g. the normal exit-after-pr_open path. Any other failure is logged
+// and swallowed — the state transition already happened and must not be
+// blocked by an unreachable agent.
+func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase string) {
+	if e.SessionName == "" {
+		return
+	}
+	p, err := o.d.DB.GetProject(ctx, e.ProjectID)
+	if err != nil {
+		log.Printf("orchestrator: %s kill: project %s: %v", phase, e.ProjectID, err)
+		return
+	}
+	srv, ok := o.server(ctx, p, phase+"-kill")
+	if !ok {
+		return
+	}
+	if err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName); err != nil && !errors.Is(err, registry.ErrNoSession) {
+		log.Printf("orchestrator[%s]: %s kill session %q: %v", p.Name, phase, e.SessionName, err)
+	}
+}
+
 func (o *Orchestrator) Retry(ctx context.Context, epicID, source string) error {
 	o.tickMu.Lock()
 	defer o.tickMu.Unlock()
@@ -718,6 +743,7 @@ func (o *Orchestrator) Retry(ctx context.Context, epicID, source string) error {
 	if !o.transition(ctx, e, shared.EpicQueued, source, "retry") {
 		return UserErrorf("retry transition failed — the epic moved concurrently")
 	}
+	o.killEpicSession(ctx, e, "retry")
 	o.Wake()
 	return nil
 }
@@ -732,6 +758,7 @@ func (o *Orchestrator) Cancel(ctx context.Context, epicID, source string) error 
 	if !o.transition(ctx, e, shared.EpicCanceled, source, "cancel") {
 		return UserErrorf("cancel transition failed — the epic moved concurrently")
 	}
+	o.killEpicSession(ctx, e, "cancel")
 	return nil
 }
 
