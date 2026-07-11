@@ -111,7 +111,7 @@ func main() {
 	var boardBcast *orchestrator.BoardBroadcaster
 	if cfg.GitHub.Token != "" {
 		boardBcast = orchestrator.NewBoardBroadcaster()
-		orch = orchestrator.New(orchestrator.Deps{DB: database, GH: github.NewClient(cfg.GitHub.Token), Agents: agentClient, Reg: reg, Live: proj, Bcast: boardBcast, Audit: rec, Cfg: cfg.Orchestrator, Now: nowRFC3339})
+		orch = orchestrator.New(orchestrator.Deps{DB: database, GH: github.NewClient(cfg.GitHub.Token), Agents: agentClient, Reg: reg, Bcast: boardBcast, Audit: rec, Cfg: cfg.Orchestrator, Now: nowRFC3339})
 		go orch.Run(ctx)
 		go orchestrator.RunBoardPushDispatcher(ctx, orchestrator.BoardPushDeps{Bcast: boardBcast, Presence: presence, Store: database, Send: pushSender, Now: nowRFC3339})
 	}

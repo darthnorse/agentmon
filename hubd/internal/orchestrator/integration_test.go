@@ -13,9 +13,8 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
 		"uncertain: false\nlearnings_updated: true\n```"
 	gh := &fakeGH{issues: map[int]github.Issue{1: {Number: 1, Title: "scaffold", State: "open", Labels: []string{"agentmon:epic"}}, 2: {Number: 2, Title: "auth", State: "open", Labels: []string{"agentmon:epic"}, Body: "Blocked by #1"}}, prs: map[int]github.PullRequest{}, checks: map[string][]github.CheckRun{}}
-	ag := &fakeAgents{}
-	live := fakeLive{alive: map[string]bool{sessionName(1): true, sessionName(2): true}}
-	o, d := newTestOrch(t, gh, ag, live)
+	ag := &fakeAgents{sessions: []string{sessionName(1), sessionName(2)}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx)
 	if len(ag.created) != 1 || ag.created[0].Name != sessionName(1) {

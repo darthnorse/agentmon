@@ -10,7 +10,6 @@ import (
 	"agentmon/hubd/internal/config"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/github"
-	"agentmon/hubd/internal/state"
 	"agentmon/shared"
 )
 
@@ -67,12 +66,25 @@ func (f *fakeGH) AddLabels(_ context.Context, _ string, n int, ls []string) erro
 }
 
 type fakeAgents struct {
-	created   []shared.CreateSessionRequest
-	reports   []shared.OrchestratorReport
-	drainAcks [][2]any
-	killed    []string
-	killErr   error
-	spawnErr  error
+	created     []shared.CreateSessionRequest
+	reports     []shared.OrchestratorReport
+	drainAcks   [][2]any
+	killed      []string
+	killErr     error
+	spawnErr    error
+	sessions    []string // live tmux session names the agent would list
+	sessionsErr error
+}
+
+func (f *fakeAgents) Sessions(_ context.Context, _ db.Server, _ string) ([]shared.Session, error) {
+	if f.sessionsErr != nil {
+		return nil, f.sessionsErr
+	}
+	out := make([]shared.Session, 0, len(f.sessions))
+	for _, n := range f.sessions {
+		out = append(out, shared.Session{Name: n, Target: "default"})
+	}
+	return out, nil
 }
 
 func (f *fakeAgents) CreateSession(_ context.Context, _ db.Server, _ string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error) {
@@ -100,24 +112,10 @@ func (fakeReg) Get(_ context.Context, id string) (db.Server, bool, error) {
 	return db.Server{ID: id, URL: "http://a", Bearer: "b", Status: "active"}, true, nil
 }
 
-// fakeLive mimics the projection's real behavior: views carry the AGENT-
-// resolved target label ("default"), never the project's raw Target config.
-type fakeLive struct{ alive map[string]bool }
-
-func (f fakeLive) Server(_ string) []state.SessionView {
-	var out []state.SessionView
-	for name, ok := range f.alive {
-		if ok {
-			out = append(out, state.SessionView{Target: "default", Session: name})
-		}
-	}
-	return out
-}
-
 // sessionName is the expected spawned name for the default test project.
 func sessionName(issue int) string { return SessionNameFor("proj", issue, 1) }
 
-func newTestOrch(t *testing.T, gh *fakeGH, ag *fakeAgents, live fakeLive) (*Orchestrator, *db.DB) {
+func newTestOrch(t *testing.T, gh *fakeGH, ag *fakeAgents) (*Orchestrator, *db.DB) {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "t.sqlite"))
 	if err != nil {
@@ -135,7 +133,7 @@ func newTestOrch(t *testing.T, gh *fakeGH, ag *fakeAgents, live fakeLive) (*Orch
 		t.Fatal(err)
 	}
 	clock := "2026-07-10T14:00:00Z"
-	o := New(Deps{DB: d, GH: gh, Agents: ag, Reg: fakeReg{}, Live: live,
+	o := New(Deps{DB: d, GH: gh, Agents: ag, Reg: fakeReg{},
 		Bcast: NewBoardBroadcaster(),
 		Cfg:   config.OrchestratorCfg{MaxAttempts: 2},
 		Now:   func() string { return clock }})
@@ -145,7 +143,7 @@ func newTestOrch(t *testing.T, gh *fakeGH, ag *fakeAgents, live fakeLive) (*Orch
 func TestDrainAcksPreviousBatchOnNextPoll(t *testing.T) {
 	ag := &fakeAgents{reports: []shared.OrchestratorReport{
 		{Repo: "o/r", Epic: 999, Stage: shared.EpicPlanning, Session: "s", Ts: "t"}}}
-	o, d := newTestOrch(t, &fakeGH{}, ag, fakeLive{})
+	o, d := newTestOrch(t, &fakeGH{}, ag)
 	ctx := context.Background()
 	p, err := d.GetProject(ctx, "p1")
 	if err != nil {
@@ -171,7 +169,7 @@ func spawnEpic16(t *testing.T, ag *fakeAgents) (*Orchestrator, *db.DB, db.Epic) 
 	gh := &fakeGH{issues: map[int]github.Issue{
 		16: {Number: 16, Title: "Epic", State: "open", Labels: []string{"agentmon:epic"}},
 	}}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	o, d := newTestOrch(t, gh, ag)
 	o.Tick(context.Background())
 	e, err := d.GetEpicByIssue(context.Background(), "p1", 16)
 	if err != nil || e.SessionName == "" {
@@ -277,7 +275,7 @@ func TestTickSyncsAndSpawns(t *testing.T) {
 		99: {Number: 99, Title: "unlabeled", State: "open"},
 	}}
 	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx)
 	e, err := d.GetEpicByIssue(ctx, "p1", 16)
@@ -304,8 +302,8 @@ func TestReportsAdvanceAndGateMerges(t *testing.T) {
 		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s", HeadRef: "epic/16-x"}},
 		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
 	}
-	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx) // sync + spawn → starting
 	ag.reports = []shared.OrchestratorReport{
@@ -335,8 +333,8 @@ func TestGateEscalatesOnUnresolvedAndApproveRecovers(t *testing.T) {
 		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s"}},
 		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
 	}
-	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx)
 	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
@@ -357,7 +355,7 @@ func TestGateEscalatesOnUnresolvedAndApproveRecovers(t *testing.T) {
 func TestStallOnDeadSession(t *testing.T) {
 	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
 	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}}) // session never alive
+	o, d := newTestOrch(t, gh, ag) // session never alive
 	ctx := context.Background()
 	o.Tick(ctx) // spawn → starting
 	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicImplementing, Session: sessionName(16), Ts: "t"}}
@@ -369,10 +367,49 @@ func TestStallOnDeadSession(t *testing.T) {
 	}
 }
 
+// Liveness must come from the agent's REAL tmux session list, not the
+// hook-fed state projection: a runner whose provider hooks are missing or
+// mispointed produces no state events at all, yet is alive and working —
+// marking it stalled after two ticks abandons real work (observed live in
+// the 2026-07-11 toy-repo acceptance).
+func TestStallLivenessComesFromAgentSessionsNotHookState(t *testing.T) {
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag)
+	ctx := context.Background()
+	o.Tick(ctx) // spawn
+	ag.sessions = []string{sessionName(16)} // alive in tmux; NO hook state anywhere
+	o.Tick(ctx)
+	o.Tick(ctx)
+	o.Tick(ctx)
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage == "stalled" {
+		t.Fatalf("hookless-but-alive session must not stall, got %+v", e)
+	}
+}
+
+// An unreachable agent means liveness is UNKNOWN, not dead: marking stalls on
+// a hub-side dial failure would mass-stall every epic during an agent restart
+// or network blip. Fail safe — skip the liveness verdict, keep stage timeouts.
+func TestStallSkippedWhenAgentSessionsUnavailable(t *testing.T) {
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
+	ag := &fakeAgents{sessionsErr: errors.New("dial tcp: connection refused")}
+	o, d := newTestOrch(t, gh, ag)
+	ctx := context.Background()
+	o.Tick(ctx) // spawn
+	o.Tick(ctx)
+	o.Tick(ctx)
+	o.Tick(ctx)
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage == "stalled" {
+		t.Fatalf("unreachable agent must not produce a stall verdict, got %+v", e)
+	}
+}
+
 func TestAttemptsExhaustedReachesFailed(t *testing.T) {
 	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
 	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx) // attempt 1 spawns
 	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
@@ -407,8 +444,8 @@ func TestHumanMergeOfEscalatedEpicObservedAtRuntime(t *testing.T) {
 		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s"}},
 		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
 	}
-	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx)
 	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
@@ -430,8 +467,8 @@ func TestHumanMergeOfEscalatedEpicObservedAtRuntime(t *testing.T) {
 
 func TestPROpenReportWithoutPRRejected(t *testing.T) {
 	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
-	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx)
 	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 0, Session: sessionName(16), Ts: "t"}}
@@ -444,8 +481,8 @@ func TestPROpenReportWithoutPRRejected(t *testing.T) {
 
 func TestEmptySessionReportRejectedOnceAssigned(t *testing.T) {
 	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
-	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	o.Tick(ctx) // spawn assigns the session name
 	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicImplementing, Session: "", Ts: "t"}}
@@ -458,8 +495,8 @@ func TestEmptySessionReportRejectedOnceAssigned(t *testing.T) {
 
 func TestReportsRoutedByRepoAcrossProjects(t *testing.T) {
 	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
-	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true, "epic-other-16": true}})
+	ag := &fakeAgents{sessions: []string{sessionName(16), "epic-other-16"}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	// second project on the SAME host with the SAME issue number
 	if err := d.CreateProject(ctx, db.Project{ID: "p2", Name: "other", Repo: "o/other",
@@ -500,7 +537,7 @@ func TestMergingRetryPinsApprovedSHA(t *testing.T) {
 		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", HeadSHA: "NEWSHA", HeadRef: "epic/16-x"}},
 	}
 	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	// Seed an epic parked in merging with a previously-approved SHA — the
 	// state after a gate/human decision followed by a transient merge failure.
@@ -533,8 +570,8 @@ func TestMergingRetryPinsApprovedSHA(t *testing.T) {
 func TestRequireCIHoldsMergeUntilChecksRegister(t *testing.T) {
 	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" + "findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" + "uncertain: false\nlearnings_updated: true\n```"
 	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}, prs: map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s"}}, checks: map[string][]github.CheckRun{}}
-	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
 	if ok, err := d.SetProjectRequireCI(ctx, "p1", true); err != nil || !ok {
 		t.Fatalf("SetProjectRequireCI: ok=%v err=%v", ok, err)

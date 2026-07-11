@@ -16,7 +16,6 @@ import (
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/github"
 	"agentmon/hubd/internal/registry"
-	"agentmon/hubd/internal/state"
 	"agentmon/shared"
 )
 
@@ -36,6 +35,7 @@ type AgentAPI interface {
 	CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error)
 	DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)
 	KillSession(ctx context.Context, srv db.Server, target, name string) error
+	Sessions(ctx context.Context, srv db.Server, target string) ([]shared.Session, error)
 }
 
 // drainAck is the per-(server,target) memory of the last received batch; the
@@ -54,21 +54,11 @@ type ServerGetter interface {
 	Get(ctx context.Context, id string) (db.Server, bool, error)
 }
 
-// LivenessAPI lists a server's live session views. Lookup is by SESSION NAME
-// across targets: the projection keys on the agent-resolved target label
-// (e.g. "default"), which never equals a project's raw Target config ("" =
-// agent default) — an exact (server, target, session) lookup would miss
-// every real deployment and mass-false-stall.
-type LivenessAPI interface {
-	Server(server string) []state.SessionView
-}
-
 type Deps struct {
 	DB     *db.DB
 	GH     GitHubAPI
 	Agents AgentAPI
 	Reg    ServerGetter
-	Live   LivenessAPI
 	Bcast  *BoardBroadcaster
 	Audit  *audit.Recorder
 	Cfg    config.OrchestratorCfg
@@ -457,8 +447,16 @@ func (o *Orchestrator) checkStalls(ctx context.Context, p db.Project, now string
 		return
 	}
 	nowTime, _ := time.Parse(time.RFC3339, now)
-	var views []state.SessionView
-	viewsLoaded := false
+	// Liveness = the agent's REAL tmux session list for the project's target
+	// (create-with-command sessions end with their runner, so tmux existence
+	// tracks the runner process). NOT the hook-fed state projection: a runner
+	// with missing/mispointed provider hooks emits no state events at all yet
+	// works fine — hook state is a display surface, never a liveness source
+	// (learned live: toy-repo acceptance 2026-07-11 mass-false-stalled on it).
+	// nil = liveness unknown this tick (agent unreachable / unknown server):
+	// fail SAFE — no stall verdicts, counters freeze, stage timeouts still run.
+	var liveNames map[string]bool
+	sessionsFetched := false
 	for _, e := range epics {
 		stage := shared.EpicStage(e.Stage)
 		if stage != shared.EpicStarting && stage != shared.EpicPlanning &&
@@ -466,33 +464,33 @@ func (o *Orchestrator) checkStalls(ctx context.Context, p db.Project, now string
 			delete(o.stallSeen, e.ID)
 			continue
 		}
-		if !viewsLoaded {
-			views = o.d.Live.Server(p.ServerID)
-			viewsLoaded = true
-		}
-		// Name-scan limitation: a same-named session on ANOTHER target of
-		// this server would mask death. Slugged+attempt names make that
-		// practically impossible; target-resolved matching arrives with the
-		// sub-2 agent contract.
-		alive := false
-		for _, v := range views {
-			if v.Session == e.SessionName {
-				alive = true
-				break
+		if !sessionsFetched {
+			sessionsFetched = true
+			if srv, ok, err := o.d.Reg.Get(ctx, p.ServerID); err != nil || !ok {
+				log.Printf("orchestrator[%s]: stalls: server %s unavailable: %v", p.Name, p.ServerID, err)
+			} else if list, err := o.d.Agents.Sessions(ctx, srv, p.Target); err != nil {
+				log.Printf("orchestrator[%s]: stalls: agent %s sessions: %v", p.Name, p.ServerID, err)
+			} else {
+				liveNames = make(map[string]bool, len(list))
+				for _, s := range list {
+					liveNames[s.Name] = true
+				}
 			}
 		}
 		reason := ""
-		if !alive {
-			o.stallSeen[e.ID]++
-			// Two consecutive dead ticks AND a real-time grace: wake-driven
-			// ticks can run back-to-back, faster than the state poller can
-			// list a freshly spawned session (and the projection is empty at
-			// boot). Grace = 2 tick periods from the last stage change.
-			if o.stallSeen[e.ID] >= 2 && o.graceElapsed(e.StageUpdatedAt, nowTime) {
-				reason = "runner session disappeared"
+		if liveNames != nil {
+			if !liveNames[e.SessionName] {
+				o.stallSeen[e.ID]++
+				// Two consecutive dead ticks AND a real-time grace: wake-driven
+				// ticks can run back-to-back, faster than a freshly spawned
+				// session settles. Grace = 2 tick periods from the last stage
+				// change.
+				if o.stallSeen[e.ID] >= 2 && o.graceElapsed(e.StageUpdatedAt, nowTime) {
+					reason = "runner session disappeared"
+				}
+			} else {
+				delete(o.stallSeen, e.ID)
 			}
-		} else {
-			delete(o.stallSeen, e.ID)
 		}
 		var timeout time.Duration
 		switch stage {
