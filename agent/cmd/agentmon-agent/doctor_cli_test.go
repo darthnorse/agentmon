@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -151,18 +152,67 @@ func TestDoctorCodexHooksUntrustedFails(t *testing.T) {
 }
 
 func TestDoctorCodexHooksTrustedPasses(t *testing.T) {
+	// Both TOML spellings codex may emit: the header form and the
+	// parent-table form. Substring matching only ever saw the first.
+	for name, entry := range map[string]string{
+		"header":       "\n[hooks.state.\"%s:session_start:0:0\"]\ntrusted_hash = \"sha256:x\"\n",
+		"parent-table": "\n[hooks.state]\n\"%s:session_start:0:0\" = { trusted_hash = \"sha256:x\" }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			run, look, home, h := doctorEnv(t, []string{"codex"})
+			seedSkills(t, h, false, true)
+			hooksPath := filepath.Join(h, ".codex", "hooks.json")
+			_ = os.WriteFile(hooksPath, []byte(`{"hooks":{}}`), 0o644)
+			cfg, _ := os.ReadFile(filepath.Join(h, ".codex", "config.toml"))
+			cfg = append(cfg, []byte(fmt.Sprintf(entry, hooksPath))...)
+			_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"), cfg, 0o644)
+			cfgPath := doctorReporterOK(t)
+			var out bytes.Buffer
+			err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+			if err != nil || !strings.Contains(out.String(), "✓ codex hooks trust") {
+				t.Fatalf("trusted codex hooks must pass; err=%v out:\n%s", err, out.String())
+			}
+		})
+	}
+}
+
+// A commented-out trust entry is NOT trust — the raw-substring approach
+// false-passed this exact troubleshooting leftover.
+func TestDoctorCodexHooksCommentedEntryStillUntrusted(t *testing.T) {
 	run, look, home, h := doctorEnv(t, []string{"codex"})
 	seedSkills(t, h, false, true)
 	hooksPath := filepath.Join(h, ".codex", "hooks.json")
 	_ = os.WriteFile(hooksPath, []byte(`{"hooks":{}}`), 0o644)
 	cfg, _ := os.ReadFile(filepath.Join(h, ".codex", "config.toml"))
-	cfg = append(cfg, []byte("\n[hooks.state.\""+hooksPath+":session_start:0:0\"]\ntrusted_hash = \"sha256:x\"\n")...)
+	cfg = append(cfg, []byte("\n# [hooks.state.\""+hooksPath+":session_start:0:0\"]\n# trusted_hash = \"sha256:x\"\n")...)
 	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"), cfg, 0o644)
 	cfgPath := doctorReporterOK(t)
 	var out bytes.Buffer
 	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
-	if err != nil || !strings.Contains(out.String(), "✓ codex hooks trust") {
-		t.Fatalf("trusted codex hooks must pass; err=%v out:\n%s", err, out.String())
+	if err == nil || !strings.Contains(out.String(), "✗ codex hooks trust") {
+		t.Fatalf("commented-out trust entry must still fail; err=%v out:\n%s", err, out.String())
+	}
+}
+
+// A stat error that is NOT "file absent" (here: ENOTDIR via a file where the
+// .codex dir should be) must surface as a failed check, not silently skip it.
+func TestDoctorCodexHooksStatErrorSurfaces(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	_ = os.WriteFile(filepath.Join(h, ".codex"), []byte("not a dir"), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err == nil || !strings.Contains(out.String(), "✗ codex hooks trust") {
+		t.Fatalf("hooks.json stat error must fail the trust check, not skip it; err=%v out:\n%s", err, out.String())
+	}
+}
+
+func TestCheckCodexHooksTrustMissingConfigActionable(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(`{"hooks":{}}`), 0o644)
+	err := checkCodexHooksTrust(dir)
+	if err == nil || !strings.Contains(err.Error(), "never trusted") {
+		t.Fatalf("missing config.toml must yield the never-trusted guidance, got: %v", err)
 	}
 }
 

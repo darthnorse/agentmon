@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +90,10 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), run))
 			if _, herr := os.Stat(filepath.Join(h, ".codex", "hooks.json")); herr == nil {
 				add("codex hooks trust", checkCodexHooksTrust(filepath.Join(h, ".codex")))
+			} else if !errors.Is(herr, os.ErrNotExist) {
+				// EACCES/ENOTDIR ≠ "no hooks installed": surface it rather
+				// than silently skipping a check that guards against hangs.
+				add("codex hooks trust", herr)
 			}
 		}
 	}
@@ -140,14 +146,28 @@ type codexConfig struct {
 // catches the common fresh-host case, not that one.
 func checkCodexHooksTrust(codexDir string) error {
 	hooksPath := filepath.Join(codexDir, "hooks.json")
-	cfg, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
-	if err != nil {
-		return fmt.Errorf("read %s: %w", filepath.Join(codexDir, "config.toml"), err)
+	notTrusted := fmt.Errorf("%s is installed but never trusted — run codex once interactively and trust the hooks, or runner sessions hang at its trust prompt", hooksPath)
+	// Parse, don't substring-match: codex may emit the header form
+	// ([hooks.state."<path>:…"]) or the parent-table form, and a
+	// commented-out leftover entry must not read as trust.
+	var c struct {
+		Hooks struct {
+			State map[string]toml.Primitive `toml:"state"`
+		} `toml:"hooks"`
 	}
-	if strings.Contains(string(cfg), `[hooks.state."`+hooksPath+":") {
-		return nil
+	cfgPath := filepath.Join(codexDir, "config.toml")
+	if _, err := toml.DecodeFile(cfgPath, &c); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return notTrusted // hooks installed, no config at all: never trusted
+		}
+		return fmt.Errorf("read %s: %w", cfgPath, err)
 	}
-	return fmt.Errorf("%s is installed but never trusted — run codex once interactively and trust the hooks, or runner sessions hang at its trust prompt", hooksPath)
+	for key := range c.Hooks.State {
+		if strings.HasPrefix(key, hooksPath+":") {
+			return nil
+		}
+	}
+	return notTrusted
 }
 
 func checkCodexConfig(path string, run cmdRunner) error {
