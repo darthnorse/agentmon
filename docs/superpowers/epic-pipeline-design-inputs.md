@@ -141,6 +141,18 @@ From the checkpoint-3 review (agent-contract items deliberately deferred):
   and continue" — KickoffCommand needs an attempt/resume parameter once the
   epic-pipeline skill defines the flag.
 
+Deferred structural cleanups from the FINAL whole-branch review (real, not
+urgent — bundle with sub-3 or a cleanup pass; all touch prod-critical paths
+best not churned at merge time):
+- agentws should own the agent WS dial/URL contract; api/ws.go's inline
+  agentWSURL + mint/dial block is now a second copy that will drift.
+- Generic Broadcaster[T] would unify state.Broadcaster and BoardBroadcaster
+  (verbatim mirrors); likewise a shared push fan-out helper for the two
+  dispatchers.
+- Projects-list stage counts are an N+1 (GROUP BY query exists for free).
+- Public webhook rate limiting: deliberately exempted (documented in router.go)
+  — revisit if the hub ever faces untrusted networks directly.
+
 - Verdict block: include checkpoint-review count/results, or final review only?
 - Checkpoint FIX commits: same branch mid-plan (current practice) — any reason
   to fold into the task commits instead?
