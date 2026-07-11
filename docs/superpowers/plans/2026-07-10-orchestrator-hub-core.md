@@ -3320,7 +3320,7 @@ type BoardPushDeps struct {
 
 Behavior: subscribe to `Bcast`; fire ONLY on `Stage == EpicEscalated || EpicStalled`; payload `{"type":"epic","stage":…,"project":…,"epic":<issue>,"title":…,"needs":…,"ts":…}`; same presence-suppression and 404/410-prune semantics as `state.RunPushDispatcher` (`state/push_dispatcher.go:90-150`) — copy its dispatch skeleton, drop the blocked-gate (board transitions are already edge-triggered: `transition()` publishes once per move).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/push_test.go`:
 
@@ -3393,12 +3393,12 @@ func TestBoardPushFiresOnEscalatedOnly(t *testing.T) {
 
 (Check `state.NewPresence()`'s real constructor name in `state/presence.go` before running; adjust if it differs.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestBoardPush -v`
 Expected: FAIL — `RunBoardPushDispatcher undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 (a) `authz/authz.go` — append to the const block:
 
@@ -3521,12 +3521,12 @@ func dispatchBoardPush(ctx context.Context, d BoardPushDeps, c BoardChange) {
 
 (Confirm `state.PushDispatchStore` / `state.PushSender` / `Presence.Online` names against `state/push_dispatcher.go:21-38` — they are per the exploration report; if `PushDispatchStore` is unexported or shaped differently, define a local equivalent interface with the same three methods.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ ./internal/audit/ -v -race && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/ && git commit -m "feat(hub): orchestrator authz actions, audit methods, board push dispatcher"
@@ -3559,7 +3559,7 @@ type OrchestratorAPI interface {
 
 Handler flow: read body (`http.MaxBytesReader`, 1<<20); `VerifySignature(d.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256"))` else 403; `kind := r.Header.Get("X-GitHub-Event")`; `ping` ⇒ 200 `{"ok":"pong"}`; `ParseEvent` ⇒ 400 on error; `d.Orch.IngestWebhook` (log-only on error) ⇒ 202 `{"ok":"accepted"}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/api/orchestrator_webhook_test.go` (white-box `package api`, same style as existing handler tests — check one existing `*_test.go` in the package for the Deps construction helper and reuse it):
 
@@ -3632,12 +3632,12 @@ func TestWebhookAcceptsSignedIssuesEvent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestWebhook -v`
 Expected: FAIL — `Deps` has no `WebhookSecret`/`Orch`, handler undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `Deps` in `hubd/internal/api/servers.go` (with the `OrchestratorAPI` interface defined above it):
 
@@ -3713,12 +3713,12 @@ Register in `router.go` next to the other routes (NOT wrapped in `RequireAuth`):
 	mux.Handle("POST /api/v1/github/webhook", rd.API.GitHubWebhookHandler())
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestWebhook -v && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): public hmac-authenticated github webhook endpoint"
@@ -3743,7 +3743,7 @@ cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): pub
 
 Response DTO for an epic (json tags): `{id, issue, title, labels, blocked_by, stage, attempt, session, branch, pr, needs, issue_state, queued_at, started_at, stage_updated_at, merged_at}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/api/orchestrator_test.go`. Reuse the package's existing test scaffolding for authenticated requests (look at how `sessions_test.go` builds `Deps` + injects a principal — typically via `authn` test helper putting the principal in context; copy that exact pattern). Test cases:
 
@@ -3766,12 +3766,12 @@ func TestActionsDispatch(t *testing.T) { /*
 
 Write these three as full tests against the real handlers (the sketch comments describe assertions, the code must be complete when writing the file — model each request/recorder pair on `TestWebhookAcceptsSignedIssuesEvent` above plus the package's auth helper).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run 'TestRegister|TestBoard|TestActions' -v`
 Expected: FAIL — handlers undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/api/orchestrator.go` with four handlers following the kill-session handler's shape exactly (`authorizeOr403` → decode with `MaxBytesReader` → validate → act → audit → `writeJSON`):
 
@@ -3828,12 +3828,12 @@ then `OrchestratorProjectsHandler()` (GET list / POST register on method switch 
 	mux.Handle("POST /api/v1/orchestrator/projects/{id}/actions", rd.Auth.RequireAuth(rd.API.OrchestratorActionsHandler()))
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -v && go build ./...`
 Expected: PASS (whole api package).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): orchestrator projects/board/actions endpoints"
@@ -3852,16 +3852,16 @@ cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): orc
 - Consumes: `orchestrator.BoardBroadcaster` (Task 11), the SSE conventions of `events.go` (**subscribe BEFORE snapshot** — the load-bearing ordering; `writeSSE`; heartbeat via `d.SSEHeartbeat`).
 - Produces: `GET /api/v1/orchestrator/events` (RequireAuth-wrapped, authz `OrchestratorView`): on connect emits `event: board-snapshot` with `{projects: [...], epics: [...]}` (all projects + non-terminal & recently-merged epics), then `event: board` per `BoardChange` `{project_id, epic_id, issue, stage, needs, title}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Model on the existing `events_test.go` (same package) — construct Deps with a `BoardBcast`, seeded DB, authenticated request; read the recorder body after publishing one change; assert the body contains `event: board-snapshot` and then `event: board` with `"stage":"escalated"`. Use a cancellable request context to end the handler. Write the complete test following the existing SSE test's cancellation pattern.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestBoardEvents -v`
 Expected: FAIL — handler undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/api/orchestrator_events.go` mirroring `events.go` structure exactly: authz check (`OrchestratorView`, `"orchestrator:*"`), flusher assert, nil-guard `d.BoardBcast`, **Subscribe() first**, SSE headers, snapshot (query DB: `ListProjects` + per-project `ListEpicsByProject`), then select-loop over ctx / channel / heartbeat writing `writeSSE(w, "board", payload)`. Register:
 
@@ -3869,12 +3869,12 @@ Create `hubd/internal/api/orchestrator_events.go` mirroring `events.go` structur
 	mux.Handle("GET /api/v1/orchestrator/events", rd.Auth.RequireAuth(rd.API.OrchestratorEventsHandler()))
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -v -race`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): board SSE stream"
@@ -3897,16 +3897,16 @@ cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): boa
 
 The `guidance` board action (`{action:"guidance", epic_id, text}`) resolves the epic's project → server → `Client.Sessions` → `SendText` with `text + "\n"`; audits `EpicAction(…, "guidance", …)`. This is the plan-gate approval / escalation-answer path from the spec (§4).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/agentws/sendtext_test.go`: an `httptest.Server` that upgrades to WS at `/panes/%25/io` (URL-escaped `%25` = pane id `%25`? — use pane id `%1` and note the path escaping the dial code applies; assert on whatever escaped form the dial produces), asserts `mode=rw` query, bearer + directive headers present, reads one binary frame and records it. Test `FirstPaneID` separately with a two-window fixture. Assert `SendText` delivers exactly the bytes `"approved: option A\n"`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/agentws/ -v`
 Expected: FAIL — package doesn't exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `FirstPaneID` is pure iteration. `SendText`:
 
@@ -3976,12 +3976,12 @@ func SendText(ctx context.Context, srv db.Server, minter *directive.Minter, prin
 
 **Before finalizing, open `hubd/internal/api/ws.go:131-157` and `directive/mint.go:60-79` and align exactly:** the `Mint` return values/order, the precise header names, and the ws URL scheme replacement (`agentWSURL` handles `https→wss`; replicate that logic — `strings.Replace(srv.URL, "http", "ws", 1)` covers both `http→ws` and `https→wss`). Fix the test to the same names. Then wire the `guidance` action in `api/orchestrator.go` (Deps needs `Minter *directive.Minter` and an agent-client field for `Sessions` — reuse however `Deps` exposes them for the relay/session handlers; check `Deps` in `servers.go`).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/agentws/ ./internal/api/ -v && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/ && git commit -m "feat(hub): send guidance text into live sessions over agent ws"
@@ -3998,7 +3998,7 @@ git add hubd/internal/ && git commit -m "feat(hub): send guidance text into live
 **Interfaces:**
 - Consumes: everything. Wiring goes where the poller/push dispatcher are wired (`main.go:83-105` region) and where `api.Deps` is populated (`main.go:129-146`).
 
-- [ ] **Step 1: Write the integration test**
+- [x] **Step 1: Write the integration test**
 
 Create `hubd/internal/orchestrator/integration_test.go` — one test walking TWO epics through the full lifecycle against the Task 15 fakes, exercising the dependency chain (this is the acceptance scenario from spec §11 in miniature):
 
@@ -4026,12 +4026,12 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 		checks: map[string][]github.CheckRun{},
 	}
 	ag := &fakeAgents{}
-	live := fakeLive{alive: map[string]bool{"epic-1": true, "epic-2": true}}
+	live := fakeLive{alive: map[string]bool{sessionName(1): true, sessionName(2): true}}
 	o, d := newTestOrch(t, gh, ag, live)
 	ctx := context.Background()
 
 	o.Tick(ctx) // mirror both; spawn #1 only (max_parallel=1 AND #2 blocked)
-	if len(ag.created) != 1 || ag.created[0].Name != "epic-1" {
+	if len(ag.created) != 1 || ag.created[0].Name != sessionName(1) {
 		t.Fatalf("created = %+v", ag.created)
 	}
 	e2, _ := d.GetEpicByIssue(ctx, "p1", 2)
@@ -4042,7 +4042,7 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 	// runner opens PR 10 for epic 1, everything clean
 	gh.prs[10] = github.PullRequest{Number: 10, State: "open", Body: cleanVerdict, HeadSHA: "s1", HeadRef: "epic/1-scaffold"}
 	ag.reports = []shared.OrchestratorReport{
-		{Repo: "o/r", Epic: 1, Stage: shared.EpicPROpen, PR: 10, Session: "epic-1", Ts: "t"},
+		{Repo: "o/r", Epic: 1, Stage: shared.EpicPROpen, PR: 10, Session: sessionName(1), Ts: "t"},
 	}
 	o.Tick(ctx) // pr_open → gate → merged; capacity freed but schedule ran? next tick spawns #2
 	e1, _ := d.GetEpicByIssue(ctx, "p1", 1)
@@ -4051,7 +4051,7 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 	}
 
 	o.Tick(ctx) // dep merged → #2 spawns
-	if len(ag.created) != 2 || ag.created[1].Name != "epic-2" {
+	if len(ag.created) != 2 || ag.created[1].Name != sessionName(2) {
 		t.Fatalf("created = %+v", ag.created)
 	}
 }
