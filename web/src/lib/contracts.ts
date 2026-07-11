@@ -39,3 +39,47 @@ export interface PushSubscriptionJSON { endpoint: string; keys: { p256dh: string
 // GET /api/v1/push/vapid response (mirrors hubd api.VapidHandler). The VAPID public
 // key is non-secret; the client feeds it to pushManager.subscribe.
 export interface VapidKeyResponse { publicKey: string; }
+
+// ---- Orchestrator board (sub-3) ----
+export type EpicStage =
+  | "queued" | "starting" | "planning" | "implementing" | "reviewing"
+  | "pr_open" | "merging" | "merged" | "escalated" | "stalled" | "failed" | "canceled";
+
+export interface ProjectDTO {
+  id: string; name: string; repo: string; server_id: string; target: string;
+  workdir: string; base_branch: string; provider: string;
+  required_reviews: string[] | null; max_parallel: number; paused: boolean;
+  require_ci: boolean; counts?: Record<string, number>;
+}
+
+export interface EpicDTO {
+  id: string; project_id: string; issue: number; title: string;
+  labels: string[] | null; blocked_by: number[] | null; stage: EpicStage;
+  attempt: number; session: string; branch: string; pr: number;
+  verdict?: string; needs: string; issue_state: string;
+  queued_at: string; started_at: string; stage_updated_at: string; merged_at: string;
+}
+
+export interface EpicEventDTO { from: string; to: string; source: string; note: string; ts: string; }
+
+export interface AllBoardResponse { orchestrator_enabled: boolean; projects: ProjectDTO[]; epics: EpicDTO[]; }
+export interface ProjectBoardResponse { project: ProjectDTO; epics: EpicDTO[]; events: Record<string, EpicEventDTO[]>; }
+export interface EpicPlanResponse { path: string; ref: string; markdown: string; }
+
+// SSE `board` delta — hubd/internal/api/orchestrator_events.go:74
+export interface BoardDeltaFrame {
+  project_id: string; epic_id: string; issue: number; stage: EpicStage; needs: string; title: string;
+}
+
+export interface ProjectCreateRequest {
+  name: string; repo: string; server_id: string; target?: string; workdir: string;
+  base_branch?: string; provider?: string; required_reviews?: string[];
+  max_parallel?: number; require_ci?: boolean;
+}
+export interface ProjectPatchRequest {
+  name?: string; workdir?: string; target?: string; base_branch?: string;
+  provider?: string; required_reviews?: string[];
+}
+export interface EpicActionRequest {
+  action: string; epic_id?: string; issue?: number; value?: number; on?: boolean; text?: string;
+}
