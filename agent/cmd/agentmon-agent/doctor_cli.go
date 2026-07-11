@@ -86,6 +86,9 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 		if codexBin {
 			add("codex epic-pipeline prompt", statFile(filepath.Join(h, ".codex", "prompts", "epic-pipeline.md")))
 			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), run))
+			if _, herr := os.Stat(filepath.Join(h, ".codex", "hooks.json")); herr == nil {
+				add("codex hooks trust", checkCodexHooksTrust(filepath.Join(h, ".codex")))
+			}
 		}
 	}
 
@@ -123,6 +126,28 @@ type codexConfig struct {
 		WritableRoots []string `toml:"writable_roots"`
 		NetworkAccess bool     `toml:"network_access"`
 	} `toml:"sandbox_workspace_write"`
+}
+
+// checkCodexHooksTrust catches the never-trusted state: codex hooks are
+// installed but ~/.codex/config.toml records no [hooks.state."<hooks.json>…"]
+// trust entry for them. An untrusted hooks.json hangs EVERY codex runner
+// session at codex's interactive "Hooks need review" prompt (`-a never`
+// answers tool approvals, not trust prompts) until the stage timeout. Codex
+// has no non-interactive trust command and the hash format is undocumented,
+// so the fix is a one-time interactive trust per run user. A trust entry
+// whose hash went STALE (hooks.json edited after trusting) re-prompts the
+// same way but is indistinguishable from a valid entry here — this check
+// catches the common fresh-host case, not that one.
+func checkCodexHooksTrust(codexDir string) error {
+	hooksPath := filepath.Join(codexDir, "hooks.json")
+	cfg, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", filepath.Join(codexDir, "config.toml"), err)
+	}
+	if strings.Contains(string(cfg), `[hooks.state."`+hooksPath+":") {
+		return nil
+	}
+	return fmt.Errorf("%s is installed but never trusted — run codex once interactively and trust the hooks, or runner sessions hang at its trust prompt", hooksPath)
 }
 
 func checkCodexConfig(path string, run cmdRunner) error {

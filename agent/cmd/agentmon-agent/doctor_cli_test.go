@@ -134,6 +134,38 @@ func TestDoctorCodexConfigChecked(t *testing.T) {
 	}
 }
 
+// Installed-but-untrusted codex hooks hang every codex runner session at the
+// interactive "Hooks need review" prompt (`-a never` answers tool approvals,
+// not trust prompts). Codex offers no non-interactive trust path, so the best
+// the doctor can do is catch the never-trusted state before a kickoff hits it.
+func TestDoctorCodexHooksUntrustedFails(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	_ = os.WriteFile(filepath.Join(h, ".codex", "hooks.json"), []byte(`{"hooks":{}}`), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err == nil || !strings.Contains(out.String(), "✗ codex hooks trust") {
+		t.Fatalf("untrusted codex hooks must fail the doctor; err=%v out:\n%s", err, out.String())
+	}
+}
+
+func TestDoctorCodexHooksTrustedPasses(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	hooksPath := filepath.Join(h, ".codex", "hooks.json")
+	_ = os.WriteFile(hooksPath, []byte(`{"hooks":{}}`), 0o644)
+	cfg, _ := os.ReadFile(filepath.Join(h, ".codex", "config.toml"))
+	cfg = append(cfg, []byte("\n[hooks.state.\""+hooksPath+":session_start:0:0\"]\ntrusted_hash = \"sha256:x\"\n")...)
+	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"), cfg, 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err != nil || !strings.Contains(out.String(), "✓ codex hooks trust") {
+		t.Fatalf("trusted codex hooks must pass; err=%v out:\n%s", err, out.String())
+	}
+}
+
 func TestDoctorDerivesRepoFromGit(t *testing.T) {
 	run, look, home, h := doctorEnv(t, []string{"claude"})
 	seedSkills(t, h, true, false)

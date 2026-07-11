@@ -321,6 +321,46 @@ KMEOF
 }
 ensure_killmode
 
+# Orchestrator kickoffs (`claude …` / `codex …`) exec through the agent's tmux
+# server with the SERVICE's environment — no login profile. Provider CLIs
+# commonly live in the run user's ~/.local/bin, which systemd's default PATH
+# lacks: kickoffs would die instantly while the same command works fine in the
+# user's shell. Bake the run user's LOGIN-shell PATH into a drop-in so agent-
+# spawned sessions resolve exactly what the user's shell resolves. Refreshed on
+# every install/update (self-healing when the user relocates their tools).
+# Called on both paths AFTER RUN_USER is final (the update path may rewrite it
+# from agent.toml — same wrong-user trap the skills install hit).
+ensure_provider_path() {
+  # Ask the run user's INTERACTIVE bash (rc files are where ~/.local/bin gets
+  # added; login /bin/sh skips them) and fish the PATH out via a sentinel —
+  # profiles on some hosts print MOTD banners to stdout that would otherwise
+  # pollute the capture.
+  run_path=""
+  if command -v bash >/dev/null 2>&1; then
+    run_path="$(runuser -u "$RUN_USER" -- bash -ilc 'printf "\n__AGENTMON_PATH__%s\n" "$PATH"' 2>/dev/null \
+      | sed -n 's/^__AGENTMON_PATH__//p' | tail -n1 || true)"
+  fi
+  case "$run_path" in
+    /*[!/]*) case "$run_path" in *[\ \	\"]*) run_path="" ;; esac ;;  # reject whitespace/quotes
+    *) run_path="" ;;
+  esac
+  if [ -z "$run_path" ]; then
+    # Fallback: synthesize from the systemd default plus the run user's
+    # conventional tool dirs that actually hold a provider CLI.
+    run_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    fallback_home="$(run_user_home)"
+    for d in "$fallback_home/.local/bin" "$fallback_home/bin" "$fallback_home/.npm-global/bin"; do
+      if [ -x "$d/claude" ] || [ -x "$d/codex" ]; then run_path="$run_path:$d"; fi
+    done
+  fi
+  install -d -m 0755 /etc/systemd/system/agentmon-agent.service.d
+  cat > /etc/systemd/system/agentmon-agent.service.d/path.conf <<PATHEOF
+[Service]
+Environment="PATH=$run_path"
+PATHEOF
+  systemctl daemon-reload 2>/dev/null || true
+}
+
 # ── Update path: existing install → swap the binary in place, keep everything else.
 if [ "$INSTALLED" = "1" ]; then
   # Serve the ENROLLED user, not the invoker: fleet updates often run from a
@@ -334,6 +374,7 @@ if [ "$INSTALLED" = "1" ]; then
       RUN_USER="$cfg_user"
     fi
   fi
+  ensure_provider_path # before the restarts below so they pick the PATH up
   if [ -x /usr/local/bin/agentmon-agent ] && \
      [ "$(sha256sum /usr/local/bin/agentmon-agent | cut -d' ' -f1)" = "$SHA256_EXPECT" ]; then
     # Binary is current. Re-running the installer is also the documented heal path,
@@ -412,6 +453,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+ensure_provider_path
 systemctl daemon-reload
 systemctl enable --now agentmon-agent
 
