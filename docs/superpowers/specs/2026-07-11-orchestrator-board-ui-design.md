@@ -120,11 +120,12 @@ epic-scoped actions. Resolves the plan path:
   segments, charset `[A-Za-z0-9._/-]`, length ≤ 512. Sanitization failure falls
   back to the default, never 500s.
 - Default: `docs/plans/epic-<issue>.md`. Ref: the epic's `branch`
-  (400 if the epic has no branch yet).
+  (409 if the epic has no branch yet — the house user-error convention).
 
-Fetch via a new GitHub client method `GetContents(ctx, repo, path, ref)` using
-`Accept: application/vnd.github.raw+json` (raw body, no base64), read through an
-`io.LimitReader` cap of 256 KiB. Responses:
+Fetch via a new GitHub client method `GetContents(ctx, repo, path, ref)` via the
+JSON contents API (the client's `do()` is JSON-only by design — this reuses its
+auth/error/status handling): decode the base64 `content` field, guarding the
+response's `size` field and the decoded length against a 256 KiB cap. Responses:
 
 - 200 `{ "path", "ref", "markdown" }` (`Cache-Control: no-store`)
 - 404 → `{"error":"no plan doc found at <path> on <ref>"}` (drawer shows verbatim)
