@@ -30,12 +30,23 @@ var ErrSessionExists = errors.New("session already exists")
 func CreateSession(ctx context.Context, run Runner, socket, name, cwd, command string) error {
 	args := with(socketArgs(socket), "new-session", "-d", "-s", name, "-c", cwd)
 	if command != "" {
-		args = append(args, command)
+		// "--" ends option parsing: without it tmux consumes a leading-dash
+		// command as new-session flags ("-x …" fails "width invalid"; "-e…"
+		// is silently misparsed as an environment assignment).
+		args = append(args, "--", command)
 	}
 	out, err := run(ctx, args...)
 	if err != nil {
+		// ExecRunner folds stderr into the error string; a fake Runner may
+		// surface the message via either channel — check both (see RenameSession).
 		if isDuplicateSession(out) || isDuplicateSession([]byte(err.Error())) {
 			return ErrSessionExists
+		}
+		if command != "" {
+			// ExecRunner embeds the full argv in its error and callers log it;
+			// a failing command may carry secrets — redact it from the message.
+			msg := fmt.Sprintf("tmux new-session: %v: %s", err, bytes.TrimSpace(out))
+			return errors.New(strings.ReplaceAll(msg, command, "[command redacted]"))
 		}
 		return fmt.Errorf("tmux new-session: %w: %s", err, bytes.TrimSpace(out))
 	}

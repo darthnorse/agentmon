@@ -65,7 +65,9 @@ type Pane struct {
 // CreateSessionRequest is the body of POST /sessions (agent) and
 // POST /api/v1/servers/{id}/sessions (hub). Name is required and validated by
 // ValidateSessionName; Cwd is optional (agent allow-lists it); Command is
-// rejected with 400 if non-empty in v1 (forward-compat field only).
+// optional — when non-empty the agent runs it as the tmux session's
+// shell-command (the session ends when it exits; design doc D13: no new
+// capability beyond session-create + send-keys).
 type CreateSessionRequest struct {
 	Name    string `json:"name"`
 	Cwd     string `json:"cwd,omitempty"`

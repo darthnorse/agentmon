@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -327,16 +326,31 @@ func TestCreateSessionHandlerForwardsCommand(t *testing.T) {
 		gotName, gotCwd, gotCommand = name, cwd, command
 		return nil
 	}
-	cfg := config.Config{Targets: []config.Target{{Label: "default", SocketName: "agentmon"}}, SessionDirs: []string{dir}}
-	body := fmt.Sprintf(`{"name":"epic-p-16","cwd":%q,"command":"claude \"/epic-pipeline 16\""}`, dir)
+	body := `{"name":"epic-p-16","cwd":"` + dir + `","command":"claude \"/epic-pipeline 16\""}`
 	r := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	CreateSessionHandler(cfg, create)(w, r)
+	CreateSessionHandler(createTestCfg(dir), create)(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code %d body %s", w.Code, w.Body)
 	}
 	if gotName != "epic-p-16" || gotCwd == "" || gotCommand != `claude "/epic-pipeline 16"` {
 		t.Fatalf("creator got name=%q cwd=%q command=%q", gotName, gotCwd, gotCommand)
+	}
+}
+
+func TestCreateSessionHandlerCommandWithNULIs400(t *testing.T) {
+	dir := t.TempDir()
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
+		t.Fatal("creator must not be called for a NUL-bearing command")
+		return nil
+	}
+	h := CreateSessionHandler(createTestCfg(dir), create)
+	body := `{"name":"proj","command":"echo \u0000"}`
+	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code %d, want 400", rr.Code)
 	}
 }
 

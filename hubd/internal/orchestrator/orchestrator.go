@@ -276,8 +276,8 @@ func (o *Orchestrator) drainReports(ctx context.Context, p db.Project) {
 }
 
 // routeReport applies one drained report to the project it names. The drain
-// is per (server, target) and destructive, so reports for OTHER projects on
-// the same host arrive here too — route by Repo, never assume the drainer.
+// is per (server, target) — not per project — so reports for OTHER projects
+// on the same host arrive here too: route by Repo, never assume the drainer.
 func (o *Orchestrator) routeReport(ctx context.Context, drained db.Project, r shared.OrchestratorReport) {
 	p := drained
 	if r.Repo != "" && !strings.EqualFold(r.Repo, p.Repo) {
@@ -310,8 +310,9 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 			log.Printf("orchestrator[%s]: dropped report for unknown epic #%d", p.Name, r.Epic)
 			return
 		}
-		// Transient DB error: the report is already gone from the agent, so
-		// the hub must own it — stash for retry instead of dropping.
+		// Transient DB error: the report will be acked (deleted agent-side) on
+		// the next drain whether or not it applied, so the hub must own it —
+		// stash for retry instead of dropping.
 		if len(o.pending) < maxPendingReports {
 			o.pending = append(o.pending, pendingReport{ProjectID: p.ID, R: r})
 			log.Printf("orchestrator[%s]: report deferred (db error): %v", p.Name, err)

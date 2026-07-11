@@ -86,11 +86,7 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 	f.drainAcks = append(f.drainAcks, [2]any{instance, ack})
 	out := f.reports
 	f.reports = nil
-	var cur uint64
-	if len(out) > 0 {
-		cur = uint64(len(out))
-	}
-	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: cur, Reports: out}, nil
+	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: uint64(len(out)), Reports: out}, nil
 }
 
 func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) error {

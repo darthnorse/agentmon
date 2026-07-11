@@ -56,9 +56,21 @@ func TestCreateSessionWithCommandArgArray(t *testing.T) {
 	if err := CreateSession(context.Background(), run, "mysock", "epic-p-16", "/w", cmd); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	want := []string{"-L", "mysock", "new-session", "-d", "-s", "epic-p-16", "-c", "/w", cmd}
+	want := []string{"-L", "mysock", "new-session", "-d", "-s", "epic-p-16", "-c", "/w", "--", cmd}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestCreateSessionErrorRedactsCommand(t *testing.T) {
+	secret := "run --token=hunter2"
+	run := recordRunner(nil, errors.New("tmux [new-session -- "+secret+"]: exit status 1"), new([]string))
+	err := CreateSession(context.Background(), run, "", "proj", "/tmp", secret)
+	if err == nil || strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("error must not carry the command: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[command redacted]") {
+		t.Fatalf("want redaction marker in: %v", err)
 	}
 }
 

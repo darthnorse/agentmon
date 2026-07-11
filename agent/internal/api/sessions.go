@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"agentmon/agent/internal/config"
@@ -87,7 +88,8 @@ func sessionPaneIDs(session shared.Session) []string {
 }
 
 // maxCreateBody caps the POST /sessions request body. The body is a tiny JSON
-// object (name + optional cwd); anything larger is malformed or hostile.
+// object (name + optional cwd/command); anything larger is malformed or
+// hostile. The cap also implicitly bounds kickoff command length.
 const maxCreateBody = 8 << 10 // 8 KiB
 
 // SessionCreator creates a detached tmux session named name with working
@@ -118,6 +120,12 @@ func CreateSessionHandler(cfg config.Config, create SessionCreator) http.Handler
 		}
 		if err := shared.ValidateSessionName(req.Name); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if strings.ContainsRune(req.Command, 0) {
+			// A NUL can't be an OS argument — exec would fail with an opaque
+			// 500; reject it as the client error it is.
+			writeJSONError(w, http.StatusBadRequest, "command contains invalid bytes")
 			return
 		}
 		t, ok := cfg.ResolveTarget(r.URL.Query().Get("target"))
