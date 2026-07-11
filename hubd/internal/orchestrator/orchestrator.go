@@ -41,7 +41,10 @@ type AgentAPI interface {
 // drainAck is the per-(server,target) memory of the last received batch; the
 // NEXT drain echoes it as the acknowledgment (design doc §4). In-memory only:
 // a hub restart forgets it → ack=0 → the agent redelivers everything unacked →
-// guarded transitions reject the duplicates. Guarded by tickMu.
+// guarded transitions reject the duplicates. Guarded by tickMu. Keys use the
+// project's RAW target string: two projects addressing one agent target as ""
+// and as its explicit label alias into two keys (harmless — redelivery is
+// absorbed — but use consistent target labels across projects on a server).
 type drainAck struct {
 	Instance string
 	Cursor   uint64
@@ -91,7 +94,12 @@ const maxPendingReports = 256
 
 type pendingReport struct {
 	ProjectID string
-	R         shared.OrchestratorReport
+	// ServerID/Target pin the drain origin for repo-routed retries: the
+	// routeReport cross-host trust boundary must hold on the retry path too.
+	// Empty on ProjectID-routed entries (already past the boundary).
+	ServerID string
+	Target   string
+	R        shared.OrchestratorReport
 }
 
 type Orchestrator struct {
@@ -114,6 +122,12 @@ type Orchestrator struct {
 	// destructive drain).
 	pending  []pendingReport
 	ackState map[string]drainAck
+	// retire holds runner session names whose Cancel/Retry kill failed (agent
+	// unreachable). Retried every tick until the kill lands or the session is
+	// gone: the next spawn overwrites the epic's SessionName, and branch +
+	// worktree names are attempt-agnostic, so a forgotten zombie would share
+	// them with its successor. Keyed like ackState; guarded by tickMu.
+	retire map[string][]string // serverID+"\x00"+target → session names
 }
 
 func New(d Deps) *Orchestrator {
@@ -123,7 +137,7 @@ func New(d Deps) *Orchestrator {
 	return &Orchestrator{d: d, wake: make(chan struct{}, 1),
 		watermarks: map[string]string{}, syncSkip: map[string]int{},
 		syncFails: map[string]int{}, stallSeen: map[string]int{},
-		ackState: map[string]drainAck{}}
+		ackState: map[string]drainAck{}, retire: map[string][]string{}}
 }
 
 func (o *Orchestrator) Wake() {
@@ -166,9 +180,46 @@ func (o *Orchestrator) Tick(ctx context.Context) {
 		return
 	}
 	o.retryPending(ctx)
+	o.retryRetire(ctx)
 	for _, p := range projects {
 		o.tickProject(ctx, p)
 	}
+}
+
+// retryRetire re-attempts runner-session kills that failed. An unkilled
+// predecessor shares the epic's attempt-agnostic branch and worktree with
+// its successor — it must be chased, not forgotten.
+func (o *Orchestrator) retryRetire(ctx context.Context) {
+	for key, names := range o.retire {
+		serverID, target, _ := strings.Cut(key, "\x00")
+		srv, found, err := o.d.Reg.Get(ctx, serverID)
+		if err != nil || !found {
+			continue
+		}
+		kept := names[:0]
+		for _, name := range names {
+			if err := o.d.Agents.KillSession(ctx, srv, target, name); err != nil && !errors.Is(err, registry.ErrNoSession) {
+				kept = append(kept, name)
+				continue
+			}
+			log.Printf("orchestrator: retired stale runner session %q on %s", name, serverID)
+		}
+		if len(kept) == 0 {
+			delete(o.retire, key)
+		} else {
+			o.retire[key] = kept
+		}
+	}
+}
+
+func (o *Orchestrator) queueRetire(serverID, target, name string) {
+	key := serverID + "\x00" + target
+	for _, n := range o.retire[key] {
+		if n == name {
+			return
+		}
+	}
+	o.retire[key] = append(o.retire[key], name)
 }
 
 func (o *Orchestrator) tickProject(ctx context.Context, p db.Project) {
@@ -264,8 +315,21 @@ func (o *Orchestrator) drainReports(ctx context.Context, p db.Project) {
 		log.Printf("orchestrator[%s]: reports: %v", p.Name, err)
 		return
 	}
+	deferred := false
 	for _, r := range batch.Reports {
-		o.routeReport(ctx, p, r)
+		if deferred {
+			// An earlier report in this batch was deferred to pending. Defer
+			// the rest too (retried next tick, before the next drain): applying
+			// them now would reorder per-epic reports, and a stale earlier
+			// stage applied late can e.g. silently un-escalate an epic.
+			if len(o.pending) < maxPendingReports {
+				o.pending = append(o.pending, pendingReport{ServerID: p.ServerID, Target: p.Target, R: r})
+			} else {
+				log.Printf("orchestrator[%s]: report DROPPED (pending queue full): %+v", p.Name, r)
+			}
+			continue
+		}
+		deferred = o.routeReport(ctx, p, r)
 	}
 	// Remember what this batch delivered; the NEXT drain echoes it as the ack.
 	// Storing an empty batch's zero cursor is safe: everything previously acked
@@ -278,17 +342,19 @@ func (o *Orchestrator) drainReports(ctx context.Context, p db.Project) {
 // routeReport applies one drained report to the project it names. The drain
 // is per (server, target) — not per project — so reports for OTHER projects
 // on the same host arrive here too: route by Repo, never assume the drainer.
-func (o *Orchestrator) routeReport(ctx context.Context, drained db.Project, r shared.OrchestratorReport) {
+// Returns true when the report was DEFERRED to pending (the caller must then
+// defer the rest of its batch to preserve per-epic ordering).
+func (o *Orchestrator) routeReport(ctx context.Context, drained db.Project, r shared.OrchestratorReport) bool {
 	p := drained
 	if r.Repo != "" && !strings.EqualFold(r.Repo, p.Repo) {
 		other, err := o.d.DB.GetProjectByRepo(ctx, r.Repo)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) && len(o.pending) < maxPendingReports {
-				o.pending = append(o.pending, pendingReport{R: r})
-				return
+				o.pending = append(o.pending, pendingReport{ServerID: drained.ServerID, Target: drained.Target, R: r})
+				return true
 			}
 			log.Printf("orchestrator[%s]: dropped report for unknown repo %q: %+v", drained.Name, r.Repo, r)
-			return
+			return false
 		}
 		// Trust boundary: a report drained from one agent may only drive
 		// projects on that same server+target — cross-host claims are noise
@@ -296,19 +362,20 @@ func (o *Orchestrator) routeReport(ctx context.Context, drained db.Project, r sh
 		if other.ServerID != drained.ServerID || other.Target != drained.Target {
 			log.Printf("orchestrator[%s]: dropped cross-host report for %q (server %s≠%s)",
 				drained.Name, r.Repo, other.ServerID, drained.ServerID)
-			return
+			return false
 		}
 		p = other
 	}
-	o.applyReport(ctx, p, r)
+	return o.applyReport(ctx, p, r)
 }
 
-func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.OrchestratorReport) {
+// applyReport returns true when the report was deferred to pending.
+func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.OrchestratorReport) bool {
 	e, err := o.d.DB.GetEpicByIssue(ctx, p.ID, r.Epic)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			log.Printf("orchestrator[%s]: dropped report for unknown epic #%d", p.Name, r.Epic)
-			return
+			return false
 		}
 		// Transient DB error: the report will be acked (deleted agent-side) on
 		// the next drain whether or not it applied, so the hub must own it —
@@ -316,36 +383,37 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		if len(o.pending) < maxPendingReports {
 			o.pending = append(o.pending, pendingReport{ProjectID: p.ID, R: r})
 			log.Printf("orchestrator[%s]: report deferred (db error): %v", p.Name, err)
-		} else {
-			log.Printf("orchestrator[%s]: report DROPPED (pending queue full): %+v", p.Name, r)
+			return true
 		}
-		return
+		log.Printf("orchestrator[%s]: report DROPPED (pending queue full): %+v", p.Name, r)
+		return false
 	}
 	if !shared.ReportableStage(r.Stage) {
 		log.Printf("orchestrator[%s]: dropped non-reportable stage %q for epic #%d", p.Name, r.Stage, r.Epic)
-		return
+		return false
 	}
 	// Provenance: once an epic has an assigned session, only that session's
 	// reports count — an EMPTY session claim does not bypass the check.
 	if e.SessionName != "" && r.Session != e.SessionName {
 		log.Printf("orchestrator[%s]: report session mismatch: %q != %q", p.Name, r.Session, e.SessionName)
-		return
+		return false
 	}
 	// A pr_open claim with no PR number would strand the epic in a stage no
 	// scanner revisits. Fail closed; the runner stays in reviewing where the
 	// stage timeout still applies.
 	if r.Stage == shared.EpicPROpen && r.PR <= 0 && e.PRNumber <= 0 {
 		log.Printf("orchestrator[%s]: dropped pr_open report without PR number for epic #%d", p.Name, r.Epic)
-		return
+		return false
 	}
 	if !ValidTransition(shared.EpicStage(e.Stage), r.Stage) {
 		log.Printf("orchestrator[%s]: dropped invalid report transition %s→%s", p.Name, e.Stage, r.Stage)
-		return
+		return false
 	}
 	if r.PR > 0 {
 		_, _ = o.d.DB.SetEpicPR(ctx, e.ID, r.PR, e.Branch)
 	}
 	o.transition(ctx, e, r.Stage, "report", r.Note)
+	return false
 }
 
 func (o *Orchestrator) retryPending(ctx context.Context) {
@@ -371,7 +439,14 @@ func (o *Orchestrator) retryPending(ctx context.Context) {
 			}
 			continue
 		}
-		o.applyReport(ctx, p, pr.R)
+		// Repo-routed retries must re-clear the cross-host trust boundary the
+		// deferral skipped past (routeReport enforces it only on the live path).
+		if pr.ServerID != "" && (p.ServerID != pr.ServerID || p.Target != pr.Target) {
+			log.Printf("orchestrator[%s]: dropped cross-host report for %q (server %s≠%s)",
+				p.Name, pr.R.Repo, p.ServerID, pr.ServerID)
+			continue
+		}
+		_ = o.applyReport(ctx, p, pr.R)
 	}
 }
 
@@ -726,7 +801,11 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 		return
 	}
 	if err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName); err != nil && !errors.Is(err, registry.ErrNoSession) {
-		log.Printf("orchestrator[%s]: %s kill session %q: %v", p.Name, phase, e.SessionName, err)
+		// The runner may still be alive, sharing the epic's attempt-agnostic
+		// branch/worktree with its successor — queue the kill for per-tick
+		// retry before the next spawn overwrites e.SessionName.
+		o.queueRetire(srv.ID, p.Target, e.SessionName)
+		log.Printf("orchestrator[%s]: %s kill session %q failed (queued for retry): %v", p.Name, phase, e.SessionName, err)
 	}
 }
 

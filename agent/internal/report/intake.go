@@ -65,6 +65,18 @@ func IntakeHandler(cfg config.Config, st *Store, resolve SessionResolver, now fu
 			writeError(w, http.StatusBadRequest, "stage is not runner-reportable")
 			return
 		}
+		// The CLI enforces both of these client-side; the intake is the
+		// documented HARD-400 boundary, so hand-crafted loopback posts must
+		// not slip a report the hub would misroute (empty repo) or silently
+		// drop (pr_open without a PR).
+		if body.Repo == "" {
+			writeError(w, http.StatusBadRequest, "repo is required")
+			return
+		}
+		if shared.EpicStage(body.Stage) == shared.EpicPROpen && body.PR <= 0 {
+			writeError(w, http.StatusBadRequest, "pr_open requires a positive pr")
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), reportTmuxTimeout)
 		defer cancel()
 		session, err := resolve(ctx, t.SocketName, pane)

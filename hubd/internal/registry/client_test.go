@@ -259,6 +259,18 @@ func TestDrainReports(t *testing.T) {
 	}
 }
 
+func TestDrainReportsUnknownTarget404Errors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"error":"unknown target"}`))
+	}))
+	defer srv.Close()
+	c := NewClient(time.Second)
+	if _, err := c.DrainReports(context.Background(), db.Server{URL: srv.URL, Bearer: "b"}, "typo", "", 0); err == nil {
+		t.Fatal("a new agent's unknown-target 404 must surface as an error, not drain as permanent silence")
+	}
+}
+
 func TestDrainReportsOldAgent404(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()

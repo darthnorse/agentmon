@@ -129,11 +129,18 @@ install_hooks_into() {
   echo "✓ AgentMon $provider hooks installed into $settings — $restart_note."
 }
 
-# provider_detected checks the run user's config directory and PATH. Running the
-# command lookup as RUN_USER avoids mistaking root's PATH for the monitored user's.
+# provider_detected checks provider-AUTHORED config files and the run user's
+# PATH. A bare ~/.claude or ~/.codex directory proves NOTHING: install-skills
+# creates both on every host, so directory existence stopped implying the
+# provider is installed. Running the command lookup as RUN_USER avoids
+# mistaking root's PATH for the monitored user's.
 provider_detected() {
   local home_dir="$1" provider="$2"
-  [ -d "$home_dir/.$provider" ] && return 0
+  case "$provider" in
+    claude) [ -f "$home_dir/.claude/settings.json" ] || [ -f "$home_dir/.claude.json" ] ;;
+    codex)  [ -f "$home_dir/.codex/config.toml" ] || [ -f "$home_dir/.codex/auth.json" ] ;;
+    *)      false ;;
+  esac && return 0
   command -v runuser >/dev/null 2>&1 || return 1
   runuser -u "$RUN_USER" -- sh -lc "command -v $provider" </dev/null >/dev/null 2>&1
 }
@@ -159,6 +166,8 @@ run_user_home() {
 # report/doctor/import-epics CLI; install-skills writes the binary-embedded
 # epic-pipeline / plan-epics prompts into the run user's provider dirs.
 # Idempotent; runs on update too — that is how skill edits reach the fleet.
+# Skills go to the single enrolled run user; hand-edited multi-target configs
+# with extra os_users run `agentmon install-skills` for those users manually.
 install_runner_files() {
   ln -sfnT /usr/local/bin/agentmon-agent /usr/local/bin/agentmon
   local home_dir

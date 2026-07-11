@@ -206,6 +206,55 @@ func TestRetryKillsPredecessorSession(t *testing.T) {
 	}
 }
 
+func TestFailedKillRetriedUntilRetired(t *testing.T) {
+	ag := &fakeAgents{killErr: errors.New("agent unreachable")}
+	o, _, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	if err := o.Cancel(ctx, e.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.killed) != 1 {
+		t.Fatalf("killed = %v", ag.killed)
+	}
+	// Agent recovers: the next tick must retry the failed kill and retire the
+	// zombie (it shares the epic's attempt-agnostic branch/worktree).
+	ag.killErr = nil
+	o.Tick(ctx)
+	if len(ag.killed) != 2 || ag.killed[1] != e.SessionName {
+		t.Fatalf("failed kill was not retried: %v", ag.killed)
+	}
+	// Retired sessions are forgotten, not re-killed forever.
+	o.Tick(ctx)
+	if len(ag.killed) != 2 {
+		t.Fatalf("retired session was re-killed: %v", ag.killed)
+	}
+}
+
+func TestRetryPendingEnforcesCrossHostBoundary(t *testing.T) {
+	ag := &fakeAgents{}
+	o, d, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	rep := shared.OrchestratorReport{Repo: "o/r", Epic: 16, Stage: shared.EpicPlanning, Session: e.SessionName, Ts: "t"}
+	// A report deferred from a drain of ANOTHER server must not drive p1's epic.
+	o.pending = append(o.pending, pendingReport{ServerID: "evil-host", Target: "default", R: rep})
+	o.retryPending(ctx)
+	got, _ := d.GetEpic(ctx, e.ID)
+	if got.Stage != "starting" {
+		t.Fatalf("cross-host pending report must be dropped, stage = %s", got.Stage)
+	}
+	// The same report deferred from the epic's own server applies normally.
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.pending = append(o.pending, pendingReport{ServerID: p.ServerID, Target: p.Target, R: rep})
+	o.retryPending(ctx)
+	got, _ = d.GetEpic(ctx, e.ID)
+	if got.Stage != "planning" {
+		t.Fatalf("same-origin pending report must apply, stage = %s", got.Stage)
+	}
+}
+
 func TestKillFailureDoesNotBlockRetry(t *testing.T) {
 	ag := &fakeAgents{killErr: errors.New("agent unreachable")}
 	o, d, e := spawnEpic16(t, ag)

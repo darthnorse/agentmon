@@ -109,3 +109,13 @@ The amended plan corrected the fixture to provide environment-backed `hub_token`
 - Full shared, agent, and hub build/test gates are green.
 - The runner skill source content was not modified.
 - No pushes or commit trailers were produced.
+
+## Rollout note (final review)
+
+Deploy order is hub first, then update EVERY agent before enabling (or
+unpausing) orchestrator projects: the new hub's kickoff sends a session
+Command that pre-branch agents reject with 400, which stalls each ready epic
+and consumes one of its attempts until a human retries after the agents
+update. The reverse direction (pre-branch hub polling a new agent) fails
+report decoding every tick but loses nothing; it is unreachable through
+supported distribution because agents download their binary from the hub.

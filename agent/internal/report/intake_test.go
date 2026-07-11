@@ -73,6 +73,8 @@ func TestIntakeRejections(t *testing.T) {
 		resolve    SessionResolver
 	}{
 		{"non-reportable stage", `{"repo":"o/r","epic":1,"stage":"merged"}`, okResolver("s")},
+		{"empty repo", `{"epic":1,"stage":"planning"}`, okResolver("s")},
+		{"pr_open without pr", `{"repo":"o/r","epic":1,"stage":"pr_open"}`, okResolver("s")},
 		{"zero epic", `{"repo":"o/r","epic":0,"stage":"planning"}`, okResolver("s")},
 		{"bad json", `{`, okResolver("s")},
 		{"resolver failure", `{"repo":"o/r","epic":1,"stage":"planning"}`,

@@ -37,7 +37,11 @@ exist. Sub-2 is everything runner-side.
   reject duplicates (validated in sub-1). Chosen over separate peek+ack (second
   endpoint/round-trip, same crash semantics) and over keeping the destructive
   drain (the dossier-flagged loss window: an escalation note vanishing when the
-  hub crashes between agent-clear and apply).
+  hub crashes between agent-clear and apply). One residual, accepted window
+  narrows the redelivery guarantee: a report deferred to the hub's in-memory
+  pending queue on a transient DB error is still acked on the next drain, so a
+  hub crash before the next tick's retry loses it — GitHub reconcile covers
+  the gap.
 - **D2 — No run tokens.** Provenance = agent-side server-stamped session names
   (the stamp binds a report to the session of the pane its headers name — it
   authenticates pane→session, not caller→pane, so a local token-holder naming

@@ -11,6 +11,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"agentmon/agent/internal/fsatomic"
 )
 
 type Epic struct {
@@ -114,7 +116,10 @@ func StampIssue(path string, n int) error {
 			if !replaced {
 				lines = append(lines[:i], append([]string{stamp}, lines[i:]...)...)
 			}
-			return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+			// Atomic replace: the stamp is the sole duplicate-issue guard and
+			// lands right after a successful `gh issue create` — a torn
+			// truncate-write here would cost a duplicate issue on re-run.
+			return fsatomic.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 		}
 	}
 	return fmt.Errorf("%s: missing front-matter close '---'", path)

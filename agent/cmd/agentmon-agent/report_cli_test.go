@@ -2,40 +2,27 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// reportTestServer returns an httptest server and an agent.toml whose listen
-// port points at it (mirrors the hook-test pattern: the CLI derives the intake
-// URL from the config's listen port). config.Load resolves hub_token and
-// directive_key unconditionally and every secret must be an env:/file: ref
-// (bare literals are rejected) — mirror writeAgentConfig in hooks_cli_test.go.
+// reportTestServer returns an agent.toml (via the shared writeAgentConfig
+// fixture) whose listen port points at an httptest server running handler —
+// the CLI derives the intake URL from the config's listen port.
 func reportTestServer(t *testing.T, handler http.HandlerFunc) string {
 	t.Helper()
-	t.Setenv("RPT_HUB", "h")
-	t.Setenv("RPT_DK", "d")
-	t.Setenv("RPT_HOOK", "htok")
 	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
 	_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := filepath.Join(t.TempDir(), "agent.toml")
-	cfg := fmt.Sprintf("listen = \"127.0.0.1:%s\"\nserver_id = \"t\"\nhub_token = \"env:RPT_HUB\"\ndirective_key = \"env:RPT_DK\"\nhook_token = \"env:RPT_HOOK\"\n", port)
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(srv.Close)
-	return cfgPath
+	return writeAgentConfig(t, "127.0.0.1:"+port)
 }
 
 func TestReportPostsToIntake(t *testing.T) {
@@ -57,7 +44,7 @@ func TestReportPostsToIntake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/orchestrator/report" || gotAuth != "Bearer htok" || gotPane != "%3" || gotTmux != "/tmp/tmux-0/agentmon,42,0" {
+	if gotPath != "/orchestrator/report" || gotAuth != "Bearer hooktok" || gotPane != "%3" || gotTmux != "/tmp/tmux-0/agentmon,42,0" {
 		t.Fatalf("path=%q auth=%q pane=%q tmux=%q", gotPath, gotAuth, gotPane, gotTmux)
 	}
 	for _, want := range []string{`"epic":7`, `"stage":"pr_open"`, `"pr":12`, `"repo":"o/r"`, `"note":"done"`} {

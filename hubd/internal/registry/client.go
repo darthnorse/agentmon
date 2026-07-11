@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -87,6 +88,14 @@ func (c *Client) DrainReports(ctx context.Context, srv db.Server, target, instan
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
+		// An agent that predates the endpoint 404s generically — tolerated as
+		// an empty batch (mixed-fleet rollout). A NEW agent also 404s a target
+		// label it doesn't know; that misconfig must surface, not drain as
+		// permanent silence.
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if bytes.Contains(b, []byte("unknown target")) {
+			return shared.OrchestratorReportBatch{}, fmt.Errorf("agent %s reports: unknown target %q — check the project's target label", srv.ID, target)
+		}
 		return shared.OrchestratorReportBatch{}, nil
 	}
 	if resp.StatusCode != http.StatusOK {

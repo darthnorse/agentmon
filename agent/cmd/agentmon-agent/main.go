@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -35,36 +36,20 @@ func newAgentServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
+// subcommands dispatches every CLI verb; all share func(args, stdout) error.
+var subcommands = map[string]func([]string, io.Writer) error{
+	"hooks":          hooksMain,
+	"hook-test":      hookTestMain,
+	"report":         reportMain,
+	"import-epics":   importEpicsMain,
+	"doctor":         doctorMain,
+	"install-skills": installSkillsMain,
+}
+
 func main() {
 	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "hooks":
-			if err := hooksMain(os.Args[2:], os.Stdout); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "hook-test":
-			if err := hookTestMain(os.Args[2:], os.Stdout); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "report":
-			if err := reportMain(os.Args[2:], os.Stdout); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "import-epics":
-			if err := importEpicsMain(os.Args[2:], os.Stdout); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "doctor":
-			if err := doctorMain(os.Args[2:], os.Stdout); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "install-skills":
-			if err := installSkillsMain(os.Args[2:], os.Stdout); err != nil {
+		if run, ok := subcommands[os.Args[1]]; ok {
+			if err := run(os.Args[2:], os.Stdout); err != nil {
 				log.Fatal(err)
 			}
 			return
