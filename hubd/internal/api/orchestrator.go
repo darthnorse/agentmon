@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"agentmon/hubd/internal/agentws"
 	"agentmon/hubd/internal/authn"
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
@@ -160,6 +161,7 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 			EpicID string `json:"epic_id"`
 			Issue  int    `json:"issue"`
 			Value  int    `json:"value"`
+			Text   string `json:"text"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
 			writeJSONError(w, 400, "bad request")
@@ -191,6 +193,32 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 			}
 		case "run_issue":
 			err = d.Orch.RunIssue(r.Context(), id, in.Issue)
+		case "guidance":
+			e, eerr := d.DB.GetEpic(r.Context(), in.EpicID)
+			if eerr != nil {
+				err = eerr
+				break
+			}
+			project, eerr := d.DB.GetProject(r.Context(), e.ProjectID)
+			if eerr != nil {
+				err = eerr
+				break
+			}
+			srv, found, eerr := d.Reg.Get(r.Context(), project.ServerID)
+			if eerr != nil || !found {
+				if eerr != nil {
+					err = eerr
+				} else {
+					err = http.ErrMissingFile
+				}
+				break
+			}
+			sessions, eerr := d.Agent.Sessions(r.Context(), srv, project.Target)
+			if eerr != nil {
+				err = eerr
+				break
+			}
+			err = agentws.SendText(r.Context(), srv, &d.Minter, p.ID, project.Target, e.SessionName, in.Text+"\n", sessions)
 		default:
 			writeJSONError(w, 400, "unknown action")
 			return

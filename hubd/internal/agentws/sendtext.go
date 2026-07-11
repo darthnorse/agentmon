@@ -1,0 +1,60 @@
+package agentws
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+
+	"github.com/gorilla/websocket"
+
+	"agentmon/hubd/internal/db"
+	"agentmon/hubd/internal/directive"
+	"agentmon/shared"
+)
+
+func FirstPaneID(sessions []shared.Session, name string) (string, bool) {
+	for _, s := range sessions {
+		if s.Name != name {
+			continue
+		}
+		for _, w := range s.Windows {
+			if len(w.Panes) > 0 {
+				return w.Panes[0].ID, true
+			}
+		}
+	}
+	return "", false
+}
+func SendText(ctx context.Context, srv db.Server, minter *directive.Minter, principalID, target, session, text string, sessions []shared.Session) error {
+	paneID, ok := FirstPaneID(sessions, session)
+	if !ok {
+		return fmt.Errorf("agentws: session %q has no pane", session)
+	}
+	header, reqID, err := minter.Mint(srv, principalID, paneID, target)
+	if err != nil {
+		return fmt.Errorf("agentws: mint: %w", err)
+	}
+	base, err := url.Parse(srv.URL)
+	if err != nil || base.Host == "" {
+		return fmt.Errorf("agentws: bad server url")
+	}
+	scheme := "ws"
+	if base.Scheme == "https" {
+		scheme = "wss"
+	}
+	u := scheme + "://" + base.Host + "/panes/" + url.PathEscape(paneID) + "/io?target=" + url.QueryEscape(target) + "&mode=rw"
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+srv.Bearer)
+	h.Set("X-AgentMon-Directive", header)
+	h.Set("X-AgentMon-Request-Id", reqID)
+	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, u, h)
+	if err != nil {
+		if resp != nil {
+			return fmt.Errorf("agentws: dial %d: %w", resp.StatusCode, err)
+		}
+		return fmt.Errorf("agentws: dial: %w", err)
+	}
+	defer conn.Close()
+	return conn.WriteMessage(websocket.BinaryMessage, []byte(text))
+}
