@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `feat/orchestrator-core`
-Status: Checkpoint 3 reached after completing Tasks 1–15. Waiting for explicit review instructions or `continue` before Task 16.
+Status: stopped during Task 21 because its prescribed integration test uses the pre-checkpoint session-name contract.
 
 ## Completed tasks
 
@@ -36,6 +36,16 @@ Status: Checkpoint 3 reached after completing Tasks 1–15. Waiting for explicit
   - Commit: `7b17b20 feat(hub): issue mirror sync helpers`
 - Task 15: orchestrator core loop for sync, reports, stalls, gating, and scheduling.
   - Commit: `fd7fae6 feat(hub): orchestrator core loop — sync, reports, stalls, gate, schedule`
+- Task 16: orchestrator authorization, audit, and board push dispatcher.
+  - Commit: `d67a560 feat(hub): orchestrator authz actions, audit methods, board push dispatcher`
+- Task 17: HMAC-authenticated GitHub webhook endpoint.
+  - Commit: `4eba10d feat(hub): public hmac-authenticated github webhook endpoint`
+- Task 18: orchestrator projects, board, and actions endpoints.
+  - Commit: `acafad3 feat(hub): orchestrator projects/board/actions endpoints`
+- Task 19: board SSE stream.
+  - Commit: `e369476 feat(hub): board SSE stream`
+- Task 20: guidance injection over the agent websocket.
+  - Commit: `5c15d0a feat(hub): send guidance text into live sessions over agent ws`
 
 ## Verification
 
@@ -77,6 +87,11 @@ Task-specific verification also passed:
 - Task 13: complete registry package tests.
 - Task 14: complete orchestrator package tests.
 - Task 15: complete orchestrator package tests under `go test -race`.
+- Task 16: orchestrator and audit tests under `go test -race`.
+- Task 17: webhook handler tests.
+- Task 18: complete API package tests.
+- Task 19: complete API package tests under `go test -race`.
+- Task 20: agentws and API tests.
 
 ## Resolved plan mismatch
 
@@ -102,8 +117,17 @@ IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"
 
 After that correction, the entire Task 15 race suite passed, as did the final full-module build and test gate.
 
-## Checkpoint stop
+## Task 21 stop condition
 
-- Checkpoint 3 is reached with Tasks 1–15 complete.
-- Task 16 has not been started.
-- Plan checkbox updates through Checkpoint 3 remain uncommitted because task commit commands stage only their listed implementation files.
+Task 21 Step 1 added the prescribed two-epic integration test. Step 2 ran:
+
+```text
+GOCACHE=/tmp/agentmon-go-cache go test ./internal/orchestrator/ -run TestTwoEpicChain -v
+```
+
+It failed at the first session-name assertion. The plan expects `epic-1`, while the checkpoint-3 authoritative contract is `SessionNameFor(project, issue, attempt)` and the implementation correctly produced `epic-proj-1`. The same test also uses runner session `epic-1` later, so this is not a transient result. Task 21 was stopped without changing the historical test. Task 22 was not started.
+
+## Worktree at stop
+
+- `hubd/internal/orchestrator/integration_test.go` contains the exact Task 21 Step 1 test and remains uncommitted.
+- Plan checkbox updates through Task 21 Step 1 remain uncommitted.
