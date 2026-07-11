@@ -262,8 +262,16 @@ must encode (dossier §§1–4):
    `CLAUDE.md`/`AGENTS.md`/docs in the same branch; push; `gh pr create` with
    the body ending in the **v1 verdict block populated from the final review
    only** (D8), `reviews:` satisfying the project's `required_reviews`;
-   `agentmon report --stage pr_open --pr <num>`; exit (command ends → session
-   ends → normal).
+   `agentmon report --stage pr_open --pr <num>`; then END TURN. (Authoring
+   correction to the parent spec's "exit": the kickoff runs the provider CLI
+   interactively, so the session IDLES after the final turn instead of dying
+   — deliberately kept, because an attachable runner session is the product's
+   whole point: humans join escalated/finished sessions to discuss or steer.
+   pr_open has no stall timeout, and Cancel/Retry retire idle sessions.
+   Verdict `reviews` convention: list each lens that ran PLUS the pseudo-entry
+   `cross-model` when at least one reviewing model differs from the authoring
+   model — projects should set `required_reviews: [cross-model]` so the
+   requirement stays provider-agnostic for both runner types.)
 7. **`pipeline:light`** (D10): skip plan artifact + checkpoints; implement
    directly; single pre-PR multi-review; full verdict block; all reporting/
    escalation/worktree/learnings rules unchanged.
@@ -271,13 +279,21 @@ must encode (dossier §§1–4):
 ## 9. Codex playbook — `agent/internal/runnerfiles/files/codex/epic-pipeline.md`
 
 Installed to `~/.codex/prompts/epic-pipeline.md`; invoked by the shipped
-kickoff `codex -a never "/epic-pipeline N"`. Same pipeline with two provider
+kickoff `codex -a never "/epic-pipeline N"` (custom-prompt argument passing
+empirically verified on codex-cli 0.144.1). Same pipeline with two provider
 inversions: subagent-heavy steps become `codex exec` subprocesses (Codex has
 no subagent primitive), and checkpoint/final reviews invert to **headless
-`claude` as the cross-provider reviewer** (`claude -p` driving `/multi-review`
-in the worktree, report written to a file Codex reads). The exact invocation
-form is UNPROVEN (dossier §7) — Claude hand-tests it on a real diff while
-authoring the playbook, before the text lands.
+`claude` as the cross-provider reviewer**. The invocation was VALIDATED live
+on 2026-07-10 (toy repo, planted index-out-of-range + contract bug):
+
+```
+IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md
+```
+
+found both bugs, applied 3 fixes with a regression test, committed them
+(`fix(review): …`), wrote the consolidated report to stdout, exit 0. The
+reviewer commits fixes on the runner's branch; the playbook has Codex re-run
+the full suite afterward and read the new commits.
 
 ## 10. Skill: `plan-epics` + import script
 
