@@ -40,3 +40,29 @@ func TestInstallSkillsRequiresHome(t *testing.T) {
 		t.Fatal("empty home must error")
 	}
 }
+
+func TestInstallSkillsReplacesSymlinkDestination(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude", "commands")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(home, "victim.txt")
+	if err := os.WriteFile(victim, []byte("precious"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, "epic-pipeline.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallSkills(home); err != nil {
+		t.Fatal(err)
+	}
+	// The rename replaces the symlink itself; the write never follows it.
+	fi, err := os.Lstat(filepath.Join(dir, "epic-pipeline.md"))
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("destination must be a regular file, got mode %v err=%v", fi.Mode(), err)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "precious" {
+		t.Fatalf("symlink target was clobbered: %q", got)
+	}
+}

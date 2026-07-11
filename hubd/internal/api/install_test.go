@@ -67,8 +67,14 @@ func TestInstallScriptInstallsRunnerFiles(t *testing.T) {
 	d.ScriptHandler()(w, r)
 	body := w.Body.String()
 	for _, want := range []string{
-		`ln -sfn /usr/local/bin/agentmon-agent /usr/local/bin/agentmon`,
+		`ln -sfnT /usr/local/bin/agentmon-agent /usr/local/bin/agentmon`,
 		`install-skills --home`,
+		// getent failure must not abort the installer under set -euo pipefail.
+		`cut -d: -f6 || true`,
+		// The update path must serve the ENROLLED user (config os_user), not
+		// the invoking user — a root-shell fleet update would otherwise write
+		// the skills to /root and skip the monitored user.
+		`RUN_USER="$cfg_user"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("install.sh missing %q", want)

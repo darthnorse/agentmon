@@ -16,12 +16,12 @@ import (
 //go:embed files/claude/epic-pipeline.md files/claude/plan-epics.md files/codex/epic-pipeline.md
 var fsys embed.FS
 
-// installs maps each embedded skill to its destination under $HOME. Order is
-// part of the contract (tests + install output).
-var installs = []struct{ src, dstDir, dstName string }{
-	{"files/claude/epic-pipeline.md", filepath.Join(".claude", "commands"), "epic-pipeline.md"},
-	{"files/claude/plan-epics.md", filepath.Join(".claude", "commands"), "plan-epics.md"},
-	{"files/codex/epic-pipeline.md", filepath.Join(".codex", "prompts"), "epic-pipeline.md"},
+// installs maps each embedded skill to its destination under $HOME; the file
+// keeps its basename. Order is part of the contract (tests + install output).
+var installs = []struct{ src, dstDir string }{
+	{"files/claude/epic-pipeline.md", filepath.Join(".claude", "commands")},
+	{"files/claude/plan-epics.md", filepath.Join(".claude", "commands")},
+	{"files/codex/epic-pipeline.md", filepath.Join(".codex", "prompts")},
 }
 
 // InstallSkills writes every embedded skill under home (0755 dirs, 0644 files
@@ -42,11 +42,35 @@ func InstallSkills(home string) ([]string, error) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return written, err
 		}
-		dst := filepath.Join(dir, in.dstName)
-		if err := os.WriteFile(dst, b, 0o644); err != nil {
+		dst := filepath.Join(dir, filepath.Base(in.src))
+		if err := writeAtomic(dst, b); err != nil {
 			return written, err
 		}
 		written = append(written, dst)
 	}
 	return written, nil
+}
+
+// writeAtomic replaces dst via a same-directory temp file + rename: live
+// runner sessions read these files, and an in-place truncate-write would
+// expose empty/partial content mid-update. Rename also replaces (never
+// follows) a symlink squatting at dst.
+func writeAtomic(dst string, b []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), dst)
 }

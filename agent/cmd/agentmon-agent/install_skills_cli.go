@@ -11,7 +11,8 @@ import (
 
 // installSkillsMain runs `agentmon install-skills [--home DIR]` — writes the
 // embedded runner skills into the user's provider dirs. The installer invokes
-// it via runuser with an explicit --home (runuser does not reset $HOME).
+// it via runuser with an explicit --home so the destination never depends on
+// runuser's environment handling.
 func installSkillsMain(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("install-skills", flag.ContinueOnError)
 	fs.SetOutput(stdout)

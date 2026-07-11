@@ -275,9 +275,9 @@ session_dirs = ["/home/dev/projects", "/srv/work"]
 > on the filesystem. Custom start *commands* are not exposed in v1 — new sessions start your default shell.
 
 **Runner CLI (orchestrator hosts).** The installer symlinks `agentmon` →
-`agentmon-agent` and installs the runner skills (`epic-pipeline`, `plan-epics`)
-into the run user's `~/.claude/commands/` and `~/.codex/prompts/`. Inside a
-monitored session:
+`agentmon-agent` and installs the runner skills into the run user's
+`~/.claude/commands/` (`epic-pipeline`, `plan-epics`) and `~/.codex/prompts/`
+(`epic-pipeline`). Inside a monitored session:
 
 ```bash
 agentmon report --epic 16 --stage implementing   # runner stage reports
