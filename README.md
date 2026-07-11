@@ -274,6 +274,17 @@ session_dirs = ["/home/dev/projects", "/srv/work"]
 > `$HOME`. This keeps session creation confined to directories you explicitly sanction rather than anywhere
 > on the filesystem. Custom start *commands* are not exposed in v1 — new sessions start your default shell.
 
+**Runner CLI (orchestrator hosts).** The installer symlinks `agentmon` →
+`agentmon-agent` and installs the runner skills (`epic-pipeline`, `plan-epics`)
+into the run user's `~/.claude/commands/` and `~/.codex/prompts/`. Inside a
+monitored session:
+
+```bash
+agentmon report --epic 16 --stage implementing   # runner stage reports
+agentmon doctor                                  # validate a project host (gh auth, clone, reporter, providers)
+agentmon import-epics --dir docs/plan            # epic files → GitHub issues (idempotent)
+```
+
 ---
 
 ## Using AgentMon

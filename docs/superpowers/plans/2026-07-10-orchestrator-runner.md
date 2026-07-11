@@ -3134,7 +3134,7 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): installer distri
 - Modify: `deploy/agent.example.toml` (insert BEFORE the `[[targets]]` table — see Step 1)
 - Modify: `README.md` (Agent config reference section, line ~249)
 
-- [ ] **Step 1: Document the runner surfaces**
+- [x] **Step 1: Document the runner surfaces**
 
 Insert into `deploy/agent.example.toml` immediately BEFORE the `[[targets]]` line, alongside the other top-level keys (hub_token, directive_key). Do NOT append at the end of the file: the file ends inside the `[[targets]]` table, so an appended example a user later uncomments would define `targets[].hook_token` — a key config ignores — and the report intake would stay silently disabled:
 
@@ -3160,12 +3160,12 @@ agentmon import-epics --dir docs/plan            # epic files → GitHub issues 
 ```
 ````
 
-- [ ] **Step 2: Run the full gate**
+- [x] **Step 2: Run the full gate**
 
 Run the Global Constraints gate command.
 Expected: PASS (docs only — the gate guards against accidental code drift).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /root/agentmon && git add deploy/ README.md && git commit -m "docs: runner CLI + hook_token reporter note in config reference"
