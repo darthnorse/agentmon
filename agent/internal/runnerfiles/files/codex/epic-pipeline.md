@@ -34,7 +34,9 @@ otherwise guess. Refer to the issue number as N throughout.
    finish the current task cleanly, make the artifacts truthful, and note in
    the plan where you stopped — a fresh session resumes losslessly from Step 2.
    For heavy isolated subtasks, spawn a subprocess instead of burning your own
-   window: `codex exec -s workspace-write "<self-contained subtask prompt>"`.
+   window — feed the prompt on STDIN with `-` as the arg (a quoted-argument
+   prompt while stdin is attached makes `codex exec` hang waiting for EOF):
+   `printf '%s' "<self-contained subtask prompt>" | codex exec -s workspace-write -`.
 
 ### Escalation protocol
 

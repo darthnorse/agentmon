@@ -107,8 +107,10 @@ the repo tree.)
 3. **Cross-model plan review — BEFORE any implementation.** Plans, not
    their transcription, are where defects originate; review the plan like
    code while a fix is still one edit. If `codex` is on PATH, pipe it the
-   committed plan:
-   `codex exec --skip-git-repo-check "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-$ARGUMENTS.md)"`
+   committed plan on STDIN with `-` as the prompt arg (NOT as a quoted
+   argument: passing the prompt as an argument while stdin is attached makes
+   `codex exec` hang waiting for EOF):
+   `{ printf '%s\n\n' "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN follows:"; cat docs/plans/epic-$ARGUMENTS.md; } | codex exec --skip-git-repo-check -`
    No codex → dispatch a fresh-context subagent with the same brief.
    Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
    verify each finding against the repo (empirically when cheap) before
