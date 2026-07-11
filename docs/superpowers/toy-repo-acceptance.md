@@ -1,12 +1,16 @@
 # Orchestrator toy-repo acceptance — run report (2026-07-11)
 
-**Verdict: PASS.** The full ritual — register → doctor → 3-epic run at
-`max_parallel=1` — completed end-to-end against a hub + agent built from
-`main` (`65a98ce`) on aigallery, with real Claude and Codex runner sessions
-against a real GitHub repo (`darthnorse/agentmon-toy`, private). All three
-merge-gate paths behaved exactly as designed. Three deploy-relevant findings
-below (§Findings) — none are code bugs, all are runbook/prerequisite items,
-one deserves a doctor check.
+**Verdict: PASS, with one code fix shipped.** The full ritual — register →
+doctor → epic runs at `max_parallel=1` — completed end-to-end against a hub +
+agent built from `main` (`65a98ce`) on aigallery, with real Claude and Codex
+runner sessions against a real GitHub repo (`darthnorse/agentmon-toy`,
+private). All merge-gate paths behaved as designed across FOUR epics
+(auto-merge / pr-gate / CI-red escalation / plan-gate + real-green-CI), plus
+the wrong-target chaos pass. Finding A below was judged a real design gap by
+the owner and fixed during the run (`ca33904` + review fixes `b8140c7`,
+4-lens `/multi-review --codex`, all-confirmed validation), then re-validated
+by replaying the original incident against the fixed hub. Findings B–C are
+runbook/prerequisite items.
 
 ## Environment (hermetic — prod untouched)
 
@@ -57,6 +61,14 @@ swaps if a codex epic is needed.
 | #1 farewell | (none) — full pipeline, claude | plan artifact + cross-model plan review + checkpoint & final `/multi-review --codex` + verdict → gate auto-merge | **PR #5 squash-merged by the gate**, issue closed, `agentmon:merged` applied |
 | #2 shout | `pr-gate, pipeline:light, agent:codex`, blocked-by #1 | dep held until #1 merged; codex kickoff (`ProviderFor`); headless-claude review; verdict honestly lists `cross-model` without a `codex` lens; gate → `escalated: "pr-gate label: human merges"` | **approve action → hub merged PR #6**, issue closed |
 | #3 omen | `pipeline:light` (touches `doomed/`) | PR #4 → gatekeeper check fails → gate → `escalated: "CI checks failing"` | **cancel action** → session retired; PR/issue closed by hand |
+| #7 whisper | `plan-gate` — full pipeline, claude | plan committed → **live cross-model plan review** (`codex exec` caught a real `Whisper("Wow!")` replace-the-wrong-`!` edge case; runner amended the plan with a pinning test) → runner-initiated `escalated: "plan-gate: plan ready"` → human **retry** → resumed from plan → PR #8 → **real `greet` check run pending → green** → gate auto-merge | **PR #8 merged**, issue closed |
+
+Addendum passes: **wrong-target chaos test** — a project registered with
+`target: "bogus"` produced the intended loud per-tick error (`agent toyhost
+reports: unknown target "bogus" — check the project's target label`, the
+final-review DrainReports 404-sniff fix live-firing) instead of silent empty
+drains; **import idempotency** re-demonstrated (epics 1–3 skipped as stamped
+while #4 imported); GitHub **sync backoff** observed on a nonexistent repo.
 
 Also live-validated by the run (some via a harness incident, see Findings A):
 stall detection + capacity release; **retry** with attempt-suffixed sessions
@@ -72,26 +84,33 @@ learnings to the repo's `CLAUDE.md`.
 
 ## Findings
 
-**A. Hooks are load-bearing for orchestrator liveness — doctor should check
-them.** The stall detector reads the hub's live-state projection, which is
-fed *only* by provider lifecycle hooks (agent `/state` ← hook intake; tmux
-discovery is not consulted). A host where hooks are missing, mis-pointed, or
-rejected stalls **every** epic ~45s in (2 ticks + grace) while the runner
-works on obliviously — exactly what the harness reproduced before its hook
-redirection was in place (hub then correctly freed capacity, and retry +
-resume recovered the epic without losing work). `agentmon doctor` verifies
-gh/clone/reporter/providers/skills/sandbox but **not hooks**. Recommendation:
-add a doctor check that round-trips a hook (the `hook-test` verb exists) for
-each installed provider.
+**A. Hooks were load-bearing for orchestrator liveness — FIXED in code.**
+The stall detector read the hub's live-state projection, which is fed *only*
+by provider lifecycle hooks (agent `/state` ← hook intake; tmux discovery was
+not consulted). A host where hooks were missing, mis-pointed, or rejected
+stalled **every** epic ~45s in (2 ticks + grace) while the runner worked on
+obliviously — reproduced live by the harness, and judged by the owner a
+design gap, not a runbook item. **Fix (`ca33904`)**: `checkStalls` now
+queries the agent's REAL tmux session list (`AgentAPI.Sessions`, the same
+dial the drain uses), target-scoped — which also closes the old cross-target
+name-scan gap; agent unreachable = liveness unknown = no stall verdict (fail
+safe, stage timeouts still apply). **Review fixes (`b8140c7`)**: per-Tick
+liveness cache shared across co-hosted projects (failures cached too), 3s
+per-call deadline bounding the tickMu hold, `o.server` helper reuse, and the
+Partial-snapshot/charset invariant documented + the raw-target contract
+pinned by tests. Hook state is now what it was designed to be: a display
+surface. A doctor hooks round-trip check (`hook-test` exists) is still worth
+adding for live-view quality, no longer for liveness.
 
 **B. Codex hook trust is an interactive, per-user, one-time gate.** On a host
 where `~/.codex/hooks.json` was installed but never trusted, the first codex
 runner session hangs at codex's "Hooks need review" TUI prompt (`-a never`
-does not answer trust prompts), stalls, and every retry re-hangs. Deploy
-runbook: after installing codex hooks on a runner host, launch codex once
-interactively and trust them (hashes live in `~/.codex/config.toml`
-`[hooks.state]` and are not reproducible externally). aigallery already has
-them trusted; other fleet hosts likely do not.
+does not answer trust prompts) and every retry re-hangs. (With fix A the epic
+no longer false-stalls — but the runner still sits at the prompt until its
+stage timeout.) Owner already knew: trusting codex hooks right after agent
+install is their standing practice — this is a runbook line so it never gets
+skipped on a new host, not a discovery. Hashes live in `~/.codex/config.toml`
+`[hooks.state]` and are not reproducible externally.
 
 **C. Kickoff PATH prerequisite.** The kickoff command resolves `claude` /
 `codex` via the **agent process's** environment (tmux server inherits it; the
@@ -116,15 +135,30 @@ documented here. (3) Codex sandbox for worktree-based epics needs the repo
 `.git` entry the doctor checks — the toy config added both;
 school-platform's codex host config should too.
 
+## Incident replay (regression proof for fix A)
+
+After rebuilding the toy hub at `b8140c7`, the original incident was replayed
+exactly: the test agent restarted WITHOUT hook redirection (runner hooks
+misdirect to the prod agent and are rejected; the hub's hook-fed view of the
+runner stays permanently empty; stage reports still flow), then probe epic #9
+(`pipeline:light`, trivial doc) spawned. Old hub: stalled at ~80s. Fixed hub:
+**4.7 minutes observed, hook-fed pane count 0 on every sample, stages
+progressing `implementing → reviewing` via reports, zero stall events in the
+hub journal** — the epic ran to auto-merge on a hub that never saw a single
+hook from it.
+
 ## State after teardown
 
 Toy hub + agent units stopped; toy tmux server killed; `/usr/local/bin/agentmon`
 symlink removed (the installer recreates it properly at deploy);
 `~/.codex/config.toml` writable_roots restored (toy entries removed).
 Kept: `/root/agentmon-toy/` (minus codex-home) for re-runs, and the private
-`darthnorse/agentmon-toy` repo — issues/PRs closed, `main` green with the two
-merged epics.
+`darthnorse/agentmon-toy` repo — issues/PRs closed, `main` green with the
+merged epics (#1 farewell, #2 shout, #7 whisper, #9 contributing note).
 
-**Next step: deploy** — hub rebuild first (DrainReports tolerates 404 from
-old agents), then all agents via the fleet update loop, with runbook items
-A–C above folded in before enabling any project.
+**Next step: deploy** — hub rebuild first (now REQUIRED ≥ `b8140c7` for the
+liveness fix; DrainReports tolerates 404 from old agents), then all agents
+via the fleet update loop, with runbook items B–C folded in before enabling
+any project: (B) trust codex hooks once per runner host — owner's standing
+practice; (C) agent unit PATH must resolve `claude`/`codex` (drop-in or
+symlinks; on aigallery they live in `/root/.local/bin`).
