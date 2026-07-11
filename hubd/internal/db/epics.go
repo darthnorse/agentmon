@@ -180,6 +180,13 @@ func (d *DB) SetEpicPR(ctx context.Context, id string, pr int, branch string) (b
 	return d.execFound(ctx, `UPDATE epics SET pr_number=?, branch=?, updated_at=datetime('now') WHERE id=?`, pr, branch, id)
 }
 
+// SetEpicBranch records the epic's branch WITHOUT a PR — used at plan-gate
+// escalation so the plan proxy can serve the committed plan off GitHub
+// before any PR exists. Never touches pr_number.
+func (d *DB) SetEpicBranch(ctx context.Context, id, branch string) (bool, error) {
+	return d.execFound(ctx, `UPDATE epics SET branch=?, updated_at=datetime('now') WHERE id=?`, branch, id)
+}
+
 func (d *DB) SetEpicVerdict(ctx context.Context, id, verdictJSON string) (bool, error) {
 	return d.execFound(ctx, `UPDATE epics SET verdict=?, updated_at=datetime('now') WHERE id=?`, verdictJSON, id)
 }

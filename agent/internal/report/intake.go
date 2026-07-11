@@ -25,11 +25,12 @@ const reportTmuxTimeout = 10 * time.Second
 type SessionResolver func(ctx context.Context, socket, pane string) (string, error)
 
 type intakeBody struct {
-	Repo  string `json:"repo"`
-	Epic  int    `json:"epic"`
-	Stage string `json:"stage"`
-	Note  string `json:"note"`
-	PR    int    `json:"pr"`
+	Repo   string `json:"repo"`
+	Epic   int    `json:"epic"`
+	Stage  string `json:"stage"`
+	Note   string `json:"note"`
+	PR     int    `json:"pr"`
+	Branch string `json:"branch"`
 }
 
 // IntakeHandler serves POST /orchestrator/report — loopback + hook-token
@@ -86,7 +87,7 @@ func IntakeHandler(cfg config.Config, st *Store, resolve SessionResolver, now fu
 		}
 		rep := shared.OrchestratorReport{
 			Repo: body.Repo, Epic: body.Epic, Stage: shared.EpicStage(body.Stage),
-			Note: body.Note, PR: body.PR, Session: session,
+			Note: body.Note, PR: body.PR, Branch: body.Branch, Session: session,
 			Ts: now().UTC().Format(time.RFC3339),
 		}
 		if r.URL.Query().Get("dry_run") != "1" {

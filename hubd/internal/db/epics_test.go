@@ -110,6 +110,32 @@ func TestEpicSettersAndLists(t *testing.T) {
 	}
 }
 
+func TestSetEpicBranchWithoutPR(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	seedProject(t, d)
+	e, err := d.UpsertEpicIssue(ctx, Epic{
+		ProjectID: "p1", IssueNumber: 9, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.SetEpicBranch(ctx, e.ID, "epic/9-x"); err != nil || !ok {
+		t.Fatalf("set branch: ok=%v err=%v", ok, err)
+	}
+	got, err := d.GetEpic(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Branch != "epic/9-x" || got.PRNumber != 0 {
+		t.Fatalf("branch without PR: %+v", got)
+	}
+	if ok, err := d.SetEpicBranch(ctx, "nope", "epic/9-x"); err != nil || ok {
+		t.Fatalf("missing epic: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestEpicEventsSameSecondOrderByInsertion(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()

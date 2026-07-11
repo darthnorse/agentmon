@@ -406,6 +406,19 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		log.Printf("orchestrator[%s]: dropped invalid report transition %s→%s", p.Name, e.Stage, r.Stage)
 		return false
 	}
+	if r.Branch != "" && e.Branch == "" && strings.HasPrefix(r.Branch, fmt.Sprintf("epic/%d-", r.Epic)) {
+		ok, err := o.d.DB.SetEpicBranch(ctx, e.ID, r.Branch)
+		if err != nil {
+			if len(o.pending) < maxPendingReports {
+				o.pending = append(o.pending, pendingReport{ProjectID: p.ID, R: r})
+				log.Printf("orchestrator[%s]: report deferred (branch persist: %v)", p.Name, err)
+				return true
+			}
+			log.Printf("orchestrator[%s]: branch persist DROPPED (pending full): %+v", p.Name, r)
+		} else if ok {
+			e.Branch = r.Branch
+		}
+	}
 	if r.PR > 0 {
 		_, _ = o.d.DB.SetEpicPR(ctx, e.ID, r.PR, e.Branch)
 	}

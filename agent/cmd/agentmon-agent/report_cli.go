@@ -34,6 +34,7 @@ func reportMain(args []string, stdout io.Writer) error {
 	stage := fs.String("stage", "", "planning|implementing|reviewing|pr_open|escalated (required)")
 	note := fs.String("note", "", "optional note (escalation reason, checkpoint summary)")
 	pr := fs.Int("pr", 0, "PR number (required with --stage pr_open)")
+	branch := fs.String("branch", "", "epic branch to record (plan-gate escalation only)")
 	repo := fs.String("repo", "", "owner/name (default: derived from the cwd's git remote origin)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -54,7 +55,7 @@ func reportMain(args []string, stdout io.Writer) error {
 		return err
 	}
 	body, err := postReport(*cfgPath, map[string]any{
-		"repo": r, "epic": *epic, "stage": *stage, "note": *note, "pr": *pr,
+		"repo": r, "epic": *epic, "stage": *stage, "note": *note, "pr": *pr, "branch": *branch,
 	}, false)
 	if err != nil {
 		return err
