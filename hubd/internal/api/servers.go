@@ -11,6 +11,7 @@ import (
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/directive"
+	"agentmon/hubd/internal/orchestrator"
 	"agentmon/hubd/internal/registry"
 	"agentmon/hubd/internal/state"
 	"agentmon/shared"
@@ -39,6 +40,7 @@ type PushStore interface {
 
 // Deps holds the shared dependencies for all API handlers.
 type Deps struct {
+	DB                  *db.DB
 	Reg                 *registry.Registry
 	Agent               *registry.Client
 	Audit               *audit.Recorder
@@ -57,6 +59,9 @@ type Deps struct {
 	VAPIDPublic         string             // M9: VAPID public key served to clients (non-secret)
 	Presence            *state.Presence    // M9: live-SSE presence counter for push de-dup (nil → disabled)
 	RelayCap            *authn.Gauge       // Phase 5: per-principal cap on concurrent terminal relays (nil → unlimited)
+	Orch                OrchestratorAPI
+	WebhookSecret       string
+	BoardBcast          *orchestrator.BoardBroadcaster
 }
 
 // authorizeOr403 resolves the principal from the request context, calls

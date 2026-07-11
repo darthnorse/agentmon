@@ -48,6 +48,16 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("GET /api/v1/push/vapid", rd.Auth.RequireAuth(rd.API.VapidHandler()))
 	mux.Handle("POST /api/v1/push/subscribe", rd.Auth.RequireAuth(rd.API.SubscribeHandler()))
 	mux.Handle("POST /api/v1/push/unsubscribe", rd.Auth.RequireAuth(rd.API.UnsubscribeHandler()))
+	// Public by design (GitHub cannot hold cookies/CSRF); HMAC fails closed.
+	// Deliberately NOT behind the onboard rate limiter: webhook bursts from a
+	// busy repo would exceed it, and the pre-HMAC cost is one bounded (1MiB)
+	// read + SHA-256.
+	mux.Handle("POST /api/v1/github/webhook", rd.API.GitHubWebhookHandler())
+	mux.Handle("GET /api/v1/orchestrator/projects", rd.Auth.RequireAuth(rd.API.OrchestratorProjectsHandler()))
+	mux.Handle("POST /api/v1/orchestrator/projects", rd.Auth.RequireAuth(rd.API.OrchestratorProjectsHandler()))
+	mux.Handle("GET /api/v1/orchestrator/projects/{id}/board", rd.Auth.RequireAuth(rd.API.OrchestratorBoardHandler()))
+	mux.Handle("POST /api/v1/orchestrator/projects/{id}/actions", rd.Auth.RequireAuth(rd.API.OrchestratorActionsHandler()))
+	mux.Handle("GET /api/v1/orchestrator/events", rd.Auth.RequireAuth(rd.API.OrchestratorEventsHandler()))
 
 	mux.Handle("POST /api/v1/enroll", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Enroll.Handler()))
 

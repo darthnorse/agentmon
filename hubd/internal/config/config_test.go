@@ -75,3 +75,72 @@ func TestStatePollInterval(t *testing.T) {
 		}
 	})
 }
+
+func writeCfg(t *testing.T, body string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadGitHubAndOrchestrator(t *testing.T) {
+	c, err := Load(writeCfg(t, `
+listen: ":8080"
+github:
+  token: ghp_x
+  webhook_secret: whsec
+orchestrator:
+  tick: 5s
+  max_attempts: 3
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GitHub.Token != "ghp_x" || c.GitHub.WebhookSecret != "whsec" {
+		t.Fatalf("github cfg = %+v", c.GitHub)
+	}
+	if c.Orchestrator.Tick != 5*time.Second || c.Orchestrator.MaxAttempts != 3 {
+		t.Fatalf("orchestrator cfg = %+v", c.Orchestrator)
+	}
+}
+
+func TestOrchestratorDefaults(t *testing.T) {
+	c, err := Load(writeCfg(t, `listen: ":8080"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Orchestrator.Tick != 15*time.Second {
+		t.Fatalf("default tick = %v, want 15s", c.Orchestrator.Tick)
+	}
+	if c.Orchestrator.PlanningTimeout != 2*time.Hour ||
+		c.Orchestrator.ImplementingTimeout != 8*time.Hour ||
+		c.Orchestrator.ReviewingTimeout != 2*time.Hour {
+		t.Fatalf("default timeouts = %+v", c.Orchestrator)
+	}
+	if c.Orchestrator.MaxAttempts != 2 {
+		t.Fatalf("default max_attempts = %d, want 2", c.Orchestrator.MaxAttempts)
+	}
+}
+
+func TestOrchestratorNegativeValuesDefaulted(t *testing.T) {
+	c, err := Load(writeCfg(t, `
+orchestrator:
+  tick: -5s
+  planning_timeout: -1h
+  max_attempts: -1
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Orchestrator.Tick != 15*time.Second {
+		t.Fatalf("negative tick must default, got %v", c.Orchestrator.Tick)
+	}
+	if c.Orchestrator.PlanningTimeout != 2*time.Hour {
+		t.Fatalf("negative planning_timeout must default, got %v", c.Orchestrator.PlanningTimeout)
+	}
+	if c.Orchestrator.MaxAttempts != 2 {
+		t.Fatalf("negative max_attempts must default, got %d", c.Orchestrator.MaxAttempts)
+	}
+}

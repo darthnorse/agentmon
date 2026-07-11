@@ -21,6 +21,7 @@
 - Commit style: `feat(hub): …` / `test(hub): …`; **never add a Co-Authored-By trailer**.
 - The merge gate FAILS CLOSED: missing/malformed verdict, unknown reporter session, unparseable CI ⇒ escalate, never merge.
 - Verify the whole module still builds before every commit: `go build ./... && go test ./...`.
+- **Checkpoint stops:** after committing Task 5, Task 11, and Task 15, STOP execution and report the checkpoint (tasks completed, suite status). An external cross-provider review of the branch happens at each checkpoint. Do NOT begin Task 6, 12, or 16 until you receive explicit fix instructions or an explicit "continue".
 
 ## Shared type registry (single source of truth for cross-task names)
 
@@ -48,15 +49,15 @@
 
 **Files:**
 - Modify: `hubd/internal/config/config.go`
-- Test: `hubd/internal/config/config_test.go` (new)
+- Test: `hubd/internal/config/config_test.go` (append — file exists on main; keep all pre-existing tests unchanged)
 
 **Interfaces:**
 - Consumes: nothing new.
 - Produces: `config.GitHubCfg{Token, WebhookSecret string}`, `config.OrchestratorCfg{Tick, PlanningTimeout, ImplementingTimeout, ReviewingTimeout time.Duration; MaxAttempts int}`, fields `Config.GitHub GitHubCfg` and `Config.Orchestrator OrchestratorCfg` with defaults applied in `Load`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
-Create `hubd/internal/config/config_test.go`:
+Append to the existing `hubd/internal/config/config_test.go` (preserve all pre-existing tests):
 
 ```go
 package config
@@ -117,12 +118,12 @@ func TestOrchestratorDefaults(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/config/ -v`
 Expected: FAIL — `c.GitHub undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/config/config.go`, add next to `CookieCfg`/`RateLimitCfg`:
 
@@ -171,12 +172,12 @@ In `Load`, after the existing `SessionCookie.Name` default block:
 	}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/config/ -v`
 Expected: PASS (both tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/config/ && git commit -m "feat(hub): github + orchestrator config sections"
@@ -193,16 +194,16 @@ cd /root/agentmon && git add hubd/internal/config/ && git commit -m "feat(hub): 
 **Interfaces:**
 - Produces: tables `projects`, `epics`, `epic_events` (schema below — later tasks' SQL must match column names exactly).
 
-- [ ] **Step 1: Extend the schema test to fail**
+- [x] **Step 1: Extend the schema test to fail**
 
 In `hubd/internal/db/db_test.go`, add `"projects", "epics", "epic_events"` to the `want` slice of table names in the existing schema test.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestOpen -v`
 Expected: FAIL — missing table `projects`.
 
-- [ ] **Step 3: Create the migration**
+- [x] **Step 3: Create the migration**
 
 Create `hubd/internal/db/migrations/0005_orchestrator.sql`:
 
@@ -262,12 +263,12 @@ CREATE INDEX idx_epic_events_epic ON epic_events(epic_id, ts);
 
 Note: string timestamps use `''` (not NULL) for "unset" — matches the store code's plain-`string` fields and avoids `sql.NullString` scanning.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -v`
 Expected: PASS (all existing + schema test).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): 0005 orchestrator schema (projects, epics, epic_events)"
@@ -292,7 +293,7 @@ cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): 0005
   - `func (d *DB) SetProjectPaused(ctx context.Context, id string, paused bool) (bool, error)`
   - `func (d *DB) SetProjectMaxParallel(ctx context.Context, id string, n int) (bool, error)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/db/projects_test.go`:
 
@@ -304,16 +305,9 @@ import (
 	"testing"
 )
 
-// enrollTestServer satisfies the epics/projects FK on servers(id).
-func enrollTestServer(t *testing.T, d *DB, id string) {
-	t.Helper()
-	if err := d.EnrollServer(context.Background(), Server{
-		ID: id, Name: id, Hostname: id, URL: "http://127.0.0.1:1", Status: "active",
-		Bearer: "b", SigningKey: "k",
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
+// NOTE: the package already provides enrollTestServer(t, d, id) in
+// state_test.go (same signature/behavior — enrolls an active server
+// satisfying the projects/epics FK). REUSE it; do not redeclare.
 
 func testProject(server string) Project {
 	return Project{
@@ -374,12 +368,12 @@ func TestProjectSetters(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProject -v`
 Expected: FAIL — `d.CreateProject undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/db/projects.go`:
 
@@ -513,12 +507,12 @@ func unmarshalStrings(s string) []string {
 
 (Add `"encoding/json"` to imports.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProject -v && go build ./...`
 Expected: PASS, clean build.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): projects store"
@@ -550,7 +544,7 @@ cd /root/agentmon && git add hubd/internal/db/ && git commit -m "feat(hub): proj
   - `func (d *DB) AppendEpicEvent(ctx context.Context, ev EpicEvent) error` — stamps UUID if `ID == ""`
   - `func (d *DB) ListEpicEvents(ctx context.Context, epicID string, limit int) ([]EpicEvent, error)` — newest first
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/db/epics_test.go`:
 
@@ -668,12 +662,12 @@ func TestEpicSettersAndLists(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestUpsertEpic -v`
 Expected: FAIL — `d.UpsertEpicIssue undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/db/epics.go`:
 
@@ -929,12 +923,12 @@ func splitNonEmpty(s string, sep rune) []string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/db/ -v && go build ./...`
 Expected: PASS (all db tests), clean build.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/db/ && git commit -m "feat(hub): epics + epic_events store with guarded transitions"
@@ -955,7 +949,7 @@ git add hubd/internal/db/ && git commit -m "feat(hub): epics + epic_events store
   - `func ReportableStage(s EpicStage) bool` — the subset a RUNNER may report: planning, implementing, reviewing, pr_open, escalated
   - `type OrchestratorReport struct { Repo string; Epic int; Stage EpicStage; Note string; PR int; Session string; Ts string }` with json tags `repo, epic, stage, note, pr, session, ts` (`note`/`pr` omitempty)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `shared/orchestrator_test.go`:
 
@@ -1004,12 +998,12 @@ func TestOrchestratorReportJSON(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/shared && go test ./ -run 'TestValidEpicStage|TestReportableStage|TestOrchestratorReportJSON' -v`
 Expected: FAIL — `ValidEpicStage undefined` (compile error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `shared/orchestrator.go`:
 
@@ -1067,16 +1061,20 @@ type OrchestratorReport struct {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/shared && go test ./ -v && cd /root/agentmon/hubd && go build ./...`
 Expected: PASS; hub still builds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add shared/ && git commit -m "feat(shared): epic stages + orchestrator report wire type"
 ```
+
+- [x] **Step 6: CHECKPOINT 1 — STOP**
+
+Tasks 1–5 (foundations: config, schema, stores, shared types) are a review checkpoint. STOP here — do not begin Task 6. Report that checkpoint 1 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
 
 ---
 
@@ -1105,7 +1103,7 @@ cd /root/agentmon && git add shared/ && git commit -m "feat(shared): epic stages
     - `RemoveLabel(ctx, repo string, num int, label string) error` — 404 tolerated (already absent)
   - Sentinels: `ErrNotFound`, `ErrNotMergeable`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/github/client_test.go`:
 
@@ -1261,12 +1259,12 @@ func TestWriteBackCalls(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -v`
 Expected: FAIL — package doesn't exist / `NewClient undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/github/client.go`:
 
@@ -1503,12 +1501,12 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, num int, label st
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -v && go build ./...`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/github/ && git commit -m "feat(hub): minimal github rest client"
@@ -1529,7 +1527,7 @@ cd /root/agentmon && git add hubd/internal/github/ && git commit -m "feat(hub): 
   - `type Event struct { Kind, Action, Repo string; Issue *Issue; PRNumber int; PRMerged bool }`
   - `func ParseEvent(kind string, body []byte) (Event, error)` — kinds handled: `issues`, `pull_request`, `check_suite`, `ping`; anything else ⇒ `Event{Kind: kind}` with only Repo filled when present
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/github/webhook_test.go`:
 
@@ -1605,12 +1603,12 @@ func TestParseUnknownKind(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -run 'TestVerify|TestParse' -v`
 Expected: FAIL — `VerifySignature undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/github/webhook.go`:
 
@@ -1678,12 +1676,12 @@ func ParseEvent(kind string, body []byte) (Event, error) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/github/ -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/github/ && git commit -m "feat(hub): webhook hmac verify + event parse"
@@ -1704,7 +1702,7 @@ git add hubd/internal/github/ && git commit -m "feat(hub): webhook hmac verify +
   - `var ErrNoVerdict = errors.New("orchestrator: no verdict block")`
   - `func ParseVerdict(prBody string) (*Verdict, error)` — scans fenced ` ```yaml ` blocks, parses the LAST one whose YAML contains key `agentmon-verdict`; malformed YAML in that block ⇒ error (gate treats any error as escalate)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/verdict_test.go`:
 
@@ -1763,12 +1761,12 @@ func TestParseVerdictMalformed(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v`
 Expected: FAIL — package doesn't exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/verdict.go`:
 
@@ -1833,12 +1831,12 @@ func ParseVerdict(prBody string) (*Verdict, error) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): verdict block parser"
@@ -1870,7 +1868,7 @@ Decision order (first match wins — mirrors spec §6):
 8. required reviews not a subset of `Verdict.Reviews` ⇒ escalate "missing required reviews: …"
 9. otherwise ⇒ Merge
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/gate_test.go`:
 
@@ -1922,12 +1920,12 @@ func TestDecide(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestDecide -v`
 Expected: FAIL — `Decide undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/gate.go`:
 
@@ -2010,12 +2008,12 @@ func missingReviews(required, got []string) []string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestDecide -v`
 Expected: PASS (10 subtests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): fail-closed merge gate"
@@ -2039,7 +2037,7 @@ Rules:
 - Recovery: `escalated → queued | implementing | merging | canceled`; `stalled → queued | canceled | failed`; `queued → canceled`.
 - Terminal (`merged, failed, canceled`): no exits.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/machine_test.go`:
 
@@ -2090,12 +2088,12 @@ func TestValidTransition(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestValidTransition -v`
 Expected: FAIL — `ValidTransition undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/machine.go`:
 
@@ -2156,12 +2154,12 @@ func ValidTransition(from, to shared.EpicStage) bool {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestValidTransition -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): epic stage transition table"
@@ -2181,7 +2179,7 @@ cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(
   - `type BoardChange struct { ProjectID, EpicID string; Issue int; Stage shared.EpicStage; Needs, Title string }`
   - `type BoardBroadcaster` with `NewBoardBroadcaster() *BoardBroadcaster`, `Subscribe() (id uint64, ch <-chan BoardChange, cancel func())`, `Publish(c BoardChange)` — same drop-oldest, non-blocking semantics as `state.Broadcaster` (`state/broadcaster.go`), buffer 64.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/broadcast_test.go`:
 
@@ -2230,12 +2228,12 @@ func TestBoardBroadcastCancelIdempotent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestBoardBroadcast -v`
 Expected: FAIL — `NewBoardBroadcaster undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/broadcast.go` (mirror of `state/broadcaster.go` semantics):
 
@@ -2309,16 +2307,20 @@ func (b *BoardBroadcaster) Publish(c BoardChange) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestBoardBroadcast -v -race`
 Expected: PASS under `-race`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): board change broadcaster"
 ```
+
+- [x] **Step 6: CHECKPOINT 2 — STOP**
+
+Tasks 6–11 (GitHub client, webhook, verdict, gate, machine, broadcaster) are a review checkpoint. STOP here — do not begin Task 12. Report that checkpoint 2 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
 
 ---
 
@@ -2338,7 +2340,7 @@ cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(
 
 Ready rules: stage `queued` ∧ `issue_state == "open"` ∧ every `blocked_by` issue's epic (matched by `IssueNumber` within the slice) is stage `merged` OR `issue_state == "closed"`; a dep with NO epic row blocks (fail closed) — the sync loop surfaces it via the epic's `needs` later. Capacity = `maxParallel − count(stage ∈ activeStages)`; `paused` ⇒ empty. Order by ascending issue number, truncate to capacity.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/scheduler_test.go`:
 
@@ -2388,10 +2390,10 @@ func TestReadyEpics(t *testing.T) {
 }
 
 func TestKickoffAndProvider(t *testing.T) {
-	if got := KickoffCommand("claude", 16); got != `claude "/epic-pipeline 16"` {
+	if got := KickoffCommand("claude", 16); got != `IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"` {
 		t.Fatalf("claude kickoff = %q", got)
 	}
-	if got := KickoffCommand("codex", 16); got != `codex "/epic-pipeline 16"` {
+	if got := KickoffCommand("codex", 16); got != `codex -a never "/epic-pipeline 16"` {
 		t.Fatalf("codex kickoff = %q", got)
 	}
 	if SessionNameFor(16) != "epic-16" {
@@ -2409,12 +2411,12 @@ func TestKickoffAndProvider(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestReadyEpics|TestKickoff' -v`
 Expected: FAIL — `ReadyEpics undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/scheduler.go`:
 
@@ -2478,15 +2480,18 @@ func depsSatisfied(e db.Epic, byIssue map[int]db.Epic) bool {
 	return true
 }
 
-// KickoffCommand is what the spawned tmux session runs. The /epic-pipeline
-// skill (sub-project 2) does the rest; exact codex invocation is validated
-// there and only lives here.
+// KickoffCommand is what the spawned tmux session runs (tmux executes it via
+// `sh -c`, so the env prefix is fine). Runners MUST be autonomous — a
+// permission prompt is a stalled epic: Claude needs IS_SANDBOX=1 (root host) +
+// --dangerously-skip-permissions; Codex needs approval policy "never". The
+// /epic-pipeline skill (sub-project 2) does the rest; exact codex invocation
+// is validated there and only lives here.
 func KickoffCommand(provider string, issue int) string {
-	bin := "claude"
+	prompt := fmt.Sprintf("/epic-pipeline %d", issue)
 	if provider == "codex" {
-		bin = "codex"
+		return fmt.Sprintf(`codex -a never %q`, prompt)
 	}
-	return fmt.Sprintf(`%s "/epic-pipeline %d"`, bin, issue)
+	return fmt.Sprintf(`IS_SANDBOX=1 claude --dangerously-skip-permissions %q`, prompt)
 }
 
 func SessionNameFor(issue int) string { return fmt.Sprintf("epic-%d", issue) }
@@ -2503,12 +2508,12 @@ func ProviderFor(projectDefault string, labels []string) string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestReadyEpics|TestKickoff' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/orchestrator/ && git commit -m "feat(hub): dependency-aware scheduler + kickoff commands"
@@ -2526,7 +2531,7 @@ git add hubd/internal/orchestrator/ && git commit -m "feat(hub): dependency-awar
 - Consumes: `shared.OrchestratorReport` (Task 5), existing `Client` internals (follow `Sessions` at `client.go:34` exactly: same bearer header, same target query param, same error style).
 - Produces: `func (c *Client) DrainReports(ctx context.Context, srv db.Server, target string) ([]shared.OrchestratorReport, error)` — `GET {srv.URL}/orchestrator/reports?drain=1[&target=…]`; **HTTP 404 returns `(nil, nil)`** (agent predates sub-project 2 — tolerated, not an error).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `hubd/internal/registry/client_test.go` (match the file's existing fake-agent helper style; if it has a helper that builds an `httptest.Server` + `db.Server`, reuse it, else inline as below):
 
@@ -2565,12 +2570,12 @@ func TestDrainReportsOldAgent404(t *testing.T) {
 
 (Adjust `NewClient()` to the constructor's real signature — check the top of `client.go`; if it takes a timeout or http client, pass what existing tests pass.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ -run TestDrainReports -v`
 Expected: FAIL — `c.DrainReports undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Append to `hubd/internal/registry/client.go` (mirror `Sessions`' request construction — bearer, target param, timeout):
 
@@ -2609,12 +2614,12 @@ func (c *Client) DrainReports(ctx context.Context, srv db.Server, target string)
 
 (If the unexported http client field has a different name in `client.go`, use that name; add missing imports `net/url`, `encoding/json`, `fmt` as needed.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ -v`
 Expected: PASS (existing + 2 new).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/registry/ && git commit -m "feat(hub): drain orchestrator reports from agents"
@@ -2635,7 +2640,7 @@ cd /root/agentmon && git add hubd/internal/registry/ && git commit -m "feat(hub)
   - `func IsOrchestratedIssue(labels []string) bool` — has `agentmon:epic` OR `agentmon:run`
   - `func EpicFromIssue(p db.Project, is github.Issue, now string) db.Epic` — fills mirror fields (`ProjectID, IssueNumber, Title, Labels, BlockedBy, IssueState, QueuedAt: now, StageUpdatedAt: now`)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/sync_test.go`:
 
@@ -2692,12 +2697,12 @@ func TestEpicFromIssue(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestParseBlockedBy|TestIsOrchestrated|TestEpicFromIssue' -v`
 Expected: FAIL — `ParseBlockedBy undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/sync.go`:
 
@@ -2759,12 +2764,12 @@ func EpicFromIssue(p db.Project, is github.Issue, now string) db.Epic {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v`
 Expected: PASS (all orchestrator tests so far).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): issue mirror sync helpers"
@@ -2788,7 +2793,7 @@ type GitHubAPI interface {
 	ListIssuesSince(ctx context.Context, repo, since string) ([]github.Issue, error)
 	GetPullRequest(ctx context.Context, repo string, num int) (github.PullRequest, error)
 	ListCheckRuns(ctx context.Context, repo, ref string) ([]github.CheckRun, error)
-	MergePR(ctx context.Context, repo string, num int) error
+	MergePR(ctx context.Context, repo string, num int, sha string) error // sha pins the evaluated head (checkpoint-2 review)
 	CreateIssueComment(ctx context.Context, repo string, num int, body string) error
 	AddLabels(ctx context.Context, repo string, num int, labels []string) error
 	RemoveLabel(ctx context.Context, repo string, num int, label string) error
@@ -2840,7 +2845,7 @@ Tick pipeline per project (order matters):
 - `reconcile` (before first tick): for each non-terminal epic with `PRNumber > 0`: PR merged ⇒ `merged`; PR closed unmerged ⇒ `canceled` (source `github`, note "reconcile").
 - All stage moves go through one funnel `o.transition(ctx, epic, to, source, note)` → `ValidTransition` check + `db.TransitionEpic` + `Bcast.Publish(BoardChange{…, Needs: epic-after.Needs})`.
 
-- [ ] **Step 1: Write the failing test (fakes + three scenarios)**
+- [x] **Step 1: Write the failing test (fakes + three scenarios)**
 
 Create `hubd/internal/orchestrator/orchestrator_test.go`:
 
@@ -2886,7 +2891,7 @@ func (f *fakeGH) GetPullRequest(_ context.Context, _ string, n int) (github.Pull
 func (f *fakeGH) ListCheckRuns(_ context.Context, _, ref string) ([]github.CheckRun, error) {
 	return f.checks[ref], nil
 }
-func (f *fakeGH) MergePR(_ context.Context, _ string, n int) error {
+func (f *fakeGH) MergePR(_ context.Context, _ string, n int, _ string) error {
 	f.merged = append(f.merged, n)
 	pr := f.prs[n]
 	pr.Merged = true
@@ -2977,7 +2982,7 @@ func TestTickSyncsAndSpawns(t *testing.T) {
 	if e.Stage != "starting" || e.SessionName != "epic-16" || e.Attempt != 1 {
 		t.Fatalf("epic = %+v", e)
 	}
-	if len(ag.created) != 1 || ag.created[0].Command != `claude "/epic-pipeline 16"` || ag.created[0].Cwd != "/w" {
+	if len(ag.created) != 1 || ag.created[0].Command != `IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"` || ag.created[0].Cwd != "/w" {
 		t.Fatalf("created = %+v", ag.created)
 	}
 	if _, err := d.GetEpicByIssue(ctx, "p1", 99); err == nil {
@@ -3056,12 +3061,12 @@ func TestStallOnDeadSession(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestTick|TestReports|TestGate|TestStall' -v`
 Expected: FAIL — `New undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/orchestrator/orchestrator.go`. This is the largest file (~300 lines); the structure is fixed by the interfaces block above and the tick pipeline order. Key implementation notes an engineer must follow:
 
@@ -3198,7 +3203,7 @@ func (o *Orchestrator) tickProject(ctx context.Context, p db.Project) {
 	runs, err := o.d.GH.ListCheckRuns(ctx, p.Repo, pr.HeadSHA)
 	if err != nil { log; continue }
 	green, pending := github.ChecksState(runs)
-	res := Decide(GateInput{Verdict: v, VerdictErr: verr, Labels: e.Labels,
+	res := Decide(GateInput{Verdict: v, VerdictErr: verr, Epic: e.IssueNumber, Labels: e.Labels,
 		RequiredReviews: p.RequiredReviews, ChecksGreen: green, ChecksPending: pending})
 	switch {
 	case res.Wait:
@@ -3212,7 +3217,7 @@ func (o *Orchestrator) tickProject(ctx context.Context, p db.Project) {
 	}
 ```
 
-`mergeEpic(ctx, p, e, source)`: transition current→`merging` (source); `MergePR`; `ErrNotMergeable` ⇒ `SetEpicNeeds` + transition `merging→escalated` "merge conflict — rebase needed"; other error ⇒ log, leave in `merging` (next tick re-fetches PR: merged-by-now or retry); success ⇒ `finishMerged`. `finishMerged`: transition to `merged` (via `merging` if legal path requires — from `merging` directly); best-effort `AddLabels(repo, issue, ["agentmon:merged"])` + `comment("✅ merged PR #N")`.
+`mergeEpic(ctx, p, e, source)`: transition current→`merging` (source); `MergePR(ctx, p.Repo, e.PRNumber, pr.HeadSHA)` (SHA-pinned); `ErrNotMergeable` ⇒ `SetEpicNeeds` + transition `merging→escalated` "merge conflict — rebase needed"; other error ⇒ log, leave in `merging` (next tick re-fetches PR: merged-by-now or retry); success ⇒ `finishMerged`. `finishMerged`: transition to `merged` (via `merging` if legal path requires — from `merging` directly); best-effort `AddLabels(repo, issue, ["agentmon:merged"])` + `comment("✅ merged PR #N")`.
 
 `schedule`: `epics, _ := ListEpicsByProject`; `for _, e := range ReadyEpics(epics, p.MaxParallel, p.Paused)`: if `e.Attempt+1 > o.d.Cfg.MaxAttempts` ⇒ transition `failed` "attempts exhausted"; else `srv := Reg.Get`; transition `queued→starting` "spawning epic-N"; `SetEpicAssignment(SessionNameFor(e.IssueNumber), e.Attempt+1)`; `CreateSession(ctx, srv, p.Target, shared.CreateSessionRequest{Name: SessionNameFor(e.IssueNumber), Cwd: p.Workdir, Command: KickoffCommand(ProviderFor(p.Provider, e.Labels), e.IssueNumber)})`; on error ⇒ `SetEpicNeeds` + transition `starting→stalled` "spawn failed: …".
 
@@ -3251,16 +3256,38 @@ Action methods: `Approve` = load epic; must be `escalated`; `mergeEpic(…, "use
 
 `reconcile`: `ListNonTerminalEpics`; group by project; for `PRNumber > 0`: fetch PR; merged ⇒ transition to `merged` (note "reconcile"); closed ⇒ `canceled`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v -race`
 Expected: PASS — all orchestrator tests including the four new scenario tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): orchestrator core loop — sync, reports, stalls, gate, schedule"
 ```
+
+- [x] **Step 6: CHECKPOINT 3 — STOP**
+
+Tasks 12–15 (scheduler, report drain, sync, core loop — the highest-judgment code in the plan) are a review checkpoint. STOP here — do not begin Task 16. Report that checkpoint 3 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
+
+**CHECKPOINT-3 CONTRACT CHANGES (applied in commit `b3568c5` — the code on disk
+is authoritative over the Task 12–15 sections above):**
+- `GitHubAPI`: `ListIssuesLabeledSince(ctx, repo, label, since)` replaces
+  `ListIssuesSince`; `RemoveLabel` was removed from the interface (the client
+  method remains).
+- `LivenessAPI` is now `Server(server string) []state.SessionView` — liveness is
+  checked by scanning session NAMES (the projection keys on agent-resolved target
+  labels, never a project's raw `Target`). Task 21's wiring (`Live: proj`) still
+  works — `state.Projection.Server` satisfies it.
+- `SessionNameFor(project string, issue, attempt int)` — names carry a project
+  slug and an attempt suffix (e.g. `epic-schoolplatfo-16`, `-r2` on retries).
+- `db.TransitionEpic`'s `note` doubles as the needs text when entering
+  escalated/stalled (atomic; separate `SetEpicNeeds` calls before transitions
+  were removed).
+- `mergeEpic` returns `error`; `Approve` propagates it. Test fakes changed
+  accordingly (`fakeGH.ListIssuesLabeledSince`, no `RemoveLabel`,
+  `fakeLive.Server`, `sessionName(n)` helper).
 
 ---
 
@@ -3293,7 +3320,7 @@ type BoardPushDeps struct {
 
 Behavior: subscribe to `Bcast`; fire ONLY on `Stage == EpicEscalated || EpicStalled`; payload `{"type":"epic","stage":…,"project":…,"epic":<issue>,"title":…,"needs":…,"ts":…}`; same presence-suppression and 404/410-prune semantics as `state.RunPushDispatcher` (`state/push_dispatcher.go:90-150`) — copy its dispatch skeleton, drop the blocked-gate (board transitions are already edge-triggered: `transition()` publishes once per move).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/orchestrator/push_test.go`:
 
@@ -3366,12 +3393,12 @@ func TestBoardPushFiresOnEscalatedOnly(t *testing.T) {
 
 (Check `state.NewPresence()`'s real constructor name in `state/presence.go` before running; adjust if it differs.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestBoardPush -v`
 Expected: FAIL — `RunBoardPushDispatcher undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 (a) `authz/authz.go` — append to the const block:
 
@@ -3494,12 +3521,12 @@ func dispatchBoardPush(ctx context.Context, d BoardPushDeps, c BoardChange) {
 
 (Confirm `state.PushDispatchStore` / `state.PushSender` / `Presence.Online` names against `state/push_dispatcher.go:21-38` — they are per the exploration report; if `PushDispatchStore` is unexported or shaped differently, define a local equivalent interface with the same three methods.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ ./internal/audit/ -v -race && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/ && git commit -m "feat(hub): orchestrator authz actions, audit methods, board push dispatcher"
@@ -3532,7 +3559,7 @@ type OrchestratorAPI interface {
 
 Handler flow: read body (`http.MaxBytesReader`, 1<<20); `VerifySignature(d.WebhookSecret, body, r.Header.Get("X-Hub-Signature-256"))` else 403; `kind := r.Header.Get("X-GitHub-Event")`; `ping` ⇒ 200 `{"ok":"pong"}`; `ParseEvent` ⇒ 400 on error; `d.Orch.IngestWebhook` (log-only on error) ⇒ 202 `{"ok":"accepted"}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/api/orchestrator_webhook_test.go` (white-box `package api`, same style as existing handler tests — check one existing `*_test.go` in the package for the Deps construction helper and reuse it):
 
@@ -3605,12 +3632,12 @@ func TestWebhookAcceptsSignedIssuesEvent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestWebhook -v`
 Expected: FAIL — `Deps` has no `WebhookSecret`/`Orch`, handler undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `Deps` in `hubd/internal/api/servers.go` (with the `OrchestratorAPI` interface defined above it):
 
@@ -3686,12 +3713,12 @@ Register in `router.go` next to the other routes (NOT wrapped in `RequireAuth`):
 	mux.Handle("POST /api/v1/github/webhook", rd.API.GitHubWebhookHandler())
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestWebhook -v && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): public hmac-authenticated github webhook endpoint"
@@ -3716,7 +3743,7 @@ cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): pub
 
 Response DTO for an epic (json tags): `{id, issue, title, labels, blocked_by, stage, attempt, session, branch, pr, needs, issue_state, queued_at, started_at, stage_updated_at, merged_at}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/api/orchestrator_test.go`. Reuse the package's existing test scaffolding for authenticated requests (look at how `sessions_test.go` builds `Deps` + injects a principal — typically via `authn` test helper putting the principal in context; copy that exact pattern). Test cases:
 
@@ -3739,12 +3766,12 @@ func TestActionsDispatch(t *testing.T) { /*
 
 Write these three as full tests against the real handlers (the sketch comments describe assertions, the code must be complete when writing the file — model each request/recorder pair on `TestWebhookAcceptsSignedIssuesEvent` above plus the package's auth helper).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run 'TestRegister|TestBoard|TestActions' -v`
 Expected: FAIL — handlers undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/api/orchestrator.go` with four handlers following the kill-session handler's shape exactly (`authorizeOr403` → decode with `MaxBytesReader` → validate → act → audit → `writeJSON`):
 
@@ -3801,12 +3828,12 @@ then `OrchestratorProjectsHandler()` (GET list / POST register on method switch 
 	mux.Handle("POST /api/v1/orchestrator/projects/{id}/actions", rd.Auth.RequireAuth(rd.API.OrchestratorActionsHandler()))
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -v && go build ./...`
 Expected: PASS (whole api package).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): orchestrator projects/board/actions endpoints"
@@ -3825,16 +3852,16 @@ cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): orc
 - Consumes: `orchestrator.BoardBroadcaster` (Task 11), the SSE conventions of `events.go` (**subscribe BEFORE snapshot** — the load-bearing ordering; `writeSSE`; heartbeat via `d.SSEHeartbeat`).
 - Produces: `GET /api/v1/orchestrator/events` (RequireAuth-wrapped, authz `OrchestratorView`): on connect emits `event: board-snapshot` with `{projects: [...], epics: [...]}` (all projects + non-terminal & recently-merged epics), then `event: board` per `BoardChange` `{project_id, epic_id, issue, stage, needs, title}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Model on the existing `events_test.go` (same package) — construct Deps with a `BoardBcast`, seeded DB, authenticated request; read the recorder body after publishing one change; assert the body contains `event: board-snapshot` and then `event: board` with `"stage":"escalated"`. Use a cancellable request context to end the handler. Write the complete test following the existing SSE test's cancellation pattern.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestBoardEvents -v`
 Expected: FAIL — handler undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `hubd/internal/api/orchestrator_events.go` mirroring `events.go` structure exactly: authz check (`OrchestratorView`, `"orchestrator:*"`), flusher assert, nil-guard `d.BoardBcast`, **Subscribe() first**, SSE headers, snapshot (query DB: `ListProjects` + per-project `ListEpicsByProject`), then select-loop over ctx / channel / heartbeat writing `writeSSE(w, "board", payload)`. Register:
 
@@ -3842,12 +3869,12 @@ Create `hubd/internal/api/orchestrator_events.go` mirroring `events.go` structur
 	mux.Handle("GET /api/v1/orchestrator/events", rd.Auth.RequireAuth(rd.API.OrchestratorEventsHandler()))
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -v -race`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): board SSE stream"
@@ -3870,16 +3897,16 @@ cd /root/agentmon && git add hubd/internal/api/ && git commit -m "feat(hub): boa
 
 The `guidance` board action (`{action:"guidance", epic_id, text}`) resolves the epic's project → server → `Client.Sessions` → `SendText` with `text + "\n"`; audits `EpicAction(…, "guidance", …)`. This is the plan-gate approval / escalation-answer path from the spec (§4).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `hubd/internal/agentws/sendtext_test.go`: an `httptest.Server` that upgrades to WS at `/panes/%25/io` (URL-escaped `%25` = pane id `%25`? — use pane id `%1` and note the path escaping the dial code applies; assert on whatever escaped form the dial produces), asserts `mode=rw` query, bearer + directive headers present, reads one binary frame and records it. Test `FirstPaneID` separately with a two-window fixture. Assert `SendText` delivers exactly the bytes `"approved: option A\n"`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/agentws/ -v`
 Expected: FAIL — package doesn't exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `FirstPaneID` is pure iteration. `SendText`:
 
@@ -3949,12 +3976,12 @@ func SendText(ctx context.Context, srv db.Server, minter *directive.Minter, prin
 
 **Before finalizing, open `hubd/internal/api/ws.go:131-157` and `directive/mint.go:60-79` and align exactly:** the `Mint` return values/order, the precise header names, and the ws URL scheme replacement (`agentWSURL` handles `https→wss`; replicate that logic — `strings.Replace(srv.URL, "http", "ws", 1)` covers both `http→ws` and `https→wss`). Fix the test to the same names. Then wire the `guidance` action in `api/orchestrator.go` (Deps needs `Minter *directive.Minter` and an agent-client field for `Sessions` — reuse however `Deps` exposes them for the relay/session handlers; check `Deps` in `servers.go`).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/agentws/ ./internal/api/ -v && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add hubd/internal/ && git commit -m "feat(hub): send guidance text into live sessions over agent ws"
@@ -3971,7 +3998,7 @@ git add hubd/internal/ && git commit -m "feat(hub): send guidance text into live
 **Interfaces:**
 - Consumes: everything. Wiring goes where the poller/push dispatcher are wired (`main.go:83-105` region) and where `api.Deps` is populated (`main.go:129-146`).
 
-- [ ] **Step 1: Write the integration test**
+- [x] **Step 1: Write the integration test**
 
 Create `hubd/internal/orchestrator/integration_test.go` — one test walking TWO epics through the full lifecycle against the Task 15 fakes, exercising the dependency chain (this is the acceptance scenario from spec §11 in miniature):
 
@@ -3987,7 +4014,9 @@ import (
 )
 
 func TestTwoEpicChainEndToEnd(t *testing.T) {
-	cleanVerdict := "```yaml\nagentmon-verdict: v1\nepic: 0\nreviews: [codex]\n" +
+	// The gate binds verdicts to their epic (checkpoint-2 fix), so the
+	// fixture must carry the real issue number.
+	cleanVerdict := "```yaml\nagentmon-verdict: v1\nepic: 1\nreviews: [codex]\n" +
 		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
 		"uncertain: false\nlearnings_updated: true\n```"
 	gh := &fakeGH{
@@ -3999,12 +4028,12 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 		checks: map[string][]github.CheckRun{},
 	}
 	ag := &fakeAgents{}
-	live := fakeLive{alive: map[string]bool{"epic-1": true, "epic-2": true}}
+	live := fakeLive{alive: map[string]bool{sessionName(1): true, sessionName(2): true}}
 	o, d := newTestOrch(t, gh, ag, live)
 	ctx := context.Background()
 
 	o.Tick(ctx) // mirror both; spawn #1 only (max_parallel=1 AND #2 blocked)
-	if len(ag.created) != 1 || ag.created[0].Name != "epic-1" {
+	if len(ag.created) != 1 || ag.created[0].Name != sessionName(1) {
 		t.Fatalf("created = %+v", ag.created)
 	}
 	e2, _ := d.GetEpicByIssue(ctx, "p1", 2)
@@ -4015,7 +4044,7 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 	// runner opens PR 10 for epic 1, everything clean
 	gh.prs[10] = github.PullRequest{Number: 10, State: "open", Body: cleanVerdict, HeadSHA: "s1", HeadRef: "epic/1-scaffold"}
 	ag.reports = []shared.OrchestratorReport{
-		{Repo: "o/r", Epic: 1, Stage: shared.EpicPROpen, PR: 10, Session: "epic-1", Ts: "t"},
+		{Repo: "o/r", Epic: 1, Stage: shared.EpicPROpen, PR: 10, Session: sessionName(1), Ts: "t"},
 	}
 	o.Tick(ctx) // pr_open → gate → merged; capacity freed but schedule ran? next tick spawns #2
 	e1, _ := d.GetEpicByIssue(ctx, "p1", 1)
@@ -4024,18 +4053,18 @@ func TestTwoEpicChainEndToEnd(t *testing.T) {
 	}
 
 	o.Tick(ctx) // dep merged → #2 spawns
-	if len(ag.created) != 2 || ag.created[1].Name != "epic-2" {
+	if len(ag.created) != 2 || ag.created[1].Name != sessionName(2) {
 		t.Fatalf("created = %+v", ag.created)
 	}
 }
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestTwoEpicChain -v`
 Expected: PASS immediately (it exercises Task 15 code; if it fails, that's a Task 15 bug — fix there).
 
-- [ ] **Step 3: Wire main.go**
+- [x] **Step 3: Wire main.go**
 
 In `hubd/cmd/agentmon-hubd/main.go`, after the poller/push wiring (~line 105), gated so an unconfigured hub runs exactly as before:
 
@@ -4077,7 +4106,7 @@ In `hubd/cmd/agentmon-hubd/main.go`, after the poller/push wiring (~line 105), g
 	}
 ```
 
-- [ ] **Step 4: Full verification**
+- [x] **Step 4: Full verification**
 
 Run: `cd /root/agentmon/hubd && go build ./... && go test ./... && cd /root/agentmon/agent && go build ./... && cd /root/agentmon/shared && go test ./`
 Expected: everything green across all three modules.
@@ -4087,10 +4116,137 @@ Then boot smoke-test (no GitHub token → orchestrator disabled, hub behaves exa
 Run: `cd /root/agentmon/hubd && go run ./cmd/agentmon-hubd -config /dev/null 2>&1 | head -5 || true`
 Expected: starts (or fails on config parse of /dev/null identically to current main — if `Load` errors on empty file, use a minimal temp yaml instead: `listen: ":0"`). The point: no panic from nil orchestrator wiring.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): wire orchestrator into main — gated on github token"
+```
+
+---
+
+### Task 22: require_ci — close the CI-not-yet-registered merge window
+
+Added from the checkpoint-2 review (DISCUSS item, owner-approved): `ChecksState`
+returns green for zero check runs (repos without CI), but on a CI-ENABLED repo the
+gate can evaluate a PR before the CI provider registers its first check run — a
+fail-open window. Fix: a per-project `require_ci` flag; when set, zero check runs
+reads as *pending* (wait), never green. A stage timeout still catches CI that never
+arrives.
+
+**Files:**
+- Create: `hubd/internal/db/migrations/0006_require_ci.sql`
+- Modify: `hubd/internal/db/projects.go`, `hubd/internal/orchestrator/orchestrator.go` (evaluateGates), `hubd/internal/api/orchestrator.go` (register field)
+- Test: `hubd/internal/db/projects_test.go`, `hubd/internal/orchestrator/orchestrator_test.go` (append)
+
+**Interfaces:**
+- Consumes: Task 3 store, Task 15 `evaluateGates`, Task 18 register handler.
+- Produces: `db.Project.RequireCI bool`, persisted and honored by the gate path.
+
+- [x] **Step 1: Write the failing tests**
+
+Append to `hubd/internal/db/projects_test.go`:
+
+```go
+func TestProjectRequireCIRoundTrip(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	enrollTestServer(t, d, "aigallery")
+	p := testProject("aigallery")
+	p.RequireCI = true
+	if err := d.CreateProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetProject(ctx, "p1")
+	if err != nil || !got.RequireCI {
+		t.Fatalf("RequireCI must round-trip: %+v err=%v", got, err)
+	}
+}
+```
+
+Append to `hubd/internal/orchestrator/orchestrator_test.go` (reuses the Task 15
+fakes; the project seeded by `newTestOrch` has RequireCI false — this test seeds
+its own):
+
+```go
+func TestRequireCIHoldsMergeUntilChecksRegister(t *testing.T) {
+	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
+		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
+		"uncertain: false\nlearnings_updated: true\n```"
+	gh := &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s"}},
+		checks: map[string][]github.CheckRun{}, // no runs registered yet
+	}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ctx := context.Background()
+	// flip the project to require CI
+	if ok, err := d.SetProjectRequireCI(ctx, "p1", true); err != nil || !ok {
+		t.Fatalf("SetProjectRequireCI: ok=%v err=%v", ok, err)
+	}
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx) // gate must WAIT (zero runs + require_ci), not merge
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "pr_open" || len(gh.merged) != 0 {
+		t.Fatalf("must hold in pr_open with no merge, got stage=%s merged=%v", e.Stage, gh.merged)
+	}
+	// CI registers a green run → next tick merges
+	gh.checks["s"] = []github.CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}}
+	o.Tick(ctx)
+	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("must merge once checks exist and pass, got %+v", e)
+	}
+}
+```
+
+- [x] **Step 2: Run tests to verify they fail**
+
+Run: `cd /root/agentmon/hubd && go test ./internal/db/ -run TestProjectRequireCI -v && go test ./internal/orchestrator/ -run TestRequireCI -v`
+Expected: FAIL — `p.RequireCI undefined` / `d.SetProjectRequireCI undefined` (compile errors).
+
+- [x] **Step 3: Implement**
+
+Create `hubd/internal/db/migrations/0006_require_ci.sql`:
+
+```sql
+ALTER TABLE projects ADD COLUMN require_ci INTEGER NOT NULL DEFAULT 0;
+```
+
+In `hubd/internal/db/projects.go`: add `RequireCI bool` to `Project`; append
+`, require_ci` to `projectCols`; scan into `&p.RequireCI` (last position); add the
+column + `p.RequireCI` value to `CreateProject`'s INSERT; add:
+
+```go
+func (d *DB) SetProjectRequireCI(ctx context.Context, id string, v bool) (bool, error) {
+	return d.execFound(ctx, `UPDATE projects SET require_ci = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
+}
+```
+
+In `hubd/internal/orchestrator/orchestrator.go` `evaluateGates`, after computing
+`green, pending := github.ChecksState(runs)`:
+
+```go
+	if p.RequireCI && len(runs) == 0 {
+		// CI is configured for this project but no run has registered yet —
+		// the zero-runs green is only for CI-less repos. Wait, don't merge.
+		pending = true
+	}
+```
+
+In `hubd/internal/api/orchestrator.go`: accept `require_ci` (json `require_ci`)
+in the project-register body and pass it through; include it in the project DTO.
+
+- [x] **Step 4: Run tests to verify they pass**
+
+Run: `cd /root/agentmon/hubd && go build ./... && go test ./... `
+Expected: PASS (all packages).
+
+- [x] **Step 5: Commit**
+
+```bash
+cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): per-project require_ci closes the pre-check-registration merge window"
 ```
 
 ---

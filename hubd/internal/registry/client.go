@@ -61,6 +61,37 @@ func (c *Client) Sessions(ctx context.Context, srv db.Server, target string) ([]
 	return out, nil
 }
 
+// DrainReports pulls-and-clears buffered orchestrator reports from an agent.
+// 404 means the agent predates the reporter endpoint (sub-project 2): treated
+// as "no reports", so mixed-fleet rollout is safe.
+func (c *Client) DrainReports(ctx context.Context, srv db.Server, target string) ([]shared.OrchestratorReport, error) {
+	u := srv.URL + "/orchestrator/reports?drain=1"
+	if target != "" {
+		u += "&target=" + url.QueryEscape(target)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+srv.Bearer)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("dial agent %s: %w", srv.ID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent %s reports returned %d", srv.ID, resp.StatusCode)
+	}
+	var out []shared.OrchestratorReport
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("agent %s reports decode: %w", srv.ID, err)
+	}
+	return out, nil
+}
+
 func (c *Client) CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error) {
 	u := srv.URL + "/sessions"
 	if target != "" {

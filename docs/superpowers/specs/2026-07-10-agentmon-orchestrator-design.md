@@ -126,10 +126,13 @@ queued → starting → planning → implementing → reviewing → pr_open → 
   orchestrator-owned running sessions < `max_parallel`.
 - Trigger: any state change or sync event; plus periodic tick.
 - Spawn via the existing hub→agent create-session call with the (already-defined,
-  currently rejected) `Command` field carrying the provider kickoff — e.g.
-  `claude "/epic-pipeline N"`; the agent-side command execution ships in
-  sub-project 2. Session named `epic-N`. Session liveness for stall detection is
-  polled from the hub's state projection (vanished sessions emit no event).
+  currently rejected) `Command` field carrying the provider kickoff. Runners must
+  run fully autonomously — a permission prompt is a stalled epic — so kickoffs
+  carry the autonomy flags: `IS_SANDBOX=1 claude --dangerously-skip-permissions
+  "/epic-pipeline N"` and `codex -a never "/epic-pipeline N"`. Agent-side command
+  execution ships in sub-project 2. Session named `epic-N`. Session liveness for
+  stall detection is polled from the hub's state projection (vanished sessions
+  emit no event).
 - **Worktrees are the runner's job** (`git worktree add ../<repo>-epic-N`): moot at
   `max_parallel=1`, ready for >1. Hub stays git-ignorant.
 - **Epic import** (no hub code): a `gh`-based script/skill turns `docs/plan/epic-*.md`
@@ -154,8 +157,15 @@ unknown reporting session, unparseable CI state)   → escalated + reason
 ```
 
 The gate never merges on ambiguity, and an agent cannot talk its way past it — the
-verdict is data the gate parses, not an argument the gate believes. From `escalated`,
-board **Approve & merge** or a human merge in GitHub both work.
+verdict is data the gate parses, not an argument the gate believes. Hardening (from
+the checkpoint-2 review): merges are **SHA-pinned** to the evaluated head (GitHub
+rejects if the branch moved — closes the check-to-merge race); the verdict must
+carry schema `v1`, non-negative counts, and an `epic:` matching the issue under
+evaluation; check-run and issue listings fail closed on partial API views. The
+verdict remains the assigned runner's self-report (provenance contract documented
+in `gate.go`) — signed attestation is future work if PR authorship ever opens up.
+From `escalated`, board **Approve & merge** or a human merge in GitHub both work,
+including direct `escalated/stalled → merged` transitions observed via reconcile.
 
 ## 7. Runner contract
 
@@ -171,7 +181,15 @@ A runner session must:
    that reports for epic N come from the assigned host/session.
 4. Scale process to the issue: full flow by default — plan (committed plan doc) →
    implement with subagent/TDD discipline → multi-review → fix loop. `pipeline:light`
-   label skips heavy planning for small fixes. The epic issue body is the
+   label skips heavy planning for small fixes.
+   **Checkpoint reviews:** generated plans embed checkpoint stops at their logical
+   seams; at each, the runner runs a cross-provider multi-review on the segment
+   diff *in-session* (lenses run as subagents/subprocesses, so only the report
+   enters runner context — no separate session needed): Claude runners use
+   `/multi-review --codex`, Codex runners invert (headless `claude` as reviewer).
+   FIX findings are applied and committed at the checkpoint; unresolvable
+   DISCUSS findings map to `report --stage escalated` (the existing
+   human-summoning path); the final pre-PR multi-review feeds the verdict block. The epic issue body is the
    *requirements* (scope, acceptance criteria, constraints, PRD pointers); the runner
    writes the implementation plan at execution time against the current codebase. If
    the body already carries a detailed plan, the planning stage validates and adapts
@@ -241,8 +259,18 @@ Reference mockup: `docs/superpowers/specs/2026-07-10-orchestrator-board-mockup.h
 - **Drawer** (click any card/row): stage history with timestamps, verdict block when
   escalated, live terminal preview + **Open full session** for running epics (the
   same session view used today), branch/deps/host/autonomy, PR/issue links.
+  **Plan review ("plan mode"):** when an epic is escalated with reason kind
+  `plan-approval`, the drawer renders the plan doc committed on the epic branch
+  (via GitHub contents API) with Approve / send-guidance actions — reviewing a
+  runner's plan from a phone is one tap.
 - **Header**: run pill (`Running · 1/1 slot`), max-parallel stepper, Run issue…,
-  Pause project. Stat strip: Merged / Working / Needs you / PRs open / Queued.
+  Pause project, and **Plan epics…** — spawns an interactive session on the project
+  host with kickoff `claude "/plan-epics"` (no autonomy flags; the human drives)
+  and opens its terminal. Implementation-wise this is a New-Session-with-command
+  preset: once sub-project 2 lands agent-side `Command` execution, the hub
+  handler's M10 `Command` rejection is lifted for user session-creates too (adds
+  no capability an rw terminal doesn't already grant). Stat strip: Merged /
+  Working / Needs you / PRs open / Queued.
 - Escalations also ride the existing M9 alerts/web-push path.
 - Stage colors (validated against the dark surface, always paired with text):
   queued `#6b7280`, planning `#8b5cf6`, implementing `#d97706`, reviewing `#0284c7`,
@@ -289,6 +317,9 @@ Every failure is either *machine-retryable* or *needs you*; nothing fails silent
   (not yet installed on most fleet hosts — one-time setup, verified by the doctor run).
 - Repo clone at the project workdir; git identity configured.
 - Claude Code and/or Codex ≥0.144 with AgentMon hooks (existing install flow).
+- Codex hosts: `~/.codex/config.toml` `[sandbox_workspace_write]` with the project
+  repo's `.git` in `writable_roots` and `network_access = true` (loopback binds for
+  test suites) — without these, runner sessions cannot commit or pass test gates.
 - Agent version with the localhost reporter endpoint (ships with sub-project 2).
 
 ## 13. Decomposition & order
@@ -298,7 +329,9 @@ Three sub-projects, each with its own implementation plan (writing-plans):
 1. **Hub orchestrator core + GitHub sync** — schema, mirror/webhook/poll, state
    machine, scheduler, merge gate, actions API, audit. (Largest; unblocks the rest.)
 2. **Runner** — agent reporter endpoint + `agentmon report` CLI, `epic-pipeline`
-   Claude skill, Codex playbook, verdict format, import script, doctor run.
+   Claude skill, Codex playbook, verdict format, import script, doctor run, and a
+   `plan-epics` skill (interactive PRD→epics decomposition with the human: emits
+   `docs/plan/epic-*.md` with front-matter + decisions, then runs the import).
 3. **Board UI** — Board + Timeline tabs, drawer, actions, alerts integration.
 
 Order 1 → 2 → 3 for integration, but the skill's *content* (prompts, pipeline

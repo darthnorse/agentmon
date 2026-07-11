@@ -16,7 +16,8 @@ func TestOpenRunsMigrations(t *testing.T) {
 
 	// All Phase 1+ tables must exist after Open.
 	want := []string{"users", "servers", "tmux_targets",
-		"session_state_events", "principal_seen", "audit_log"}
+		"session_state_events", "principal_seen", "audit_log",
+		"projects", "epics", "epic_events"}
 	for _, tbl := range want {
 		var name string
 		err := d.sql.QueryRowContext(context.Background(),
