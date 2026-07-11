@@ -69,8 +69,8 @@ func main() {
 		return tmux.DiscoverDetailed(ctx, tmux.ExecRunner, opts)
 	}
 
-	createSession := func(ctx context.Context, socket, name, cwd string) error {
-		return tmux.CreateSession(ctx, tmux.ExecRunner, socket, name, cwd, "")
+	createSession := func(ctx context.Context, socket, name, cwd, command string) error {
+		return tmux.CreateSession(ctx, tmux.ExecRunner, socket, name, cwd, command)
 	}
 	renameSession := func(ctx context.Context, socket, from, to string) error {
 		return tmux.RenameSession(ctx, tmux.ExecRunner, socket, from, to)

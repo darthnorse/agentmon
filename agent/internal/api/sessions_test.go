@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -252,7 +253,7 @@ func TestCreateSessionHandlerValid(t *testing.T) {
 	}
 
 	var gotSocket, gotName, gotCwd string
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		gotSocket, gotName, gotCwd = socket, name, cwd
 		return nil
 	}
@@ -285,7 +286,7 @@ func TestCreateSessionHandlerEmptyCwdDefaultsToFirstRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var gotCwd string
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		gotCwd = cwd
 		return nil
 	}
@@ -303,7 +304,7 @@ func TestCreateSessionHandlerEmptyCwdDefaultsToFirstRoot(t *testing.T) {
 
 func TestCreateSessionHandlerBadName400(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		t.Fatal("creator must not be called for an invalid name")
 		return nil
 	}
@@ -319,25 +320,29 @@ func TestCreateSessionHandlerBadName400(t *testing.T) {
 	}
 }
 
-func TestCreateSessionHandlerCommandRejected400(t *testing.T) {
+func TestCreateSessionHandlerForwardsCommand(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
-		t.Fatal("creator must not be called when a command is supplied")
+	var gotName, gotCwd, gotCommand string
+	create := func(_ context.Context, _, name, cwd, command string) error {
+		gotName, gotCwd, gotCommand = name, cwd, command
 		return nil
 	}
-	h := CreateSessionHandler(createTestCfg(dir), create)
-	body := `{"name":"proj","command":"rm -rf /"}`
-	req := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
-	rr := httptest.NewRecorder()
-	h(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("code %d, want 400", rr.Code)
+	cfg := config.Config{Targets: []config.Target{{Label: "default", SocketName: "agentmon"}}, SessionDirs: []string{dir}}
+	body := fmt.Sprintf(`{"name":"epic-p-16","cwd":%q,"command":"claude \"/epic-pipeline 16\""}`, dir)
+	r := httptest.NewRequest(http.MethodPost, "/sessions?target=default", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	CreateSessionHandler(cfg, create)(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	if gotName != "epic-p-16" || gotCwd == "" || gotCommand != `claude "/epic-pipeline 16"` {
+		t.Fatalf("creator got name=%q cwd=%q command=%q", gotName, gotCwd, gotCommand)
 	}
 }
 
 func TestCreateSessionHandlerCwdOutsideRoot400(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		t.Fatal("creator must not be called for a cwd outside the allow-list")
 		return nil
 	}
@@ -353,7 +358,7 @@ func TestCreateSessionHandlerCwdOutsideRoot400(t *testing.T) {
 
 func TestCreateSessionHandlerUnknownTarget404(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		t.Fatal("creator must not be called for an unknown target")
 		return nil
 	}
@@ -368,7 +373,7 @@ func TestCreateSessionHandlerUnknownTarget404(t *testing.T) {
 
 func TestCreateSessionHandlerDuplicate409(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		return tmux.ErrSessionExists
 	}
 	h := CreateSessionHandler(createTestCfg(dir), create)
@@ -382,7 +387,7 @@ func TestCreateSessionHandlerDuplicate409(t *testing.T) {
 
 func TestCreateSessionHandlerCreateError500(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		return errors.New("tmux boom")
 	}
 	h := CreateSessionHandler(createTestCfg(dir), create)
@@ -396,7 +401,7 @@ func TestCreateSessionHandlerCreateError500(t *testing.T) {
 
 func TestCreateSessionHandlerBadJSON400(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		t.Fatal("creator must not be called for a malformed body")
 		return nil
 	}
@@ -411,7 +416,7 @@ func TestCreateSessionHandlerBadJSON400(t *testing.T) {
 
 func TestCreateSessionHandlerRequiresBearer(t *testing.T) {
 	dir := t.TempDir()
-	create := func(ctx context.Context, socket, name, cwd string) error {
+	create := func(ctx context.Context, socket, name, cwd, command string) error {
 		t.Fatal("creator must not be called without a valid bearer token")
 		return nil
 	}
@@ -479,7 +484,7 @@ func TestCreateSessionHandlerTimesOutOnHungTmux(t *testing.T) {
 	agentTmuxTimeout = 30 * time.Millisecond
 	defer func() { agentTmuxTimeout = old }()
 
-	slow := func(ctx context.Context, _, _, _ string) error {
+	slow := func(ctx context.Context, _, _, _, _ string) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}

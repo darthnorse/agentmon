@@ -1010,7 +1010,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): tmux.CreateSe
 - Consumes: `tmux.CreateSession` (Task 7 signature).
 - Produces: `api.SessionCreator = func(ctx, socket, name, cwd, command string) error`; the handler forwards `req.Command`.
 
-- [ ] **Step 1: Replace the rejection test with a forwarding test**
+- [x] **Step 1: Replace the rejection test with a forwarding test**
 
 In `agent/internal/api/sessions_test.go`: DELETE `TestCreateSessionHandlerCommandRejected400` (line 322) entirely and add:
 
@@ -1040,12 +1040,12 @@ func TestCreateSessionHandlerForwardsCommand(t *testing.T) {
 
 Every OTHER fake `SessionCreator` closure in this test file gains the extra `command string` parameter (compiler-guided; behavior unchanged).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/api/ -run TestCreateSessionHandler`
 Expected: FAIL to build (signature) — then, after mechanical fake updates, FAIL at the removed-rejection assertion until Step 3.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `agent/internal/api/sessions.go`:
 
@@ -1080,11 +1080,11 @@ type SessionCreator func(ctx context.Context, socket, name, cwd, command string)
 	}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/api/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): execute CreateSessionRequest.Command — lift the shell-only rejection at the exec boundary"
