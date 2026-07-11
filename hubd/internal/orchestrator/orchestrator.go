@@ -34,6 +34,16 @@ type GitHubAPI interface {
 type AgentAPI interface {
 	CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error)
 	DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)
+	KillSession(ctx context.Context, srv db.Server, target, name string) error
+}
+
+// drainAck is the per-(server,target) memory of the last received batch; the
+// NEXT drain echoes it as the acknowledgment (design doc §4). In-memory only:
+// a hub restart forgets it → ack=0 → the agent redelivers everything unacked →
+// guarded transitions reject the duplicates. Guarded by tickMu.
+type drainAck struct {
+	Instance string
+	Cursor   uint64
 }
 
 type ServerGetter interface {
@@ -96,11 +106,13 @@ type Orchestrator struct {
 	syncFails  map[string]int    // projectID → consecutive sync failures
 	stallSeen  map[string]int    // epicID → consecutive ticks with dead session
 	// pending holds reports the hub drained but could not apply due to a
-	// transient error, with their already-resolved project. Drains are
-	// destructive on the agent, so once drained the hub owns them; retried
-	// next tick, capped to bound memory (in-memory only: a hub crash loses
-	// them — the peek/ack drain protocol in sub-project 2 closes that).
-	pending []pendingReport
+	// transient error, with their already-resolved project. Drains are retried
+	// next tick, capped to bound memory (in-memory only: reports are acked on the
+	// NEXT drain regardless, so a hub crash with entries still pending loses just
+	// those transient-DB-error stragglers — a far narrower window than the pre-ack
+	// destructive drain).
+	pending  []pendingReport
+	ackState map[string]drainAck
 }
 
 func New(d Deps) *Orchestrator {
@@ -109,7 +121,8 @@ func New(d Deps) *Orchestrator {
 	}
 	return &Orchestrator{d: d, wake: make(chan struct{}, 1),
 		watermarks: map[string]string{}, syncSkip: map[string]int{},
-		syncFails: map[string]int{}, stallSeen: map[string]int{}}
+		syncFails: map[string]int{}, stallSeen: map[string]int{},
+		ackState: map[string]drainAck{}}
 }
 
 func (o *Orchestrator) Wake() {
@@ -243,13 +256,21 @@ func (o *Orchestrator) drainReports(ctx context.Context, p db.Project) {
 	if !ok {
 		return
 	}
-	batch, err := o.d.Agents.DrainReports(ctx, srv, p.Target, "", 0)
+	key := srv.ID + "\x00" + p.Target
+	prev := o.ackState[key]
+	batch, err := o.d.Agents.DrainReports(ctx, srv, p.Target, prev.Instance, prev.Cursor)
 	if err != nil {
 		log.Printf("orchestrator[%s]: reports: %v", p.Name, err)
 		return
 	}
 	for _, r := range batch.Reports {
 		o.routeReport(ctx, p, r)
+	}
+	// Remember what this batch delivered; the NEXT drain echoes it as the ack.
+	// Storing an empty batch's zero cursor is safe: everything previously acked
+	// is already deleted agent-side, and an ack of 0 deletes nothing.
+	if batch.Instance != "" {
+		o.ackState[key] = drainAck{Instance: batch.Instance, Cursor: batch.Cursor}
 	}
 }
 

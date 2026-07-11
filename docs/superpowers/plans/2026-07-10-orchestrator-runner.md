@@ -1318,7 +1318,7 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): DrainReports spe
 - Consumes: Task 10's client signature; `registry.Client.KillSession` (exists at `hubd/internal/registry/client.go:169` — the concrete type already satisfies the widened interface).
 - Produces: `AgentAPI.KillSession`, `drainAck`, `Orchestrator.ackState` — Task 12 consumes `KillSession`; `fakeAgents.killed []string` + `killErr error` for tests.
 
-- [ ] **Step 1: Write the failing ack test**
+- [x] **Step 1: Write the failing ack test**
 
 Append to `hubd/internal/orchestrator/orchestrator_test.go` (uses the `newTestOrch` harness at line 110, which seeds project `p1` repo `o/r` on server `h1`):
 
@@ -1346,12 +1346,12 @@ func TestDrainAcksPreviousBatchOnNextPoll(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestDrainAcksPreviousBatchOnNextPoll`
 Expected: FAIL — second drain still acks `["", 0]` (Task 10 hardcoded them).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/orchestrator/orchestrator.go`:
 
@@ -1419,11 +1419,11 @@ func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string)
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): orchestrator remembers drain cursors and acks on the next poll; AgentAPI gains KillSession"

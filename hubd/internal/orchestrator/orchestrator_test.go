@@ -69,6 +69,8 @@ type fakeAgents struct {
 	created   []shared.CreateSessionRequest
 	reports   []shared.OrchestratorReport
 	drainAcks [][2]any
+	killed    []string
+	killErr   error
 	spawnErr  error
 }
 
@@ -88,6 +90,11 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 		cur = uint64(len(out))
 	}
 	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: cur, Reports: out}, nil
+}
+
+func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) error {
+	f.killed = append(f.killed, name)
+	return f.killErr
 }
 
 type fakeReg struct{}
@@ -136,6 +143,28 @@ func newTestOrch(t *testing.T, gh *fakeGH, ag *fakeAgents, live fakeLive) (*Orch
 		Cfg:   config.OrchestratorCfg{MaxAttempts: 2},
 		Now:   func() string { return clock }})
 	return o, d
+}
+
+func TestDrainAcksPreviousBatchOnNextPoll(t *testing.T) {
+	ag := &fakeAgents{reports: []shared.OrchestratorReport{
+		{Repo: "o/r", Epic: 999, Stage: shared.EpicPlanning, Session: "s", Ts: "t"}}}
+	o, d := newTestOrch(t, &fakeGH{}, ag, fakeLive{})
+	ctx := context.Background()
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.drainReports(ctx, p) // batch of 1 (epic unknown → dropped) — cursor 1 remembered
+	o.drainReports(ctx, p) // must echo instance+cursor as the ack
+	if len(ag.drainAcks) != 2 {
+		t.Fatalf("drains = %d", len(ag.drainAcks))
+	}
+	if ag.drainAcks[0] != [2]any{"", uint64(0)} {
+		t.Fatalf("first drain must ack nothing: %+v", ag.drainAcks[0])
+	}
+	if ag.drainAcks[1] != [2]any{"test-instance", uint64(1)} {
+		t.Fatalf("second drain must ack the first batch: %+v", ag.drainAcks[1])
+	}
 }
 
 func TestTickSyncsAndSpawns(t *testing.T) {
