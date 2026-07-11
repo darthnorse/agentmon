@@ -17,19 +17,23 @@ var ErrSessionExists = errors.New("session already exists")
 
 // CreateSession starts a new detached tmux session named name with working
 // directory cwd on the given socket, via the arg-array Runner seam (no shell —
-// name and cwd are positional args, never interpolated; §13.6). It mirrors the
-// proven `new-session -d -s … -c …` shape from discovery_integration_test.go.
+// name, cwd, and command are positional args, never interpolated; §13.6).
+//
+// A non-empty command becomes the session's shell-command argument: tmux runs
+// it via `sh -c`, and the session ENDS when it exits — which is exactly the
+// runner contract's normal exit (report pr_open, then quit; design doc §5).
+// Empty command → the user's default shell, byte-for-byte today's behavior.
 //
 // The caller MUST have already validated name (shared.ValidateSessionName) and
 // cwd (ValidateCwd); CreateSession is the exec boundary, not the policy boundary.
 // A tmux "duplicate session" failure is mapped to ErrSessionExists.
-func CreateSession(ctx context.Context, run Runner, socket, name, cwd string) error {
-	out, err := run(ctx, with(socketArgs(socket), "new-session", "-d", "-s", name, "-c", cwd)...)
+func CreateSession(ctx context.Context, run Runner, socket, name, cwd, command string) error {
+	args := with(socketArgs(socket), "new-session", "-d", "-s", name, "-c", cwd)
+	if command != "" {
+		args = append(args, command)
+	}
+	out, err := run(ctx, args...)
 	if err != nil {
-		// tmux reports "duplicate session" on stderr. The production ExecRunner
-		// returns nil stdout and folds stderr into the error string, so check
-		// BOTH the returned output and the error text (a fake Runner may surface
-		// the message either way).
 		if isDuplicateSession(out) || isDuplicateSession([]byte(err.Error())) {
 			return ErrSessionExists
 		}

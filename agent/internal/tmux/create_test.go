@@ -26,7 +26,7 @@ func TestCreateSessionArgArray(t *testing.T) {
 	var got []string
 	run := recordRunner(nil, nil, &got)
 
-	if err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp"); err != nil {
+	if err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp", ""); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	want := []string{"-L", "mysock", "new-session", "-d", "-s", "proj", "-c", "/tmp"}
@@ -39,7 +39,7 @@ func TestCreateSessionDefaultSocket(t *testing.T) {
 	var got []string
 	run := recordRunner(nil, nil, &got)
 
-	if err := CreateSession(context.Background(), run, "", "proj", "/tmp"); err != nil {
+	if err := CreateSession(context.Background(), run, "", "proj", "/tmp", ""); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	// Empty socket → no -L flag (socketArgs returns nil).
@@ -49,11 +49,24 @@ func TestCreateSessionDefaultSocket(t *testing.T) {
 	}
 }
 
+func TestCreateSessionWithCommandArgArray(t *testing.T) {
+	var got []string
+	run := recordRunner(nil, nil, &got)
+	cmd := `IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"`
+	if err := CreateSession(context.Background(), run, "mysock", "epic-p-16", "/w", cmd); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	want := []string{"-L", "mysock", "new-session", "-d", "-s", "epic-p-16", "-c", "/w", cmd}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
 func TestCreateSessionDuplicate(t *testing.T) {
 	var got []string
 	run := recordRunner([]byte("duplicate session: proj"), errors.New("exit status 1"), &got)
 
-	err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp")
+	err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp", "")
 	if !errors.Is(err, ErrSessionExists) {
 		t.Fatalf("err = %v, want ErrSessionExists", err)
 	}
@@ -64,7 +77,7 @@ func TestCreateSessionDuplicateMixedCase(t *testing.T) {
 	var got []string
 	run := recordRunner([]byte("Duplicate Session: proj\n"), errors.New("exit status 1"), &got)
 
-	err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp")
+	err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp", "")
 	if !errors.Is(err, ErrSessionExists) {
 		t.Fatalf("err = %v, want ErrSessionExists", err)
 	}
@@ -74,7 +87,7 @@ func TestCreateSessionOtherError(t *testing.T) {
 	var got []string
 	run := recordRunner([]byte("some other failure"), errors.New("exit status 1"), &got)
 
-	err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp")
+	err := CreateSession(context.Background(), run, "mysock", "proj", "/tmp", "")
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -222,7 +235,7 @@ func TestCreateSessionIntegration(t *testing.T) {
 	t.Cleanup(killM10ITestServer)
 
 	dir := t.TempDir()
-	if err := CreateSession(context.Background(), ExecRunner, itestSocket, "m10proj", dir); err != nil {
+	if err := CreateSession(context.Background(), ExecRunner, itestSocket, "m10proj", dir, ""); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
@@ -235,7 +248,7 @@ func TestCreateSessionIntegration(t *testing.T) {
 	}
 
 	// Re-creating the same name must surface ErrSessionExists from real tmux.
-	err = CreateSession(context.Background(), ExecRunner, itestSocket, "m10proj", dir)
+	err = CreateSession(context.Background(), ExecRunner, itestSocket, "m10proj", dir, "")
 	if !errors.Is(err, ErrSessionExists) {
 		t.Fatalf("duplicate err = %v, want ErrSessionExists", err)
 	}
@@ -279,7 +292,7 @@ func TestRenameSessionIntegration(t *testing.T) {
 	t.Cleanup(killRenameITestServer)
 	dir := t.TempDir()
 
-	if err := CreateSession(context.Background(), ExecRunner, renameItestSocket, "before", dir); err != nil {
+	if err := CreateSession(context.Background(), ExecRunner, renameItestSocket, "before", dir, ""); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	// Renaming an unknown source → ErrNoSession.
@@ -298,7 +311,7 @@ func TestRenameSessionIntegration(t *testing.T) {
 		t.Fatalf("sessions = %q, want only 'after'", out)
 	}
 	// Renaming onto an existing name → ErrSessionExists.
-	if err := CreateSession(context.Background(), ExecRunner, renameItestSocket, "taken", dir); err != nil {
+	if err := CreateSession(context.Background(), ExecRunner, renameItestSocket, "taken", dir, ""); err != nil {
 		t.Fatalf("CreateSession(taken): %v", err)
 	}
 	if err := RenameSession(context.Background(), ExecRunner, renameItestSocket, "after", "taken"); !errors.Is(err, ErrSessionExists) {

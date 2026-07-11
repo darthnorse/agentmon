@@ -920,7 +920,7 @@ Report: tasks 1–6 committed, full gate green. WAIT for explicit fix instructio
 - Consumes: existing `with`/`socketArgs`/`Runner`.
 - Produces: `CreateSession(ctx, run, socket, name, cwd, command string) error` — Task 8's exec target.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `agent/internal/tmux/create_test.go`:
 
@@ -939,14 +939,14 @@ func TestCreateSessionWithCommandArgArray(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Update the existing tests' calls and verify compile failure**
+- [x] **Step 2: Update the existing tests' calls and verify compile failure**
 
 Every existing `CreateSession(` call in `create_test.go` gains a trailing `""` argument (empty command — e.g. `CreateSession(context.Background(), run, "mysock", "proj", "/tmp", "")`). Their `want` argv arrays stay EXACTLY as they are — that is the regression assertion that an empty command changes nothing.
 
 Run: `cd /root/agentmon/agent && go test ./internal/tmux/ -run TestCreateSession`
 Expected: FAIL to build — signature mismatch (and `main.go` will fail the build too; that call site is fixed in Task 8, so use the package-scoped test run above, not the full gate, for this red step).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `agent/internal/tmux/create.go`, change `CreateSession` to:
 
@@ -987,11 +987,11 @@ Update the ONE production call site in `agent/cmd/agentmon-agent/main.go:71-73` 
 	}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/tmux/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): tmux.CreateSession takes an optional session command"
