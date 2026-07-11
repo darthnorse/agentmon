@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -75,6 +76,34 @@ func (r *Recorder) SessionKill(ctx context.Context, principalID, resource, sessi
 	}
 	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "session.kill",
 		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
+}
+
+func (r *Recorder) ProjectRegister(ctx context.Context, principalID, resource, repo, ip, ua string) {
+	meta, err := json.Marshal(map[string]string{"repo": repo})
+	if err != nil {
+		meta = []byte("{}")
+	}
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "project.register",
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
+}
+
+func (r *Recorder) EpicAction(ctx context.Context, principalID, resource, action, epicID, ip, ua string) {
+	meta, err := json.Marshal(map[string]string{"epic": epicID})
+	if err != nil {
+		meta = []byte("{}")
+	}
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "epic." + action,
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
+}
+
+func (r *Recorder) EpicMerge(ctx context.Context, principalID, resource string, issue, pr int) {
+	meta, err := json.Marshal(map[string]string{
+		"issue": strconv.Itoa(issue), "pr": strconv.Itoa(pr)})
+	if err != nil {
+		meta = []byte("{}")
+	}
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "epic.merge",
+		Resource: resource, Result: "allow", Meta: string(meta)})
 }
 
 func (r *Recorder) PasswordChange(ctx context.Context, principalID, ip, ua string) {

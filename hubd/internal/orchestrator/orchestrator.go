@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/config"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/github"
@@ -55,6 +56,7 @@ type Deps struct {
 	Reg    ServerGetter
 	Live   LivenessAPI
 	Bcast  *BoardBroadcaster
+	Audit  *audit.Recorder
 	Cfg    config.OrchestratorCfg
 	Now    func() string
 }
@@ -517,6 +519,7 @@ func (o *Orchestrator) mergeEpic(ctx context.Context, p db.Project, e db.Epic, s
 			}
 			if pr.Merged {
 				o.finishMerged(ctx, p, e, source, "")
+				o.auditMerge(ctx, p, e, source)
 				return nil
 			}
 			reason := "merge rejected by GitHub (branch moved or conflict) — needs a human look"
@@ -529,7 +532,21 @@ func (o *Orchestrator) mergeEpic(ctx context.Context, p db.Project, e db.Epic, s
 		return err
 	}
 	o.finishMerged(ctx, p, e, source, "")
+	o.auditMerge(ctx, p, e, source)
 	return nil
+}
+
+func (o *Orchestrator) auditMerge(ctx context.Context, p db.Project, e db.Epic, source string) {
+	if o.d.Audit == nil {
+		return
+	}
+	principal := source
+	if source == "hub" {
+		principal = "orchestrator"
+	} else {
+		principal = strings.TrimPrefix(source, "user:")
+	}
+	o.d.Audit.EpicMerge(ctx, principal, "project:"+p.ID, e.IssueNumber, e.PRNumber)
 }
 
 func (o *Orchestrator) finishMerged(ctx context.Context, p db.Project, e db.Epic, source, note string) {

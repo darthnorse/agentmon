@@ -16,15 +16,17 @@ type Principal struct {
 type Action string
 
 const (
-	ServerView    Action = "server.view"
-	SessionView   Action = "session.view"
-	TerminalRead  Action = "terminal.read"
-	TerminalWrite Action = "terminal.write"
-	AuditRead     Action = "audit.read"
-	SessionCreate Action = "session.create"
-	SessionRename Action = "session.rename"
-	SessionKill   Action = "session.kill"
-	ServerAdmit   Action = "server.admit"
+	ServerView          Action = "server.view"
+	SessionView         Action = "session.view"
+	TerminalRead        Action = "terminal.read"
+	TerminalWrite       Action = "terminal.write"
+	AuditRead           Action = "audit.read"
+	SessionCreate       Action = "session.create"
+	SessionRename       Action = "session.rename"
+	SessionKill         Action = "session.kill"
+	ServerAdmit         Action = "server.admit"
+	OrchestratorView    Action = "orchestrator.view"
+	OrchestratorControl Action = "orchestrator.control"
 )
 
 type Decision struct {
