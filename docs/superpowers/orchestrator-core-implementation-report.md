@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `feat/orchestrator-core`
-Status: Checkpoint 2 reached after completing Tasks 1–11. Waiting for explicit review instructions or `continue` before Task 12.
+Status: stopped during Task 15 because the prescribed `drainReports` code references a field absent from the shared wire contract.
 
 ## Completed tasks
 
@@ -28,6 +28,12 @@ Status: Checkpoint 2 reached after completing Tasks 1–11. Waiting for explicit
   - Commit: `edf0457 feat(hub): epic stage transition table`
 - Task 11: board-change broadcaster.
   - Commit: `036c544 feat(hub): board change broadcaster`
+- Task 12: dependency-aware scheduler and kickoff commands.
+  - Commit: `58fefd8 feat(hub): dependency-aware scheduler + kickoff commands`
+- Task 13: orchestrator report draining from agents.
+  - Commit: `b369704 feat(hub): drain orchestrator reports from agents`
+- Task 14: issue mirror synchronization helpers.
+  - Commit: `7b17b20 feat(hub): issue mirror sync helpers`
 
 ## Verification
 
@@ -65,13 +71,41 @@ Task-specific verification also passed:
 - Task 9: ten merge-gate decision subtests.
 - Task 10: transition-validity table test.
 - Task 11: broadcaster tests under `go test -race`.
+- Task 12: scheduler and provider tests.
+- Task 13: complete registry package tests.
+- Task 14: complete orchestrator package tests.
 
 ## Resolved plan mismatch
 
 The earlier Task 3 helper collision was resolved by plan-fix commit `7f53b53`: `projects_test.go` now reuses the existing `enrollTestServer` helper from `state_test.go`. The corrected red test produced the intended missing project-store API errors, and Tasks 3–5 then completed normally.
 
-## Checkpoint stop
+## Stop condition
 
-- Checkpoint 2 is reached with Tasks 1–11 complete.
-- Task 12 has not been started.
-- Plan checkbox updates through Checkpoint 2 remain uncommitted because task commit commands stage only their listed implementation files.
+Task 15 Steps 1–2 were completed: the prescribed orchestrator test and fakes were added, and the required red test failed with `New undefined` as expected. Before Step 3 implementation, the plan's `drainReports` code was checked against the shared type registry and source.
+
+The plan requires:
+
+```go
+o.d.DB.SetEpicPR(ctx, e.ID, r.PR, r.Branch)
+```
+
+However, `shared.OrchestratorReport` is defined as:
+
+```go
+type OrchestratorReport struct {
+	Repo string
+	Epic int
+	Stage EpicStage
+	Note string
+	PR int
+	Session string
+	Ts string
+}
+```
+
+There is no `Branch` field in the source type or the plan's shared type registry. Adding a wire field versus passing an empty branch changes the cross-module contract, so Task 15 was stopped without improvisation. Tasks 16 and later were not started.
+
+## Worktree at stop
+
+- `hubd/internal/orchestrator/orchestrator_test.go` contains the exact Task 15 Step 1 test and remains uncommitted.
+- Plan checkboxes are ticked through Task 15 Step 2 and remain uncommitted.
