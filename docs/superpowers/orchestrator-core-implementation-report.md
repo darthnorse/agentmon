@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `feat/orchestrator-core`
-Status: stopped during Task 15 because the prescribed `drainReports` code references a field absent from the shared wire contract.
+Status: stopped during Task 15 Step 4 because its prescribed kickoff-command expectation conflicts with Task 12's committed contract.
 
 ## Completed tasks
 
@@ -79,33 +79,34 @@ Task-specific verification also passed:
 
 The earlier Task 3 helper collision was resolved by plan-fix commit `7f53b53`: `projects_test.go` now reuses the existing `enrollTestServer` helper from `state_test.go`. The corrected red test produced the intended missing project-store API errors, and Tasks 3–5 then completed normally.
 
+## Task 15 contract resolution
+
+The report-drain ambiguity was resolved explicitly: `SetEpicPR` preserves the stored epic branch with `e.Branch`; the runner report deliberately has no branch field. Task 15 Step 3 was then implemented without changing `shared.OrchestratorReport`. The updated contracts are honored: `GateInput.Epic` receives `e.IssueNumber`, and `MergePR` receives the evaluated head SHA.
+
 ## Stop condition
 
-Task 15 Steps 1–2 were completed: the prescribed orchestrator test and fakes were added, and the required red test failed with `New undefined` as expected. Before Step 3 implementation, the plan's `drainReports` code was checked against the shared type registry and source.
+Task 15 Step 4 ran the prescribed race suite:
 
-The plan requires:
-
-```go
-o.d.DB.SetEpicPR(ctx, e.ID, r.PR, r.Branch)
+```text
+GOCACHE=/tmp/agentmon-go-cache go test ./internal/orchestrator/ -v -race
 ```
 
-However, `shared.OrchestratorReport` is defined as:
+All tests passed except `TestTickSyncsAndSpawns`, whose plan-prescribed expectation is:
 
-```go
-type OrchestratorReport struct {
-	Repo string
-	Epic int
-	Stage EpicStage
-	Note string
-	PR int
-	Session string
-	Ts string
-}
+```text
+claude "/epic-pipeline 16"
 ```
 
-There is no `Branch` field in the source type or the plan's shared type registry. Adding a wire field versus passing an empty branch changes the cross-module contract, so Task 15 was stopped without improvisation. Tasks 16 and later were not started.
+The actual command is the Task 12 contract, produced by `KickoffCommand("claude", 16)`:
+
+```text
+IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"
+```
+
+Task 12 explicitly tests and commits the latter command so autonomous runners do not stall on permission prompts. Changing the implementation to satisfy Task 15 would break Task 12; changing Task 15's test would depart from its literal prescribed file. Task 15 was therefore stopped without improvisation. Tasks 16 and later were not started.
 
 ## Worktree at stop
 
+- `hubd/internal/orchestrator/orchestrator.go` contains Task 15 Step 3 and remains uncommitted.
 - `hubd/internal/orchestrator/orchestrator_test.go` contains the exact Task 15 Step 1 test and remains uncommitted.
-- Plan checkboxes are ticked through Task 15 Step 2 and remain uncommitted.
+- Plan checkboxes are ticked through Task 15 Step 3 and remain uncommitted.
