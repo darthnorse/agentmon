@@ -242,7 +242,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): tmux.SessionN
 - Consumes: `shared.OrchestratorReport`, `shared.OrchestratorReportBatch` (Task 1).
 - Produces: `NewStore(instance, max) *Store`, `(*Store).Add(target, r)`, `(*Store).Drain(target, instance, ack) shared.OrchestratorReportBatch`, `NewInstanceID() string`, `DefaultCap`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/internal/report/store_test.go`:
 
@@ -325,12 +325,12 @@ func TestNewInstanceID(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/`
 Expected: FAIL to build — package does not exist yet.
 
-- [ ] **Step 3: Implement the store**
+- [x] **Step 3: Implement the store**
 
 Create `agent/internal/report/store.go`:
 
@@ -432,11 +432,11 @@ func (s *Store) Drain(target, instance string, ack uint64) shared.OrchestratorRe
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report.Store — buffered orchestrator reports with ack-on-next-drain semantics"
