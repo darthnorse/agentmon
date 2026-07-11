@@ -53,6 +53,11 @@ func main() {
 				log.Fatal(err)
 			}
 			return
+		case "import-epics":
+			if err := importEpicsMain(os.Args[2:], os.Stdout); err != nil {
+				log.Fatal(err)
+			}
+			return
 		}
 	}
 

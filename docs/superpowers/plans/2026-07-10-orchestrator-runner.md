@@ -2142,7 +2142,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): epicfile — 
 - Produces: `cmdRunner`/`execRunner` (Task 16 reuses), `importEpicsMain`, `importEpics`, `resolveRef`.
 - Emits issue bodies whose dependency lines match the hub's parser: `Blocked-by: #a, #b` (`hubd/internal/orchestrator/sync.go:16` regex).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/cmd/agentmon-agent/import_epics_cli_test.go`:
 
@@ -2288,12 +2288,12 @@ func TestImportUnresolvableRefErrors(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/ -run TestImport`
 Expected: FAIL to build — `undefined: importEpics`, `undefined: cmdRunner`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/cmd/agentmon-agent/import_epics_cli.go`:
 
@@ -2480,11 +2480,11 @@ In `main.go`, add the switch case:
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon import-epics — idempotent epic-file → GitHub issue import with stamp-back"
