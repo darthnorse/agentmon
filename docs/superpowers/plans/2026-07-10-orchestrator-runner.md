@@ -2503,7 +2503,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon impo
 - Consumes: `cmdRunner`/`execRunner` (Task 15), `postReport`/`repoFromGit` (Task 13), `github.com/BurntSushi/toml` (existing agent dep).
 - Produces: `doctorRun(args, stdout, run, look, home) error` — spec §5/§12 host validation.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/cmd/agentmon-agent/doctor_cli_test.go`:
 
@@ -2652,12 +2652,12 @@ func TestDoctorCodexReadOnlySandboxFails(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/ -run TestDoctor`
 Expected: FAIL to build — `undefined: doctorRun`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/cmd/agentmon-agent/doctor_cli.go`:
 
@@ -2828,17 +2828,17 @@ In `main.go`, add the switch case:
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon doctor — validates gh auth, clone, reporter, providers, codex sandbox"
 ```
 
-- [ ] **Step 6: CHECKPOINT 3 — STOP**
+- [x] **Step 6: CHECKPOINT 3 — STOP**
 
 Report: tasks 13–16 committed, full gate green. WAIT for explicit fix instructions or an explicit "continue". Do NOT begin Task 17.
 

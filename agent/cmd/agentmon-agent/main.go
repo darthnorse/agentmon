@@ -58,6 +58,11 @@ func main() {
 				log.Fatal(err)
 			}
 			return
+		case "doctor":
+			if err := doctorMain(os.Args[2:], os.Stdout); err != nil {
+				log.Fatal(err)
+			}
+			return
 		}
 	}
 
