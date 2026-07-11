@@ -105,3 +105,48 @@ func unmarshalStrings(s string) []string {
 	_ = json.Unmarshal([]byte(s), &out)
 	return out
 }
+
+// UpdateProject rewrites the editable registration fields (typo repair from the
+// board UI). repo and server_id are deliberately NOT updatable: existing epics
+// belong to the repo, and moving hosts mid-flight would orphan runner sessions
+// (spec §5.3). paused/max_parallel/require_ci keep their action verbs.
+func (d *DB) UpdateProject(ctx context.Context, p Project) (bool, error) {
+	return d.execFound(ctx,
+		`UPDATE projects SET name = ?, workdir = ?, target = ?, base_branch = ?, provider = ?, required_reviews = ?, updated_at = datetime('now') WHERE id = ?`,
+		p.Name, p.Workdir, p.Target, p.BaseBranch, p.Provider, marshalStrings(p.RequiredReviews), p.ID)
+}
+
+// DeleteProject removes a project and its (terminal) epics + events in one
+// transaction. It refuses while any non-terminal epic exists — the guard runs
+// INSIDE the transaction so a concurrent report/transition can't slip an
+// active epic past it. foreign_keys(1) is on and there is no ON DELETE
+// CASCADE, so children go first.
+func (d *DB) DeleteProject(ctx context.Context, id string) (found bool, active int, err error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return false, 0, err
+	}
+	defer tx.Rollback()
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM epics WHERE project_id = ? AND stage NOT IN `+terminalStagesSQL, id).Scan(&active); err != nil {
+		return false, 0, err
+	}
+	if active > 0 {
+		return true, active, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM epic_events WHERE epic_id IN (SELECT id FROM epics WHERE project_id = ?)`, id); err != nil {
+		return false, 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM epics WHERE project_id = ?`, id); err != nil {
+		return false, 0, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
+	if err != nil {
+		return false, 0, err
+	}
+	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return false, 0, err
+	}
+	return n > 0, 0, nil
+}
