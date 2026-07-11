@@ -66,9 +66,10 @@ func (f *fakeGH) AddLabels(_ context.Context, _ string, n int, ls []string) erro
 }
 
 type fakeAgents struct {
-	created  []shared.CreateSessionRequest
-	reports  []shared.OrchestratorReport
-	spawnErr error
+	created   []shared.CreateSessionRequest
+	reports   []shared.OrchestratorReport
+	drainAcks [][2]any
+	spawnErr  error
 }
 
 func (f *fakeAgents) CreateSession(_ context.Context, _ db.Server, _ string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error) {
@@ -78,10 +79,15 @@ func (f *fakeAgents) CreateSession(_ context.Context, _ db.Server, _ string, req
 	f.created = append(f.created, req)
 	return shared.CreateSessionResponse{Name: req.Name}, nil
 }
-func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _ string) ([]shared.OrchestratorReport, error) {
+func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance string, ack uint64) (shared.OrchestratorReportBatch, error) {
+	f.drainAcks = append(f.drainAcks, [2]any{instance, ack})
 	out := f.reports
 	f.reports = nil
-	return out, nil
+	var cur uint64
+	if len(out) > 0 {
+		cur = uint64(len(out))
+	}
+	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: cur, Reports: out}, nil
 }
 
 type fakeReg struct{}

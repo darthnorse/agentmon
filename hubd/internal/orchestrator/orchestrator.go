@@ -33,7 +33,7 @@ type GitHubAPI interface {
 
 type AgentAPI interface {
 	CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error)
-	DrainReports(ctx context.Context, srv db.Server, target string) ([]shared.OrchestratorReport, error)
+	DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)
 }
 
 type ServerGetter interface {
@@ -243,12 +243,12 @@ func (o *Orchestrator) drainReports(ctx context.Context, p db.Project) {
 	if !ok {
 		return
 	}
-	reports, err := o.d.Agents.DrainReports(ctx, srv, p.Target)
+	batch, err := o.d.Agents.DrainReports(ctx, srv, p.Target, "", 0)
 	if err != nil {
 		log.Printf("orchestrator[%s]: reports: %v", p.Name, err)
 		return
 	}
-	for _, r := range reports {
+	for _, r := range batch.Reports {
 		o.routeReport(ctx, p, r)
 	}
 }

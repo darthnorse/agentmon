@@ -239,7 +239,8 @@ func TestClientRenameSessionErrorMapping(t *testing.T) {
 
 func TestDrainReports(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/orchestrator/reports" || r.URL.Query().Get("drain") != "1" {
+		q := r.URL.Query()
+		if r.URL.Path != "/orchestrator/reports" || q.Get("ack") != "7" || q.Get("instance") != "i1" || q.Get("target") != "tgt" {
 			w.WriteHeader(404)
 			return
 		}
@@ -248,12 +249,12 @@ func TestDrainReports(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"repo":"o/r","epic":16,"stage":"implementing","session":"epic-16","ts":"t1"}]`))
+		w.Write([]byte(`{"instance":"i1","cursor":9,"reports":[{"repo":"o/r","epic":16,"stage":"implementing","session":"epic-16","ts":"t1"}]}`))
 	}))
 	defer srv.Close()
 	c := NewClient(time.Second)
-	got, err := c.DrainReports(context.Background(), db.Server{URL: srv.URL, Bearer: "btok"}, "")
-	if err != nil || len(got) != 1 || got[0].Epic != 16 || got[0].Stage != shared.EpicImplementing {
+	got, err := c.DrainReports(context.Background(), db.Server{URL: srv.URL, Bearer: "btok"}, "tgt", "i1", 7)
+	if err != nil || got.Instance != "i1" || got.Cursor != 9 || len(got.Reports) != 1 || got.Reports[0].Stage != shared.EpicImplementing {
 		t.Fatalf("got %+v err=%v", got, err)
 	}
 }
@@ -262,8 +263,8 @@ func TestDrainReportsOldAgent404(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	c := NewClient(time.Second)
-	got, err := c.DrainReports(context.Background(), db.Server{URL: srv.URL, Bearer: "b"}, "")
-	if err != nil || got != nil {
-		t.Fatalf("404 must be tolerated: got %v err=%v", got, err)
+	got, err := c.DrainReports(context.Background(), db.Server{URL: srv.URL, Bearer: "b"}, "", "", 0)
+	if err != nil || got.Instance != "" || len(got.Reports) != 0 {
+		t.Fatalf("404 must be tolerated as an empty batch: got %+v err=%v", got, err)
 	}
 }

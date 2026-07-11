@@ -1172,7 +1172,7 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): forward CreateSe
 - Consumes: `shared.OrchestratorReportBatch` (Task 1).
 - Produces: `DrainReports(ctx, srv, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)` — Task 11's transport. **Note:** hubd compiles but `orchestrator.AgentAPI` still declares the OLD signature until Task 11 — so this task must ALSO update that interface line and the orchestrator call site minimally, or the gate fails. To keep the diff coherent, do it here: see Step 3 item 3.
 
-- [ ] **Step 1: Rewrite the drain tests**
+- [x] **Step 1: Rewrite the drain tests**
 
 Replace `TestDrainReports` and `TestDrainReportsOldAgent404` in `hubd/internal/registry/client_test.go` with:
 
@@ -1210,12 +1210,12 @@ func TestDrainReportsOldAgent404(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ -run TestDrainReports`
 Expected: FAIL to build — signature mismatch.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 1. In `hubd/internal/registry/client.go`, replace `DrainReports` (lines 64–94) with:
 
@@ -1296,11 +1296,11 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 
 and add the field `drainAcks [][2]any` to the `fakeAgents` struct.
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ ./internal/orchestrator/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): DrainReports speaks the ack-on-next-drain protocol"
