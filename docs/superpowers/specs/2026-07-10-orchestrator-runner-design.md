@@ -39,7 +39,10 @@ exist. Sub-2 is everything runner-side.
   drain (the dossier-flagged loss window: an escalation note vanishing when the
   hub crashes between agent-clear and apply).
 - **D2 — No run tokens.** Provenance = agent-side server-stamped session names
-  (the CLI cannot forge its session) + the hub's assigned-session check
+  (the stamp binds a report to the session of the pane its headers name — it
+  authenticates pane→session, not caller→pane, so a local token-holder naming
+  another pane is inside the §12 accepted threat class) + the hub's
+  assigned-session check
   (`orchestrator.go:307`) + attempt-suffixed session names (`-rN`). Residual
   risk on single-user trusted hosts ≈ nil. Revisit only if PR authorship opens
   to untrusted runners (same posture as the gate's "signed attestation is
@@ -341,9 +344,10 @@ distributes skill updates with agent updates — the skills ride the binary.
   design; the hub validates repo routing, the server+target trust boundary,
   the assigned-session check, and guarded transitions — the report can
   request, never command.
-- Server-side session stamping means a report cannot claim a session its pane
-  does not belong to; combined with attempt-suffixed names this is the D2
-  provenance story.
+- Server-side session stamping means a report cannot claim a session that the
+  pane named in its headers does not belong to (the caller→pane binding itself
+  is not verified — that attacker is the accepted local-process class above);
+  combined with attempt-suffixed names this is the D2 provenance story.
 - The exec surface (create-with-command) is hub-bearer-gated like every agent
   API; D13 documents why no new permission is needed.
 - Drain is hub-bearer-gated; the instance/cursor protocol cannot be driven by

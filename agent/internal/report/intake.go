@@ -17,8 +17,8 @@ import (
 const maxReportBody = 8 << 10
 
 // reportTmuxTimeout bounds the session-resolution shell-out (mirrors
-// api.agentTmuxTimeout). var so tests can shorten it.
-var reportTmuxTimeout = 10 * time.Second
+// api.agentTmuxTimeout).
+const reportTmuxTimeout = 10 * time.Second
 
 // SessionResolver resolves the session name owning a pane on a socket — the
 // DI seam for IntakeHandler (production binds tmux.SessionNameForPane).
@@ -85,6 +85,8 @@ func IntakeHandler(cfg config.Config, st *Store, resolve SessionResolver, now fu
 	}
 }
 
+// writeError matches api.writeJSONError's wire shape ({"error": msg}); keep
+// the two in sync.
 func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
