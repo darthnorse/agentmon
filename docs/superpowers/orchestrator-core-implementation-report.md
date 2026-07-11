@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `feat/orchestrator-core`
-Status: stopped during Task 15 Step 4 because its prescribed kickoff-command expectation conflicts with Task 12's committed contract.
+Status: Checkpoint 3 reached after completing Tasks 1–15. Waiting for explicit review instructions or `continue` before Task 16.
 
 ## Completed tasks
 
@@ -34,6 +34,8 @@ Status: stopped during Task 15 Step 4 because its prescribed kickoff-command exp
   - Commit: `b369704 feat(hub): drain orchestrator reports from agents`
 - Task 14: issue mirror synchronization helpers.
   - Commit: `7b17b20 feat(hub): issue mirror sync helpers`
+- Task 15: orchestrator core loop for sync, reports, stalls, gating, and scheduling.
+  - Commit: `fd7fae6 feat(hub): orchestrator core loop — sync, reports, stalls, gate, schedule`
 
 ## Verification
 
@@ -74,6 +76,7 @@ Task-specific verification also passed:
 - Task 12: scheduler and provider tests.
 - Task 13: complete registry package tests.
 - Task 14: complete orchestrator package tests.
+- Task 15: complete orchestrator package tests under `go test -race`.
 
 ## Resolved plan mismatch
 
@@ -83,7 +86,7 @@ The earlier Task 3 helper collision was resolved by plan-fix commit `7f53b53`: `
 
 The report-drain ambiguity was resolved explicitly: `SetEpicPR` preserves the stored epic branch with `e.Branch`; the runner report deliberately has no branch field. Task 15 Step 3 was then implemented without changing `shared.OrchestratorReport`. The updated contracts are honored: `GateInput.Epic` receives `e.IssueNumber`, and `MergePR` receives the evaluated head SHA.
 
-## Stop condition
+## Resolved kickoff expectation
 
 Task 15 Step 4 ran the prescribed race suite:
 
@@ -91,22 +94,16 @@ Task 15 Step 4 ran the prescribed race suite:
 GOCACHE=/tmp/agentmon-go-cache go test ./internal/orchestrator/ -v -race
 ```
 
-All tests passed except `TestTickSyncsAndSpawns`, whose plan-prescribed expectation is:
-
-```text
-claude "/epic-pipeline 16"
-```
-
-The actual command is the Task 12 contract, produced by `KickoffCommand("claude", 16)`:
+The stale Task 15 `TestTickSyncsAndSpawns` expectation was corrected by plan commit `eb24add` to match Task 12's authoritative autonomous kickoff command:
 
 ```text
 IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline 16"
 ```
 
-Task 12 explicitly tests and commits the latter command so autonomous runners do not stall on permission prompts. Changing the implementation to satisfy Task 15 would break Task 12; changing Task 15's test would depart from its literal prescribed file. Task 15 was therefore stopped without improvisation. Tasks 16 and later were not started.
+After that correction, the entire Task 15 race suite passed, as did the final full-module build and test gate.
 
-## Worktree at stop
+## Checkpoint stop
 
-- `hubd/internal/orchestrator/orchestrator.go` contains Task 15 Step 3 and remains uncommitted.
-- `hubd/internal/orchestrator/orchestrator_test.go` contains the exact Task 15 Step 1 test and remains uncommitted.
-- Plan checkboxes are ticked through Task 15 Step 3 and remain uncommitted.
+- Checkpoint 3 is reached with Tasks 1–15 complete.
+- Task 16 has not been started.
+- Plan checkbox updates through Checkpoint 3 remain uncommitted because task commit commands stage only their listed implementation files.
