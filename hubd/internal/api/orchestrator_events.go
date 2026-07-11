@@ -20,31 +20,39 @@ func (d Deps) OrchestratorEventsHandler() http.HandlerFunc {
 			return
 		}
 		if d.BoardBcast == nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "board streaming not configured")
-			return
+			// Dormant hub: keep the stream OPEN and idle rather than 503, so the
+			// app-wide EventSource doesn't reconnect-loop. No projects exist yet,
+			// so the snapshot is empty and no deltas ever arrive.
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			writeSSE(w, "board-snapshot", map[string]any{"projects": []projectDTO{}, "epics": []epicDTO{}})
+			flusher.Flush()
+			hb := d.SSEHeartbeat
+			if hb <= 0 {
+				hb = 25 * time.Second
+			}
+			t := time.NewTicker(hb)
+			defer t.Stop()
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-t.C:
+					fmt.Fprint(w, ": ping\n\n")
+					flusher.Flush()
+				}
+			}
 		}
 		// Subscribe BEFORE the snapshot (no delta lost in the gap), but query
 		// BEFORE setting SSE headers so a failing DB yields a loud 500, not a
 		// silent empty 200 the EventSource reconnect-loops against.
 		_, ch, cancel := d.BoardBcast.Subscribe()
 		defer cancel()
-		projects, err := d.DB.ListProjects(r.Context())
+		projDTOs, epics, err := d.boardSnapshot(r.Context())
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
-		}
-		projDTOs := make([]projectDTO, 0, len(projects))
-		var epics []epicDTO
-		for _, pr := range projects {
-			projDTOs = append(projDTOs, projectOut(pr, nil))
-			es, err := d.DB.ListBoardEpics(r.Context(), pr.ID)
-			if err != nil {
-				writeJSONError(w, http.StatusInternalServerError, "internal error")
-				return
-			}
-			for _, e := range es {
-				epics = append(epics, toEpicDTO(e))
-			}
 		}
 		// Board viewers are online viewers: suppress redundant web-push for
 		// escalations they are already watching (mirrors events.go).

@@ -1,13 +1,16 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authz"
@@ -200,5 +203,74 @@ func TestProjectDelete(t *testing.T) {
 	d.OrchestratorProjectDeleteHandler()(w, r)
 	if w.Code != 404 {
 		t.Fatalf("gone: want 404, got %d", w.Code)
+	}
+}
+
+func TestAllBoard(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, Title: "T", IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	d := Deps{DB: database, Orch: &fakeOrch{}}
+	r, w := orchReq("GET", "/api/v1/orchestrator/board", "")
+	d.OrchestratorAllBoardHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("board = %d %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Enabled  bool              `json:"orchestrator_enabled"`
+		Projects []json.RawMessage `json:"projects"`
+		Epics    []json.RawMessage `json:"epics"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Enabled || len(out.Projects) != 1 || len(out.Epics) != 1 {
+		t.Fatalf("got %+v", out)
+	}
+
+	// Dormant hub: enabled=false, and empty slices must be [] not null.
+	empty, err := db.Open(filepath.Join(t.TempDir(), "e.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { empty.Close() })
+	d = Deps{DB: empty}
+	r, w = orchReq("GET", "/api/v1/orchestrator/board", "")
+	d.OrchestratorAllBoardHandler()(w, r)
+	body := w.Body.String()
+	if w.Code != 200 || strings.Contains(body, `"orchestrator_enabled":true`) {
+		t.Fatalf("dormant = %d %s", w.Code, body)
+	}
+	if !strings.Contains(body, `"projects":[]`) || !strings.Contains(body, `"epics":[]`) {
+		t.Fatalf("empty slices must marshal as [], got %s", body)
+	}
+}
+
+func TestBoardEventsDormant(t *testing.T) {
+	database := orchDB(t)
+	d := Deps{DB: database, SSEHeartbeat: time.Hour}
+	pr, pw := io.Pipe()
+	rw := &pipeResponseWriter{pw: pw, header: make(http.Header)}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := withPrincipal(httptest.NewRequest("GET", "/api/v1/orchestrator/events", nil).WithContext(ctx), authz.Principal{ID: "u1"})
+	done := make(chan struct{})
+	go func() { defer close(done); defer pw.Close(); d.OrchestratorEventsHandler()(rw, req) }()
+
+	sc := bufio.NewScanner(pr)
+	var all strings.Builder
+	for sc.Scan() {
+		all.WriteString(sc.Text())
+		all.WriteByte('\n')
+		if strings.Contains(all.String(), `"projects":[]`) && strings.Contains(all.String(), `"epics":[]`) {
+			break
+		}
+	}
+	cancel()
+	<-done
+	pr.Close()
+	if rw.code == http.StatusServiceUnavailable || !strings.Contains(all.String(), "event: board-snapshot") {
+		t.Fatalf("dormant stream code=%d body=%s", rw.code, all.String())
 	}
 }

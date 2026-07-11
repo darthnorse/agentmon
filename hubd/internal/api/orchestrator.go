@@ -515,3 +515,46 @@ func (d Deps) OrchestratorProjectDeleteHandler() http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }
+
+// boardSnapshot assembles the cross-project board (projects + bounded epics).
+// One source of truth for both the SSE board-snapshot event and GET /board —
+// the two must never drift. Slices are always non-nil so they marshal as [].
+func (d Deps) boardSnapshot(ctx context.Context) ([]projectDTO, []epicDTO, error) {
+	projects, err := d.DB.ListProjects(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	projDTOs := make([]projectDTO, 0, len(projects))
+	epics := make([]epicDTO, 0, 64)
+	for _, pr := range projects {
+		projDTOs = append(projDTOs, projectOut(pr, nil))
+		es, err := d.DB.ListBoardEpics(ctx, pr.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, e := range es {
+			epics = append(epics, toEpicDTO(e))
+		}
+	}
+	return projDTOs, epics, nil
+}
+
+// OrchestratorAllBoardHandler is the All-projects board query (spec §5.1).
+// orchestrator_enabled tells the web "dormant hub" apart from "no projects".
+func (d Deps) OrchestratorAllBoardHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := d.authorizeOr403(w, r, authz.OrchestratorView, "orchestrator:*"); !ok {
+			return
+		}
+		projects, epics, err := d.boardSnapshot(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"orchestrator_enabled": d.Orch != nil,
+			"projects":             projects,
+			"epics":                epics,
+		})
+	}
+}
