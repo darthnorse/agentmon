@@ -57,6 +57,8 @@ type Deps struct {
 	VAPIDPublic         string             // M9: VAPID public key served to clients (non-secret)
 	Presence            *state.Presence    // M9: live-SSE presence counter for push de-dup (nil → disabled)
 	RelayCap            *authn.Gauge       // Phase 5: per-principal cap on concurrent terminal relays (nil → unlimited)
+	Orch                OrchestratorAPI
+	WebhookSecret       string
 }
 
 // authorizeOr403 resolves the principal from the request context, calls
