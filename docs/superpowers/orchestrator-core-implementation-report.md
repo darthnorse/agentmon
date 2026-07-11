@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `feat/orchestrator-core`
-Status: stopped during Task 21 because its prescribed integration test uses the pre-checkpoint session-name contract.
+Status: stopped during Task 21 because its prescribed integration verdict uses epic 0 while the gate binds it to issue 1.
 
 ## Completed tasks
 
@@ -119,15 +119,15 @@ After that correction, the entire Task 15 race suite passed, as did the final fu
 
 ## Task 21 stop condition
 
-Task 21 Step 1 added the prescribed two-epic integration test. Step 2 ran:
+Task 21 Step 1 added the prescribed two-epic integration test. The session-name fixture was corrected by plan commit `c7e0e4b` to use `sessionName(1)` and `sessionName(2)`. Step 2 then ran:
 
 ```text
 GOCACHE=/tmp/agentmon-go-cache go test ./internal/orchestrator/ -run TestTwoEpicChain -v
 ```
 
-It failed at the first session-name assertion. The plan expects `epic-1`, while the checkpoint-3 authoritative contract is `SessionNameFor(project, issue, attempt)` and the implementation correctly produced `epic-proj-1`. The same test also uses runner session `epic-1` later, so this is not a transient result. Task 21 was stopped without changing the historical test. Task 22 was not started.
+It advanced through scheduling and report ingestion, then failed because the prescribed verdict body contains `epic: 0` for issue 1. The checkpoint-2 gate contract correctly bound `GateInput.Epic` to issue 1 and escalated with `verdict epic 0 != issue 1`. The test expected the epic to be merged. Changing the fixture to `epic: 1` appears necessary, but Task 21 was stopped without altering another prescribed input. Task 22 was not started.
 
 ## Worktree at stop
 
-- `hubd/internal/orchestrator/integration_test.go` contains the exact Task 21 Step 1 test and remains uncommitted.
+- `hubd/internal/orchestrator/integration_test.go` contains Task 21 Step 1 with the explicitly authorized `sessionName` correction and remains uncommitted.
 - Plan checkbox updates through Task 21 Step 1 remain uncommitted.
