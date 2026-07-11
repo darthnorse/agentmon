@@ -16,6 +16,7 @@ import (
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/github"
+	"agentmon/hubd/internal/orchestrator"
 )
 
 const (
@@ -163,7 +164,11 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 		}
 		// The server must exist and be ACTIVE — a project bound to an unknown
 		// server would fail every tick with no way to fix it (no update API).
-		if _, found, err := d.Reg.Get(r.Context(), in.ServerID); err != nil || !found {
+		if _, found, err := d.Reg.Get(r.Context(), in.ServerID); err != nil {
+			log.Printf("api: project create registry: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		} else if !found {
 			writeJSONError(w, http.StatusBadRequest, "unknown server")
 			return
 		}
@@ -251,8 +256,13 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 		var epic db.Epic
 		if epicScoped(in.Action) {
 			e, err := d.DB.GetEpic(r.Context(), in.EpicID)
-			if err != nil || e.ProjectID != id {
+			switch {
+			case errors.Is(err, sql.ErrNoRows) || (err == nil && e.ProjectID != id):
 				writeJSONError(w, http.StatusNotFound, "epic not found in project")
+				return
+			case err != nil:
+				log.Printf("api: action epic lookup: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "internal error")
 				return
 			}
 			epic = e
@@ -340,15 +350,13 @@ func (d Deps) sendGuidance(ctx context.Context, e db.Epic, principalID, text str
 		return err
 	}
 	msg := strings.TrimRight(text, "\r\n") + "\r"
-	return agentws.SendText(ctx, srv, &d.Minter, principalID, e.SessionName, msg, sessions)
-}
-
-// actionUserFacing marks orchestrator state errors that are safe and useful
-// to show verbatim ("epic is not escalated", "#N is a pull request", …).
-var actionUserFacing = []string{
-	"not escalated", "not retryable", "no PR to merge", "pull request, not an issue",
-	"not scheduled", "transition failed", "merge rejected", "stage moved concurrently",
-	"has no pane",
+	if err := agentws.SendText(ctx, srv, &d.Minter, principalID, e.SessionName, msg, sessions); err != nil {
+		if strings.Contains(err.Error(), "has no pane") {
+			return orchestrator.UserErrorf("runner session %q has no pane — is it still alive?", e.SessionName)
+		}
+		return err
+	}
+	return nil
 }
 
 func writeActionError(w http.ResponseWriter, err error) {
@@ -359,13 +367,11 @@ func writeActionError(w http.ResponseWriter, err error) {
 	case errors.Is(err, errServerNotFound):
 		writeJSONError(w, http.StatusNotFound, "server not found")
 		return
-	}
-	msg := err.Error()
-	for _, s := range actionUserFacing {
-		if strings.Contains(msg, s) {
-			writeJSONError(w, http.StatusConflict, msg)
-			return
-		}
+	case orchestrator.IsUserError(err):
+		// Typed, not substring-matched: a wrapped infrastructure error must
+		// never leak because its text happens to contain a friendly phrase.
+		writeJSONError(w, http.StatusConflict, err.Error())
+		return
 	}
 	// Everything else is infrastructure detail (db/github/agent internals):
 	// log it, don't ship it to the browser.

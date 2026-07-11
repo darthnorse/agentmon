@@ -61,6 +61,21 @@ type Deps struct {
 	Now    func() string
 }
 
+// userError marks errors whose text is safe and useful to show a client
+// verbatim (state errors like "epic is not escalated"). Everything else is
+// infrastructure detail the API layer must redact — substring whitelists
+// proved leaky (a wrapped GitHub error contained a whitelisted phrase).
+type userError struct{ msg string }
+
+func (e userError) Error() string { return e.msg }
+
+func UserErrorf(format string, a ...any) error { return userError{fmt.Sprintf(format, a...)} }
+
+func IsUserError(err error) bool {
+	var u userError
+	return errors.As(err, &u)
+}
+
 const maxPendingReports = 256
 
 type pendingReport struct {
@@ -499,7 +514,7 @@ func (o *Orchestrator) evaluateGates(ctx context.Context, p db.Project) {
 func (o *Orchestrator) mergeEpic(ctx context.Context, p db.Project, e db.Epic, source, sha string) error {
 	if shared.EpicStage(e.Stage) != shared.EpicMerging {
 		if !o.transition(ctx, e, shared.EpicMerging, source, "") {
-			return fmt.Errorf("epic #%d: stage moved concurrently", e.IssueNumber)
+			return UserErrorf("epic #%d: stage moved concurrently", e.IssueNumber)
 		}
 		e.Stage = string(shared.EpicMerging)
 		// Pin the APPROVED head: a merge retry after a transient failure must
@@ -527,7 +542,7 @@ func (o *Orchestrator) mergeEpic(ctx context.Context, p db.Project, e db.Epic, s
 			}
 			reason := "merge rejected by GitHub (branch moved or conflict) — needs a human look"
 			o.transition(ctx, e, shared.EpicEscalated, "hub", reason)
-			return fmt.Errorf("epic #%d: %s", e.IssueNumber, reason)
+			return UserErrorf("epic #%d: %s", e.IssueNumber, reason)
 		}
 		// Transient failure: stay in merging; the next tick retries the merge
 		// (pinned to the approved SHA) without re-running the gate, so an
@@ -648,10 +663,10 @@ func (o *Orchestrator) Approve(ctx context.Context, epicID, source string) error
 		return err
 	}
 	if shared.EpicStage(e.Stage) != shared.EpicEscalated {
-		return fmt.Errorf("epic is not escalated")
+		return UserErrorf("epic is not escalated")
 	}
 	if e.PRNumber <= 0 {
-		return fmt.Errorf("no PR to merge")
+		return UserErrorf("no PR to merge")
 	}
 	p, err := o.d.DB.GetProject(ctx, e.ProjectID)
 	if err != nil {
@@ -677,10 +692,10 @@ func (o *Orchestrator) Retry(ctx context.Context, epicID, source string) error {
 	}
 	stage := shared.EpicStage(e.Stage)
 	if stage != shared.EpicEscalated && stage != shared.EpicStalled {
-		return fmt.Errorf("epic is not retryable")
+		return UserErrorf("epic is not retryable")
 	}
 	if !o.transition(ctx, e, shared.EpicQueued, source, "retry") {
-		return fmt.Errorf("retry transition failed")
+		return UserErrorf("retry transition failed — the epic moved concurrently")
 	}
 	o.Wake()
 	return nil
@@ -694,7 +709,7 @@ func (o *Orchestrator) Cancel(ctx context.Context, epicID, source string) error 
 		return err
 	}
 	if !o.transition(ctx, e, shared.EpicCanceled, source, "cancel") {
-		return fmt.Errorf("cancel transition failed")
+		return UserErrorf("cancel transition failed — the epic moved concurrently")
 	}
 	return nil
 }
@@ -711,7 +726,7 @@ func (o *Orchestrator) RunIssue(ctx context.Context, projectID string, issue int
 		return err
 	}
 	if is.IsPR {
-		return fmt.Errorf("#%d is a pull request, not an issue", issue)
+		return UserErrorf("#%d is a pull request, not an issue", issue)
 	}
 	if !hasLabel(is.Labels, "agentmon:run") {
 		// Label the REAL issue first: sync and webhooks filter on GitHub-side
@@ -719,7 +734,8 @@ func (o *Orchestrator) RunIssue(ctx context.Context, projectID string, issue int
 		// future GitHub truth (close, edits, dials). Fail the action rather
 		// than schedule an orphan — the user just clicks again.
 		if err := o.d.GH.AddLabels(ctx, p.Repo, issue, []string{"agentmon:run"}); err != nil {
-			return fmt.Errorf("labeling issue #%d on GitHub failed (not scheduled): %w", issue, err)
+			log.Printf("orchestrator[%s]: label run issue #%d: %v", p.Name, issue, err)
+			return UserErrorf("labeling issue #%d on GitHub failed — not scheduled", issue)
 		}
 		is.Labels = append(is.Labels, "agentmon:run")
 	}
@@ -752,15 +768,20 @@ func (o *Orchestrator) IngestWebhook(ctx context.Context, ev github.Event) error
 			// already track and cancel it if still queued.
 			e, err := o.d.DB.GetEpicByIssue(ctx, p.ID, ev.Issue.Number)
 			if err != nil {
-				return nil // never tracked — not ours
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil // never tracked — not ours
+				}
+				return err
 			}
 			if _, err := o.d.DB.UpsertEpicIssue(ctx, EpicFromIssue(p, *ev.Issue, o.d.Now())); err != nil {
 				return err
 			}
 			if e.Stage == string(shared.EpicQueued) {
-				if fresh, err := o.d.DB.GetEpicByIssue(ctx, p.ID, ev.Issue.Number); err == nil {
-					o.transition(ctx, fresh, shared.EpicCanceled, "github", "orchestration label removed")
-				}
+				// Cancel with the ORIGINAL queued row: the guarded UPDATE then
+				// races the scheduler on the same expected stage and exactly
+				// one wins. A fresh re-fetch could observe `starting` and
+				// legally cancel an epic whose session is mid-spawn.
+				o.transition(ctx, e, shared.EpicCanceled, "github", "orchestration label removed")
 			}
 			o.Wake()
 			return nil

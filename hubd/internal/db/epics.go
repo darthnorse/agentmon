@@ -118,17 +118,14 @@ func (d *DB) ListEpicsByProject(ctx context.Context, projectID string) ([]Epic, 
 // 50 most recently updated terminal ones — snapshots must not grow without
 // bound as merged history accumulates.
 func (d *DB) ListBoardEpics(ctx context.Context, projectID string) ([]Epic, error) {
-	live, err := d.listEpics(ctx,
-		`SELECT `+epicCols+` FROM epics WHERE project_id = ? AND stage NOT IN `+terminalStagesSQL+` ORDER BY issue_number`, projectID)
-	if err != nil {
-		return nil, err
-	}
-	done, err := d.listEpics(ctx,
-		`SELECT `+epicCols+` FROM epics WHERE project_id = ? AND stage IN `+terminalStagesSQL+` ORDER BY stage_updated_at DESC, rowid DESC LIMIT 50`, projectID)
-	if err != nil {
-		return nil, err
-	}
-	return append(live, done...), nil
+	// One statement = one snapshot: two separate reads could return the same
+	// epic twice when it goes terminal between them.
+	return d.listEpics(ctx,
+		`SELECT `+epicCols+` FROM epics WHERE project_id = ? AND stage NOT IN `+terminalStagesSQL+`
+		 UNION ALL
+		 SELECT * FROM (SELECT `+epicCols+` FROM epics WHERE project_id = ? AND stage IN `+terminalStagesSQL+`
+		   ORDER BY stage_updated_at DESC, rowid DESC LIMIT 50)`,
+		projectID, projectID)
 }
 
 func (d *DB) ListNonTerminalEpics(ctx context.Context) ([]Epic, error) {
