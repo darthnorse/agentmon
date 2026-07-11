@@ -53,6 +53,7 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("POST /api/v1/orchestrator/projects", rd.Auth.RequireAuth(rd.API.OrchestratorProjectsHandler()))
 	mux.Handle("GET /api/v1/orchestrator/projects/{id}/board", rd.Auth.RequireAuth(rd.API.OrchestratorBoardHandler()))
 	mux.Handle("POST /api/v1/orchestrator/projects/{id}/actions", rd.Auth.RequireAuth(rd.API.OrchestratorActionsHandler()))
+	mux.Handle("GET /api/v1/orchestrator/events", rd.Auth.RequireAuth(rd.API.OrchestratorEventsHandler()))
 
 	mux.Handle("POST /api/v1/enroll", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Enroll.Handler()))
 

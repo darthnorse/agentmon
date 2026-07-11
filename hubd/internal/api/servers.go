@@ -11,6 +11,7 @@ import (
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/directive"
+	"agentmon/hubd/internal/orchestrator"
 	"agentmon/hubd/internal/registry"
 	"agentmon/hubd/internal/state"
 	"agentmon/shared"
@@ -60,6 +61,7 @@ type Deps struct {
 	RelayCap            *authn.Gauge       // Phase 5: per-principal cap on concurrent terminal relays (nil → unlimited)
 	Orch                OrchestratorAPI
 	WebhookSecret       string
+	BoardBcast          *orchestrator.BoardBroadcaster
 }
 
 // authorizeOr403 resolves the principal from the request context, calls
