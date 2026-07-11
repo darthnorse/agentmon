@@ -113,6 +113,25 @@ report file — never in session context. Consequences the skill must preserve:
 
 ## 7. Open questions for the sub-2 brainstorm
 
+From the checkpoint-3 review (agent-contract items deliberately deferred):
+
+- **Report drain durability:** the v1 drain is destructive (clear-on-GET). The
+  agent endpoint should be two-phase (peek + ack by cursor/batch id) so a lost
+  response or hub crash cannot lose reports; hub-side pending-queue mitigation
+  exists (`orchestrator.pending`), redelivered duplicates are safe (guarded
+  transitions reject them).
+- **Session lifecycle on retry/cancel:** the hub never kills runner sessions.
+  Attempt-suffixed names avoid the 409 collision, but a timeout-stalled runner
+  keeps working orphaned. AgentAPI should gain KillSession; Cancel/Retry should
+  retire the old session.
+- **Attempt-scoped provenance:** reports carry no attempt token; a buffered
+  report from attempt N-1 could in principle pass the session check if names
+  ever collide. Attempt-suffixed session names close this in practice; a run
+  token would close it in principle.
+- **Retry kickoff:** spec §4 wants retries kicked off with "assess branch state
+  and continue" — KickoffCommand needs an attempt/resume parameter once the
+  epic-pipeline skill defines the flag.
+
 - Verdict block: include checkpoint-review count/results, or final review only?
 - Checkpoint FIX commits: same branch mid-plan (current practice) — any reason
   to fold into the task commits instead?
