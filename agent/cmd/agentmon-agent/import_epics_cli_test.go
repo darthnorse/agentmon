@@ -125,6 +125,69 @@ func TestImportDryRunStillValidatesRefs(t *testing.T) {
 	}
 }
 
+func TestImportBadRefMakesNoGHCalls(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"epic-01-ok.md":  "---\ntitle: OK\n---\nbody",
+		"epic-02-bad.md": "---\ntitle: Bad\nblocked-by: epic-99\n---\nbody",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var calls []ghCall
+	var out bytes.Buffer
+	err := importEpics([]string{"--dir", dir, "--repo", "o/r"}, &out, fakeGH(t, &calls, 50, 51))
+	if err == nil {
+		t.Fatal("bad ref must fail the import")
+	}
+	// Preflight must reject BEFORE any issue is created — a mid-run failure
+	// would leave partial remote state.
+	if len(calls) != 0 {
+		t.Fatalf("no gh call may happen before ref validation: %v", calls)
+	}
+}
+
+func TestImportSelfRefRejected(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ntitle: X\nblocked-by: epic-01\n---\nbody"
+	if err := os.WriteFile(filepath.Join(dir, "epic-01-x.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []ghCall
+	var out bytes.Buffer
+	err := importEpics([]string{"--dir", dir, "--repo", "o/r"}, &out, fakeGH(t, &calls))
+	if err == nil || !strings.Contains(err.Error(), "refers to the epic itself") {
+		t.Fatalf("self-reference must be rejected: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("no gh calls on a rejected import: %v", calls)
+	}
+}
+
+func TestImportCycleRejected(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"epic-01-a.md": "---\ntitle: A\nblocked-by: epic-02\n---\nbody",
+		"epic-02-b.md": "---\ntitle: B\nblocked-by: epic-01\n---\nbody",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var calls []ghCall
+	var out bytes.Buffer
+	err := importEpics([]string{"--dir", dir, "--repo", "o/r"}, &out, fakeGH(t, &calls))
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("a blocked-by cycle must be rejected (it deadlocks the hub queue): %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("no gh calls on a rejected import: %v", calls)
+	}
+}
+
 func TestImportUnresolvableRefErrors(t *testing.T) {
 	dir := t.TempDir()
 	content := "---\ntitle: X\nblocked-by: epic-99\n---\nbody"

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -43,7 +44,7 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 	r := *repo
 	if r == "" {
 		var err error
-		r, err = repoFromGit(".")
+		r, err = repoFromGit(".", run)
 		add("repo derivation (cwd is a clone)", err)
 	}
 	_, err := run(".", "gh", "auth", "status")
@@ -84,7 +85,7 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 		}
 		if codexBin {
 			add("codex epic-pipeline prompt", statFile(filepath.Join(h, ".codex", "prompts", "epic-pipeline.md")))
-			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml")))
+			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), run))
 		}
 	}
 
@@ -124,7 +125,7 @@ type codexConfig struct {
 	} `toml:"sandbox_workspace_write"`
 }
 
-func checkCodexConfig(path string) error {
+func checkCodexConfig(path string, run cmdRunner) error {
 	var c codexConfig
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
@@ -135,18 +136,25 @@ func checkCodexConfig(path string) error {
 	if c.SandboxMode != "" && c.SandboxMode != "workspace-write" && c.SandboxMode != "danger-full-access" {
 		return fmt.Errorf("%s: sandbox_mode %q cannot write the workspace (runner sessions must commit)", path, c.SandboxMode)
 	}
+	// No sandbox at all: writes and network are unrestricted, so the
+	// workspace-write table (often absent in this mode) must not be checked.
+	if c.SandboxMode == "danger-full-access" {
+		return nil
+	}
 	if !c.SandboxWorkspaceWrite.NetworkAccess {
 		return fmt.Errorf("%s: [sandbox_workspace_write] network_access must be true (httptest loopback binds)", path)
 	}
-	cwd, err := os.Getwd()
+	// The real git dir: worktree-safe (--git-common-dir) and independent of a
+	// subdirectory cwd. Codex keeps every writable root's TOP-LEVEL .git
+	// read-only (verified live against the sandbox), so a writable repo root
+	// is NOT sufficient — only an explicit .git entry lets runners commit.
+	out, err := run(".", "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: cannot resolve the clone's git dir (run the doctor from the project workdir): %w", path, err)
 	}
-	// NOTE: checked against the MAIN clone's .git; a worktree's .git is a file
-	// pointing into it, so covering the clone covers its worktrees.
-	gitDir := filepath.Join(cwd, ".git")
+	gitDir := filepath.Clean(strings.TrimSpace(out))
 	for _, root := range c.SandboxWorkspaceWrite.WritableRoots {
-		if root == gitDir || root == cwd {
+		if filepath.Clean(root) == gitDir {
 			return nil
 		}
 	}

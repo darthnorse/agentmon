@@ -11,15 +11,23 @@ import (
 )
 
 // doctorEnv fakes every doctor dependency: run succeeds for the listed command
-// prefixes, look finds the listed binaries, home is a temp dir.
+// prefixes (git plumbing gets realistic outputs), look finds the listed
+// binaries, home is a temp dir.
 func doctorEnv(t *testing.T, bins []string, failPrefixes ...string) (cmdRunner, func(string) (string, error), func() (string, error), string) {
 	t.Helper()
+	wd := mustGetwd(t)
 	run := func(_ string, name string, args ...string) (string, error) {
 		full := name + " " + strings.Join(args, " ")
 		for _, p := range failPrefixes {
 			if strings.HasPrefix(full, p) {
 				return "", errors.New("boom: " + full)
 			}
+		}
+		if strings.HasPrefix(full, "git rev-parse") {
+			return filepath.Join(wd, ".git") + "\n", nil
+		}
+		if strings.HasPrefix(full, "git config --get remote.origin.url") {
+			return "git@github.com:o/r.git\n", nil
 		}
 		return "ok", nil
 	}
@@ -65,7 +73,7 @@ func doctorReporterOK(t *testing.T) string {
 	t.Helper()
 	t.Setenv("TMUX_PANE", "%1")
 	t.Setenv("TMUX", "/tmp/tmux-0/agentmon,1,0")
-	_, cfgPath := reportTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	cfgPath := reportTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("dry_run") != "1" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -123,6 +131,66 @@ func TestDoctorCodexConfigChecked(t *testing.T) {
 	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
 	if err == nil || !strings.Contains(out.String(), "✗ codex sandbox config") {
 		t.Fatalf("err=%v out:\n%s", err, out.String())
+	}
+}
+
+func TestDoctorDerivesRepoFromGit(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"claude"})
+	seedSkills(t, h, true, false)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath}, &out, run, look, home)
+	if err != nil {
+		t.Fatalf("err=%v out:\n%s", err, out.String())
+	}
+	for _, want := range []string{"\u2713 repo derivation", "\u2713 gh repo access (o/r)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestDoctorCodexDangerFullAccessPasses(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	// No [sandbox_workspace_write] table at all: that mode has no sandbox, so
+	// the workspace-write checks must not run.
+	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"),
+		[]byte("sandbox_mode = \"danger-full-access\"\n"), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	if err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home); err != nil {
+		t.Fatalf("danger-full-access must pass the sandbox check: %v\n%s", err, out.String())
+	}
+}
+
+func TestDoctorCodexRepoRootWritableRootFails(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	// The repo ROOT as a writable root is the fleet-validated false config:
+	// codex keeps a writable root's top-level .git read-only, so this host
+	// cannot commit. The doctor must fail it, not pass it.
+	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"),
+		[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+mustGetwd(t)+"\"]\nnetwork_access = true\n"), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err == nil || !strings.Contains(out.String(), "writable_roots must include") {
+		t.Fatalf("repo-root-only writable_roots must fail: err=%v out:\n%s", err, out.String())
+	}
+}
+
+func TestDoctorCodexUncleanWritableRootPasses(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	// A trailing slash is still the same directory; exact string equality
+	// used to false-fail this.
+	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"),
+		[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"/\"]\nnetwork_access = true\n"), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	if err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home); err != nil {
+		t.Fatalf("trailing-slash writable root must pass: %v\n%s", err, out.String())
 	}
 }
 

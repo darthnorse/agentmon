@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // reportTestServer returns an httptest server and an agent.toml whose listen
@@ -18,7 +19,7 @@ import (
 // URL from the config's listen port). config.Load resolves hub_token and
 // directive_key unconditionally and every secret must be an env:/file: ref
 // (bare literals are rejected) — mirror writeAgentConfig in hooks_cli_test.go.
-func reportTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, string) {
+func reportTestServer(t *testing.T, handler http.HandlerFunc) string {
 	t.Helper()
 	t.Setenv("RPT_HUB", "h")
 	t.Setenv("RPT_DK", "d")
@@ -34,14 +35,14 @@ func reportTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server,
 		t.Fatal(err)
 	}
 	t.Cleanup(srv.Close)
-	return srv, cfgPath
+	return cfgPath
 }
 
 func TestReportPostsToIntake(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%3")
 	t.Setenv("TMUX", "/tmp/tmux-0/agentmon,42,0")
 	var gotAuth, gotPane, gotTmux, gotBody, gotPath string
-	_, cfgPath := reportTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	cfgPath := reportTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 		gotPane = r.Header.Get("X-AgentMon-Pane")
@@ -68,7 +69,7 @@ func TestReportPostsToIntake(t *testing.T) {
 
 func TestReportValidation(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%3")
-	_, cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+	cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 	var out bytes.Buffer
 	if err := reportMain([]string{"--config", cfgPath, "--epic", "7", "--stage", "merged", "--repo", "o/r"}, &out); err == nil {
 		t.Fatal("hub-derived stage must be rejected client-side")
@@ -78,10 +79,39 @@ func TestReportValidation(t *testing.T) {
 	}
 }
 
+func TestReportPROpenRequiresPR(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%3")
+	called := false
+	cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(200) })
+	var out bytes.Buffer
+	err := reportMain([]string{"--config", cfgPath, "--epic", "7", "--stage", "pr_open", "--repo", "o/r"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "requires --pr") {
+		t.Fatalf("pr_open without --pr must fail client-side: %v", err)
+	}
+	if called {
+		t.Fatal("intake must not be reached")
+	}
+}
+
+func TestReportTimesOutOnWedgedAgent(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%3")
+	t.Setenv("TMUX", "/tmp/tmux-0/agentmon,42,0")
+	old := loopbackHTTPTimeout
+	loopbackHTTPTimeout = 50 * time.Millisecond
+	defer func() { loopbackHTTPTimeout = old }()
+	cfgPath := reportTestServer(t, func(http.ResponseWriter, *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+	})
+	var out bytes.Buffer
+	if err := reportMain([]string{"--config", cfgPath, "--epic", "1", "--stage", "planning", "--repo", "o/r"}, &out); err == nil {
+		t.Fatal("a wedged agent must time the report out, not hang it")
+	}
+}
+
 func TestReportRejectionSurfacesBody(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%3")
 	t.Setenv("TMUX", "/tmp/tmux-0/agentmon,42,0")
-	_, cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"stage is not runner-reportable"}`))
 	})
@@ -94,7 +124,7 @@ func TestReportRejectionSurfacesBody(t *testing.T) {
 
 func TestReportOutsideTmuxFailsFast(t *testing.T) {
 	t.Setenv("TMUX_PANE", "")
-	_, cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+	cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 	var out bytes.Buffer
 	if err := reportMain([]string{"--config", cfgPath, "--epic", "1", "--stage", "planning", "--repo", "o/r"}, &out); err == nil {
 		t.Fatal("must fail outside tmux")
