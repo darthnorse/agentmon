@@ -112,3 +112,93 @@ func TestActionsDisabledOrchestrator(t *testing.T) {
 		t.Fatalf("disabled orchestrator must 503, got %d", w.Code)
 	}
 }
+
+func TestProjectPatch(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	sink := &captureSink{}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Audit: audit.NewRecorder(sink)}
+
+	r, w := orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"name":"p2","workdir":"/w2","provider":"codex","required_reviews":["cross-model"]}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("patch = %d %s", w.Code, w.Body.String())
+	}
+	p, _ := database.GetProject(ctx, "p1")
+	if p.Name != "p2" || p.Workdir != "/w2" || p.Provider != "codex" || len(p.RequiredReviews) != 1 {
+		t.Fatalf("got %+v", p)
+	}
+	if p.BaseBranch != "main" {
+		t.Fatalf("absent field must be unchanged, got %q", p.BaseBranch)
+	}
+	if _, ok := sink.find("project.update"); !ok {
+		t.Fatal("missing audit entry")
+	}
+
+	for body, why := range map[string]string{
+		`{"repo":"o/x"}`:     "repo immutable",
+		`{"server_id":"h2"}`: "server_id immutable",
+		`{"provider":"gpt"}`: "bad provider",
+		`{"name":""}`:        "empty name",
+		`{"workdir":""}`:     "empty workdir",
+		`{"base_branch":""}`: "empty base_branch",
+	} {
+		r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/p1", body)
+		r.SetPathValue("id", "p1")
+		d.OrchestratorProjectPatchHandler()(w, r)
+		if w.Code != 400 {
+			t.Fatalf("%s: want 400, got %d", why, w.Code)
+		}
+	}
+
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/nope", `{"name":"x"}`)
+	r.SetPathValue("id", "nope")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 404 {
+		t.Fatalf("missing project: want 404, got %d", w.Code)
+	}
+
+	d.Orch = nil
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"name":"x"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 503 {
+		t.Fatalf("dormant: want 503, got %d", w.Code)
+	}
+}
+
+func TestProjectDelete(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 1, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	sink := &captureSink{}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Audit: audit.NewRecorder(sink)}
+
+	r, w := orchReq("DELETE", "/api/v1/orchestrator/projects/p1", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectDeleteHandler()(w, r)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "1 active epic") {
+		t.Fatalf("active refuse = %d %s", w.Code, w.Body.String())
+	}
+
+	database.TransitionEpic(ctx, e.ID, "queued", "canceled", "user:u1", "", "t2")
+	r, w = orchReq("DELETE", "/api/v1/orchestrator/projects/p1", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectDeleteHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("delete = %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := sink.find("project.delete"); !ok {
+		t.Fatal("missing audit entry")
+	}
+
+	r, w = orchReq("DELETE", "/api/v1/orchestrator/projects/p1", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectDeleteHandler()(w, r)
+	if w.Code != 404 {
+		t.Fatalf("gone: want 404, got %d", w.Code)
+	}
+}

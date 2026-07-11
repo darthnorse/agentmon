@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -377,4 +378,140 @@ func writeActionError(w http.ResponseWriter, err error) {
 	// log it, don't ship it to the browser.
 	log.Printf("api: orchestrator action failed: %v", err)
 	writeJSONError(w, http.StatusBadGateway, "action failed")
+}
+
+// OrchestratorProjectPatchHandler edits the registration fields. Partial
+// semantics via pointer fields: absent = unchanged. repo/server_id are
+// immutable (spec §5.3) — rejecting them loudly beats silently ignoring.
+func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		p, ok := d.authorizeOr403(w, r, authz.OrchestratorControl, "project:"+id)
+		if !ok {
+			return
+		}
+		if d.Orch == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		var in struct {
+			Name            *string   `json:"name"`
+			Repo            *string   `json:"repo"`
+			ServerID        *string   `json:"server_id"`
+			Workdir         *string   `json:"workdir"`
+			Target          *string   `json:"target"`
+			BaseBranch      *string   `json:"base_branch"`
+			Provider        *string   `json:"provider"`
+			RequiredReviews *[]string `json:"required_reviews"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		if in.Repo != nil {
+			writeJSONError(w, http.StatusBadRequest, "repo cannot be changed — register a new project")
+			return
+		}
+		if in.ServerID != nil {
+			writeJSONError(w, http.StatusBadRequest, "server cannot be changed")
+			return
+		}
+		pr, err := d.DB.GetProject(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if in.Name != nil {
+			pr.Name = *in.Name
+		}
+		if in.Workdir != nil {
+			pr.Workdir = *in.Workdir
+		}
+		if in.Target != nil {
+			pr.Target = *in.Target
+		}
+		if in.BaseBranch != nil {
+			pr.BaseBranch = *in.BaseBranch
+		}
+		if in.Provider != nil {
+			pr.Provider = *in.Provider
+		}
+		if in.RequiredReviews != nil {
+			pr.RequiredReviews = *in.RequiredReviews
+		}
+		if pr.Name == "" || pr.Workdir == "" || pr.BaseBranch == "" {
+			writeJSONError(w, http.StatusBadRequest, "missing required field")
+			return
+		}
+		if pr.Provider != "claude" && pr.Provider != "codex" {
+			writeJSONError(w, http.StatusBadRequest, "provider must be claude or codex")
+			return
+		}
+		found, err := d.DB.UpdateProject(r.Context(), pr)
+		if err != nil {
+			// Most likely the UNIQUE(name) constraint; the DB error text is not
+			// for browsers.
+			writeJSONError(w, http.StatusBadRequest, "update failed (name already in use?)")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if d.Audit != nil {
+			d.Audit.ProjectUpdate(r.Context(), p.ID, "project:"+id, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
+		}
+		writeJSON(w, http.StatusOK, projectOut(pr, nil))
+	}
+}
+
+// OrchestratorProjectDeleteHandler removes a project once nothing is running:
+// the DB layer refuses (found, active>0) while non-terminal epics exist.
+func (d Deps) OrchestratorProjectDeleteHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		p, ok := d.authorizeOr403(w, r, authz.OrchestratorControl, "project:"+id)
+		if !ok {
+			return
+		}
+		if d.Orch == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		pr, err := d.DB.GetProject(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		found, active, err := d.DB.DeleteProject(r.Context(), id)
+		if err != nil {
+			log.Printf("api: project delete: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if active > 0 {
+			plural := "s"
+			if active == 1 {
+				plural = ""
+			}
+			writeJSONError(w, http.StatusConflict, fmt.Sprintf("project has %d active epic%s — cancel or finish them first", active, plural))
+			return
+		}
+		if d.Audit != nil {
+			d.Audit.ProjectDelete(r.Context(), p.ID, "project:"+id, pr.Repo, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
 }
