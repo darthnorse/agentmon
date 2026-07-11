@@ -15,10 +15,11 @@ exist. Sub-2 is everything runner-side.
   rejection on both ends).
 - Orchestrator: `KillSession` in the `AgentAPI` seam; Cancel/Retry retire
   runner sessions.
-- `agentmon report` + `agentmon doctor` CLI subcommands.
+- `agentmon report` / `doctor` / `import-epics` / `install-skills` CLI
+  subcommands.
 - Skills: `epic-pipeline` (Claude), Codex playbook equivalent, `plan-epics`
-  (Claude, interactive) + idempotent epic import script.
-- Installer: distribute binary symlink, skills, import script.
+  (Claude, interactive); idempotent epic import.
+- Installer: distribute the binary symlink + binary-embedded skills.
 
 ### Non-goals (sub-2)
 
@@ -50,24 +51,34 @@ exist. Sub-2 is everything runner-side.
   self-heals. This is the dossier §4 resume-from-artifacts property made the
   default. A canceled attempt's leftover branch resumes the same way unless a
   human deletes it.
-- **D4 — Skill distribution: agentmon repo + installer.** Skills live in
-  `runner/skills/` (one source of truth, reviewed like code); `install.sh`
-  copies them to `~/.claude/commands/` and `~/.codex/prompts/` for the install
-  user, so the existing fleet update loop distributes skill updates with agent
-  updates. Matches the `multi-review` host-level convention. Anti-lock-in
-  property: the workflow lives in versioned markdown, not Go or schema —
-  adapting to new models/workflows is a markdown edit + fleet update, never a
-  protocol change. No per-epic authorship knob (YAGNI).
+- **D4 — Skill distribution: agentmon repo + installer, embedded in the agent
+  binary.** Skills live in `agent/internal/runnerfiles/files/` (one source of
+  truth, reviewed like code) and are `go:embed`-ded into the agent binary —
+  the installer is HUB-SERVED (`install.sh.tmpl`), so loose repo files cannot
+  reach hosts; the binary is the artifact that already travels. A new
+  `agentmon install-skills` subcommand writes them to `~/.claude/commands/`
+  and `~/.codex/prompts/`; `install.sh` invokes it (via runuser, explicit
+  `--home`) on BOTH the fresh and update paths, so the existing fleet update
+  loop distributes skill updates with agent updates. Matches the
+  `multi-review` host-level convention. Anti-lock-in property: the workflow
+  lives in versioned markdown, not Go or schema — adapting to new
+  models/workflows is a markdown edit + fleet update, never a protocol
+  change. No per-epic authorship knob (YAGNI).
 - **D5 — Skill authorship (process, not product).** Claude authors the skill/
   playbook markdown directly on the feature branch (prompt content routed
   through a plan is a lossy transcription step with no compiler to catch
   drift); Codex's plan tasks treat them as existing artifacts and only wire
   them (installer, doctor). Skills are reviewed at every checkpoint — they are
   in the branch diff.
-- **D6 — CLI packaging: subcommand + symlink.** `report` and `doctor` are
-  subcommands of the existing `agentmon-agent` binary (which already routes
-  `hooks`/`hook-test` and has config/token/port discovery); `install.sh` drops
-  `/usr/local/bin/agentmon → agentmon-agent`. One artifact to build and update.
+- **D6 — CLI packaging: subcommands + symlink.** `report`, `doctor`,
+  `import-epics`, and `install-skills` are subcommands of the existing
+  `agentmon-agent` binary (which already routes `hooks`/`hook-test` and has
+  config/token/port discovery); `install.sh` drops
+  `/usr/local/bin/agentmon → agentmon-agent`. One artifact to build and
+  update. (`import-epics` was originally sketched as a bash script; a Go
+  subcommand won at planning time — front-matter parsing, issue-number
+  stamp-back, and blocked-by rewriting get real tests with a fake `gh`
+  runner, and there is no extra artifact to distribute.)
 - **D7 — Report store: in-memory, 256 cap, drop-oldest.** Consistent with the
   hooks state machine. An agent restart loses at most a poll interval of
   reports; GitHub reconcile covers the gap. Overflow drops the OLDEST with a
@@ -210,7 +221,7 @@ symlink (D6). Both read `agent.toml` (default `/etc/agentmon/agent.toml`,
 - Human-readable pass/fail lines + nonzero exit on any failure. Hub dispatch
   and board display are sub-3.
 
-## 8. Skill: `epic-pipeline` (Claude) — `runner/skills/claude/epic-pipeline.md`
+## 8. Skill: `epic-pipeline` (Claude) — `agent/internal/runnerfiles/files/claude/epic-pipeline.md`
 
 Installed to `~/.claude/commands/epic-pipeline.md`; invoked by the shipped
 kickoff `IS_SANDBOX=1 claude --dangerously-skip-permissions "/epic-pipeline N"`.
@@ -257,7 +268,7 @@ must encode (dossier §§1–4):
    directly; single pre-PR multi-review; full verdict block; all reporting/
    escalation/worktree/learnings rules unchanged.
 
-## 9. Codex playbook — `runner/skills/codex/epic-pipeline.md`
+## 9. Codex playbook — `agent/internal/runnerfiles/files/codex/epic-pipeline.md`
 
 Installed to `~/.codex/prompts/epic-pipeline.md`; invoked by the shipped
 kickoff `codex -a never "/epic-pipeline N"`. Same pipeline with two provider
@@ -270,7 +281,8 @@ authoring the playbook, before the text lands.
 
 ## 10. Skill: `plan-epics` + import script
 
-- `runner/skills/claude/plan-epics.md` → `~/.claude/commands/plan-epics.md`.
+- `agent/internal/runnerfiles/files/claude/plan-epics.md` →
+  `~/.claude/commands/plan-epics.md`.
   Interactive on the project host: brainstorm the PRD/phase with the human
   (wrapping superpowers:brainstorming); emit `docs/plan/epic-NN-<slug>.md`
   files — front-matter: title, labels (`agentmon:epic` + dials `pr-gate`,
@@ -279,27 +291,31 @@ authoring the playbook, before the text lands.
   (requirements with decisions baked in, never implementation plans). Commit,
   run the import, then the go-live ritual: import while the project is
   paused → human reviews the board → Resume.
-- **Import script** `runner/bin/agentmon-import-epics` (bash + `gh`,
-  installed to `/usr/local/bin/`): deterministic and idempotent. For each
-  `docs/plan/epic-*.md` with no `issue:` front-matter key → `gh issue create`
-  (title, labels, body) → **stamp the created issue number back into the
-  file's front-matter** (the file is the birth certificate; re-runs skip
-  stamped files). Second pass rewrites `Blocked-by: epic-NN` file references
-  to `Blocked-by: #<issue>` in issue bodies (`gh issue edit`) once all issues
-  exist. The skill invokes it; a human can run it standalone.
+- **Import: `agentmon import-epics`** (Go subcommand shelling to `gh` — see
+  D6): deterministic and idempotent. For each `docs/plan/epic-*.md` with no
+  `issue:` front-matter key → `gh issue create` (title, labels, body) →
+  **stamp the created issue number back into the file's front-matter** (the
+  file is the birth certificate; re-runs skip stamped files). Second pass
+  rewrites `Blocked-by: epic-NN` file references to `Blocked-by: #<issue>`
+  lines in issue bodies (`gh issue edit`; the exact form the hub's
+  `ParseBlockedBy` regex reads) once all issues exist. Front-matter parsing
+  lives in `agent/internal/epicfile` — a deliberately strict key:value
+  format, NOT YAML, so a typo'd dial fails the import instead of silently
+  dropping. The skill invokes it; a human can run it standalone.
 
 ## 11. Installer
 
-`install.sh` additions (all idempotent, current-user install unchanged):
+`install.sh.tmpl` additions (all idempotent, current-user install unchanged),
+running on BOTH the fresh-install and update paths:
 
-- Symlink `/usr/local/bin/agentmon → <installed agentmon-agent>`.
-- `mkdir -p` + copy `runner/skills/claude/*.md` → `~/.claude/commands/`,
-  `runner/skills/codex/epic-pipeline.md` → `~/.codex/prompts/` (unconditional;
-  harmless where a provider is absent).
-- Copy `runner/bin/agentmon-import-epics` → `/usr/local/bin/`.
+- Symlink `/usr/local/bin/agentmon → /usr/local/bin/agentmon-agent`.
+- `runuser -u $RUN_USER -- agentmon-agent install-skills --home <run user's
+  home>` — writes the binary-embedded skills into `~/.claude/commands/` and
+  `~/.codex/prompts/` (unconditional; a file for an absent provider is
+  harmless and becomes live the moment that provider is installed).
 
 The owner's `agentmon_update.sh` fleet loop (which re-runs install.sh) now
-distributes skill updates with agent updates.
+distributes skill updates with agent updates — the skills ride the binary.
 
 ## 12. Security
 
@@ -330,7 +346,9 @@ distributes skill updates with agent updates.
   retire sessions, ErrNoSession success, other errors best-effort + spawn
   proceeds); cursor-map flow across polls.
 - **CLI**: report/doctor against a fake loopback server (`hooks_cli_test`
-  pattern); repo derivation from a fixture git remote.
+  pattern); import-epics against a fake `gh` runner (stamp-back + blocked-by
+  rewrite + dry-run + idempotency); repo derivation table-tested;
+  install-skills round-trip against the embedded FS.
 - **Skills**: validated by the toy-repo acceptance run + Claude's hand-test of
   the headless reviewer invocation (§9). Not unit-testable.
 
