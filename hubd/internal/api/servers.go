@@ -39,6 +39,7 @@ type PushStore interface {
 
 // Deps holds the shared dependencies for all API handlers.
 type Deps struct {
+	DB                  *db.DB
 	Reg                 *registry.Registry
 	Agent               *registry.Client
 	Audit               *audit.Recorder

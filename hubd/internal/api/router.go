@@ -49,6 +49,10 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("POST /api/v1/push/subscribe", rd.Auth.RequireAuth(rd.API.SubscribeHandler()))
 	mux.Handle("POST /api/v1/push/unsubscribe", rd.Auth.RequireAuth(rd.API.UnsubscribeHandler()))
 	mux.Handle("POST /api/v1/github/webhook", rd.API.GitHubWebhookHandler())
+	mux.Handle("GET /api/v1/orchestrator/projects", rd.Auth.RequireAuth(rd.API.OrchestratorProjectsHandler()))
+	mux.Handle("POST /api/v1/orchestrator/projects", rd.Auth.RequireAuth(rd.API.OrchestratorProjectsHandler()))
+	mux.Handle("GET /api/v1/orchestrator/projects/{id}/board", rd.Auth.RequireAuth(rd.API.OrchestratorBoardHandler()))
+	mux.Handle("POST /api/v1/orchestrator/projects/{id}/actions", rd.Auth.RequireAuth(rd.API.OrchestratorActionsHandler()))
 
 	mux.Handle("POST /api/v1/enroll", onboardRateLimit(rd.Onboard, rd.TrustForwardedProto, rd.Enroll.Handler()))
 
