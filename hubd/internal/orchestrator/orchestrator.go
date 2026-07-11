@@ -730,17 +730,40 @@ func (o *Orchestrator) RunIssue(ctx context.Context, projectID string, issue int
 	return nil
 }
 
+// IngestWebhook needs no tickMu: its only mutation is the single-statement
+// race-safe UpsertEpicIssue (+ guarded transitions), and holding the lock
+// here would block GitHub deliveries behind slow ticks.
 func (o *Orchestrator) IngestWebhook(ctx context.Context, ev github.Event) error {
-	o.tickMu.Lock()
-	defer o.tickMu.Unlock()
 	switch ev.Kind {
 	case "issues":
-		if ev.Issue == nil || !IsOrchestratedIssue(ev.Issue.Labels) {
+		if ev.Issue == nil {
 			return nil
 		}
 		p, err := o.d.DB.GetProjectByRepo(ctx, ev.Repo)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
 			return err
+		}
+		if !IsOrchestratedIssue(ev.Issue.Labels) {
+			// Label removal is the opt-out. The label-scoped sync will never
+			// see this issue again, so refresh the mirror of an epic we
+			// already track and cancel it if still queued.
+			e, err := o.d.DB.GetEpicByIssue(ctx, p.ID, ev.Issue.Number)
+			if err != nil {
+				return nil // never tracked — not ours
+			}
+			if _, err := o.d.DB.UpsertEpicIssue(ctx, EpicFromIssue(p, *ev.Issue, o.d.Now())); err != nil {
+				return err
+			}
+			if e.Stage == string(shared.EpicQueued) {
+				if fresh, err := o.d.DB.GetEpicByIssue(ctx, p.ID, ev.Issue.Number); err == nil {
+					o.transition(ctx, fresh, shared.EpicCanceled, "github", "orchestration label removed")
+				}
+			}
+			o.Wake()
+			return nil
 		}
 		if _, err := o.d.DB.UpsertEpicIssue(ctx, EpicFromIssue(p, *ev.Issue, o.d.Now())); err != nil {
 			return err

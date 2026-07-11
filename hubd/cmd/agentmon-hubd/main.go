@@ -98,21 +98,22 @@ func main() {
 		log.Fatalf("vapid: %v", err)
 	}
 	pushSender := state.NewWebPushSender(vapid, vapidSubject(cfg))
+	nowRFC3339 := func() string { return time.Now().UTC().Format(time.RFC3339) }
 	go state.RunPushDispatcher(ctx, state.DispatcherDeps{
 		Bcast:      bcast,
 		Presence:   presence,
 		Store:      database,
 		Send:       pushSender,
-		NowRFC3339: func() string { return time.Now().UTC().Format(time.RFC3339) },
+		NowRFC3339: nowRFC3339,
 	})
 
 	var orch *orchestrator.Orchestrator
 	var boardBcast *orchestrator.BoardBroadcaster
 	if cfg.GitHub.Token != "" {
 		boardBcast = orchestrator.NewBoardBroadcaster()
-		orch = orchestrator.New(orchestrator.Deps{DB: database, GH: github.NewClient(cfg.GitHub.Token), Agents: agentClient, Reg: reg, Live: proj, Bcast: boardBcast, Audit: rec, Cfg: cfg.Orchestrator, Now: func() string { return time.Now().UTC().Format(time.RFC3339) }})
+		orch = orchestrator.New(orchestrator.Deps{DB: database, GH: github.NewClient(cfg.GitHub.Token), Agents: agentClient, Reg: reg, Live: proj, Bcast: boardBcast, Audit: rec, Cfg: cfg.Orchestrator, Now: nowRFC3339})
 		go orch.Run(ctx)
-		go orchestrator.RunBoardPushDispatcher(ctx, orchestrator.BoardPushDeps{Bcast: boardBcast, Presence: presence, Store: database, Send: pushSender, Now: func() string { return time.Now().UTC().Format(time.RFC3339) }})
+		go orchestrator.RunBoardPushDispatcher(ctx, orchestrator.BoardPushDeps{Bcast: boardBcast, Presence: presence, Store: database, Send: pushSender, Now: nowRFC3339})
 	}
 
 	relayCap := authn.NewGauge(32) // Phase 5: ≤32 concurrent terminal relays per principal

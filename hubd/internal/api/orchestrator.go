@@ -1,8 +1,13 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -10,12 +15,19 @@ import (
 	"agentmon/hubd/internal/authn"
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
+	"agentmon/hubd/internal/github"
 )
 
-const maxOrchestratorBody = 16 << 10
+const (
+	maxOrchestratorBody = 16 << 10
+	maxParallelCeiling  = 32
+)
+
+var errServerNotFound = errors.New("server not found")
 
 type epicDTO struct {
 	ID             string   `json:"id"`
+	ProjectID      string   `json:"project_id"`
 	Issue          int      `json:"issue"`
 	Title          string   `json:"title"`
 	Labels         []string `json:"labels"`
@@ -25,6 +37,7 @@ type epicDTO struct {
 	Session        string   `json:"session"`
 	Branch         string   `json:"branch"`
 	PR             int      `json:"pr"`
+	Verdict        string   `json:"verdict,omitempty"`
 	Needs          string   `json:"needs"`
 	IssueState     string   `json:"issue_state"`
 	QueuedAt       string   `json:"queued_at"`
@@ -34,7 +47,13 @@ type epicDTO struct {
 }
 
 func toEpicDTO(e db.Epic) epicDTO {
-	return epicDTO{e.ID, e.IssueNumber, e.Title, e.Labels, e.BlockedBy, e.Stage, e.Attempt, e.SessionName, e.Branch, e.PRNumber, e.Needs, e.IssueState, e.QueuedAt, e.StartedAt, e.StageUpdatedAt, e.MergedAt}
+	return epicDTO{
+		ID: e.ID, ProjectID: e.ProjectID, Issue: e.IssueNumber, Title: e.Title,
+		Labels: e.Labels, BlockedBy: e.BlockedBy, Stage: e.Stage, Attempt: e.Attempt,
+		Session: e.SessionName, Branch: e.Branch, PR: e.PRNumber, Verdict: e.Verdict,
+		Needs: e.Needs, IssueState: e.IssueState, QueuedAt: e.QueuedAt,
+		StartedAt: e.StartedAt, StageUpdatedAt: e.StageUpdatedAt, MergedAt: e.MergedAt,
+	}
 }
 
 type projectDTO struct {
@@ -57,6 +76,14 @@ func projectOut(p db.Project, counts map[string]int) projectDTO {
 	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, counts}
 }
 
+type eventDTO struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Source string `json:"source"`
+	Note   string `json:"note"`
+	Ts     string `json:"ts"`
+}
+
 func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -65,23 +92,32 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 			}
 			ps, err := d.DB.ListProjects(r.Context())
 			if err != nil {
-				writeJSONError(w, 500, "internal error")
+				writeJSONError(w, http.StatusInternalServerError, "internal error")
 				return
 			}
 			out := make([]projectDTO, 0, len(ps))
 			for _, p := range ps {
-				es, _ := d.DB.ListEpicsByProject(r.Context(), p.ID)
+				es, err := d.DB.ListEpicsByProject(r.Context(), p.ID)
+				if err != nil {
+					log.Printf("api: project %s epic counts: %v", p.ID, err)
+				}
 				counts := map[string]int{}
 				for _, e := range es {
 					counts[e.Stage]++
 				}
 				out = append(out, projectOut(p, counts))
 			}
-			writeJSON(w, 200, out)
+			writeJSON(w, http.StatusOK, out)
 			return
 		}
 		p, ok := d.authorizeOr403(w, r, authz.OrchestratorControl, "orchestrator:*")
 		if !ok {
+			return
+		}
+		if d.Orch == nil {
+			// Registering projects on a token-less hub would only create rows
+			// an absent orchestrator never runs.
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
 			return
 		}
 		var in struct {
@@ -97,31 +133,49 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 			RequireCI       bool     `json:"require_ci"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
-			writeJSONError(w, 400, "bad request")
+			writeJSONError(w, http.StatusBadRequest, "bad request")
 			return
 		}
 		if in.Name == "" || in.Repo == "" || in.ServerID == "" || in.Workdir == "" {
-			writeJSONError(w, 400, "missing required field")
+			writeJSONError(w, http.StatusBadRequest, "missing required field")
 			return
 		}
-		if in.BaseBranch == "" {
-			in.BaseBranch = "main"
+		if !github.IsValidRepo(in.Repo) {
+			writeJSONError(w, http.StatusBadRequest, "repo must be owner/name")
+			return
 		}
 		if in.Provider == "" {
 			in.Provider = "claude"
 		}
+		if in.Provider != "claude" && in.Provider != "codex" {
+			writeJSONError(w, http.StatusBadRequest, "provider must be claude or codex")
+			return
+		}
+		if in.MaxParallel < 0 || in.MaxParallel > maxParallelCeiling {
+			writeJSONError(w, http.StatusBadRequest, "max_parallel out of range")
+			return
+		}
 		if in.MaxParallel == 0 {
 			in.MaxParallel = 1
 		}
+		if in.BaseBranch == "" {
+			in.BaseBranch = "main"
+		}
+		// The server must exist and be ACTIVE — a project bound to an unknown
+		// server would fail every tick with no way to fix it (no update API).
+		if _, found, err := d.Reg.Get(r.Context(), in.ServerID); err != nil || !found {
+			writeJSONError(w, http.StatusBadRequest, "unknown server")
+			return
+		}
 		pr := db.Project{ID: uuid.NewString(), Name: in.Name, Repo: in.Repo, ServerID: in.ServerID, Target: in.Target, Workdir: in.Workdir, BaseBranch: in.BaseBranch, Provider: in.Provider, RequiredReviews: in.RequiredReviews, MaxParallel: in.MaxParallel, RequireCI: in.RequireCI}
 		if err := d.DB.CreateProject(r.Context(), pr); err != nil {
-			writeJSONError(w, 400, "create failed")
+			writeJSONError(w, http.StatusBadRequest, "create failed")
 			return
 		}
 		if d.Audit != nil {
 			d.Audit.ProjectRegister(r.Context(), p.ID, "project:"+pr.ID, pr.Repo, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		}
-		writeJSON(w, 201, projectOut(pr, nil))
+		writeJSON(w, http.StatusCreated, projectOut(pr, nil))
 	}
 }
 
@@ -133,22 +187,42 @@ func (d Deps) OrchestratorBoardHandler() http.HandlerFunc {
 		}
 		p, err := d.DB.GetProject(r.Context(), id)
 		if err != nil {
-			writeJSONError(w, 404, "not found")
+			writeJSONError(w, http.StatusNotFound, "not found")
 			return
 		}
-		es, err := d.DB.ListEpicsByProject(r.Context(), id)
+		es, err := d.DB.ListBoardEpics(r.Context(), id)
 		if err != nil {
-			writeJSONError(w, 500, "internal error")
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		dto := make([]epicDTO, 0, len(es))
-		events := map[string][]db.EpicEvent{}
+		events := map[string][]eventDTO{}
 		for _, e := range es {
 			dto = append(dto, toEpicDTO(e))
-			events[e.ID], _ = d.DB.ListEpicEvents(r.Context(), e.ID, 20)
+			evs, err := d.DB.ListEpicEvents(r.Context(), e.ID, 20)
+			if err != nil {
+				continue
+			}
+			out := make([]eventDTO, 0, len(evs))
+			for _, ev := range evs {
+				out = append(out, eventDTO{From: ev.FromStage, To: ev.ToStage, Source: ev.Source, Note: ev.Note, Ts: ev.Ts})
+			}
+			events[e.ID] = out
 		}
-		writeJSON(w, 200, map[string]any{"project": projectOut(p, nil), "epics": dto, "events": events})
+		writeJSON(w, http.StatusOK, map[string]any{"project": projectOut(p, nil), "epics": dto, "events": events})
 	}
+}
+
+// epicScoped lists the actions that operate on a single epic and therefore
+// must verify the epic belongs to the project in the URL — the authorize and
+// audit resource is "project:{id}", and letting an epic_id reach another
+// project would make that binding a lie (and an IDOR once real policy lands).
+func epicScoped(action string) bool {
+	switch action {
+	case "approve", "retry", "cancel", "guidance":
+		return true
+	}
+	return false
 }
 
 func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
@@ -158,16 +232,30 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if d.Orch == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
 		var in struct {
 			Action string `json:"action"`
 			EpicID string `json:"epic_id"`
 			Issue  int    `json:"issue"`
 			Value  int    `json:"value"`
+			On     bool   `json:"on"`
 			Text   string `json:"text"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
-			writeJSONError(w, 400, "bad request")
+			writeJSONError(w, http.StatusBadRequest, "bad request")
 			return
+		}
+		var epic db.Epic
+		if epicScoped(in.Action) {
+			e, err := d.DB.GetEpic(r.Context(), in.EpicID)
+			if err != nil || e.ProjectID != id {
+				writeJSONError(w, http.StatusNotFound, "epic not found in project")
+				return
+			}
+			epic = e
 		}
 		var err error
 		source := "user:" + p.ID
@@ -178,60 +266,109 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 			err = d.Orch.Retry(r.Context(), in.EpicID, source)
 		case "cancel":
 			err = d.Orch.Cancel(r.Context(), in.EpicID, source)
-		case "pause":
-			_, err = d.DB.SetProjectPaused(r.Context(), id, true)
-			if err == nil {
-				d.Orch.Wake()
+		case "pause", "resume":
+			var found bool
+			found, err = d.DB.SetProjectPaused(r.Context(), id, in.Action == "pause")
+			if err == nil && !found {
+				writeJSONError(w, http.StatusNotFound, "not found")
+				return
 			}
-		case "resume":
-			_, err = d.DB.SetProjectPaused(r.Context(), id, false)
 			if err == nil {
 				d.Orch.Wake()
 			}
 		case "set_max_parallel":
-			_, err = d.DB.SetProjectMaxParallel(r.Context(), id, in.Value)
+			if in.Value < 1 || in.Value > maxParallelCeiling {
+				writeJSONError(w, http.StatusBadRequest, "max_parallel out of range")
+				return
+			}
+			var found bool
+			found, err = d.DB.SetProjectMaxParallel(r.Context(), id, in.Value)
+			if err == nil && !found {
+				writeJSONError(w, http.StatusNotFound, "not found")
+				return
+			}
+			if err == nil {
+				d.Orch.Wake()
+			}
+		case "set_require_ci":
+			var found bool
+			found, err = d.DB.SetProjectRequireCI(r.Context(), id, in.On)
+			if err == nil && !found {
+				writeJSONError(w, http.StatusNotFound, "not found")
+				return
+			}
 			if err == nil {
 				d.Orch.Wake()
 			}
 		case "run_issue":
 			err = d.Orch.RunIssue(r.Context(), id, in.Issue)
 		case "guidance":
-			e, eerr := d.DB.GetEpic(r.Context(), in.EpicID)
-			if eerr != nil {
-				err = eerr
-				break
-			}
-			project, eerr := d.DB.GetProject(r.Context(), e.ProjectID)
-			if eerr != nil {
-				err = eerr
-				break
-			}
-			srv, found, eerr := d.Reg.Get(r.Context(), project.ServerID)
-			if eerr != nil || !found {
-				if eerr != nil {
-					err = eerr
-				} else {
-					err = http.ErrMissingFile
-				}
-				break
-			}
-			sessions, eerr := d.Agent.Sessions(r.Context(), srv, project.Target)
-			if eerr != nil {
-				err = eerr
-				break
-			}
-			err = agentws.SendText(r.Context(), srv, &d.Minter, p.ID, project.Target, e.SessionName, in.Text+"\n", sessions)
+			err = d.sendGuidance(r.Context(), epic, p.ID, in.Text)
 		default:
-			writeJSONError(w, 400, "unknown action")
+			writeJSONError(w, http.StatusBadRequest, "unknown action")
 			return
 		}
 		if err != nil {
-			writeJSONError(w, 400, err.Error())
+			writeActionError(w, err)
 			return
 		}
 		if d.Audit != nil {
 			d.Audit.EpicAction(r.Context(), p.ID, "project:"+id, in.Action, in.EpicID, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		}
-		writeJSON(w, 200, map[string]bool{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
+}
+
+// sendGuidance delivers text into the epic's live runner session. CR (\r)
+// submits in Claude Code; a bare LF only inserts a soft newline (see
+// web/src/lib/terminal-keys.ts) — terminating with \n would type the guidance
+// and never send it, silently breaking the plan-approval flow.
+func (d Deps) sendGuidance(ctx context.Context, e db.Epic, principalID, text string) error {
+	project, err := d.DB.GetProject(ctx, e.ProjectID)
+	if err != nil {
+		return err
+	}
+	srv, found, err := d.Reg.Get(ctx, project.ServerID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errServerNotFound
+	}
+	sessions, err := d.Agent.Sessions(ctx, srv, project.Target)
+	if err != nil {
+		return err
+	}
+	msg := strings.TrimRight(text, "\r\n") + "\r"
+	return agentws.SendText(ctx, srv, &d.Minter, principalID, e.SessionName, msg, sessions)
+}
+
+// actionUserFacing marks orchestrator state errors that are safe and useful
+// to show verbatim ("epic is not escalated", "#N is a pull request", …).
+var actionUserFacing = []string{
+	"not escalated", "not retryable", "no PR to merge", "pull request, not an issue",
+	"not scheduled", "transition failed", "merge rejected", "stage moved concurrently",
+	"has no pane",
+}
+
+func writeActionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		writeJSONError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, errServerNotFound):
+		writeJSONError(w, http.StatusNotFound, "server not found")
+		return
+	}
+	msg := err.Error()
+	for _, s := range actionUserFacing {
+		if strings.Contains(msg, s) {
+			writeJSONError(w, http.StatusConflict, msg)
+			return
+		}
+	}
+	// Everything else is infrastructure detail (db/github/agent internals):
+	// log it, don't ship it to the browser.
+	log.Printf("api: orchestrator action failed: %v", err)
+	writeJSONError(w, http.StatusBadGateway, "action failed")
 }

@@ -68,7 +68,7 @@ func TestListIssuesSinceFiltersPRs(t *testing.T) {
 	defer srv.Close()
 	c := NewClient("t")
 	c.Base = srv.URL
-	got, err := c.ListIssuesSince(context.Background(), "o/r", "")
+	got, err := c.ListIssuesLabeledSince(context.Background(), "o/r", "", "")
 	if err != nil || len(got) != 1 || got[0].Number != 1 {
 		t.Fatalf("got %+v err=%v", got, err)
 	}
@@ -203,7 +203,7 @@ func TestListIssuesSincePaginates(t *testing.T) {
 	defer srv.Close()
 	c := NewClient("t")
 	c.Base = srv.URL
-	got, err := c.ListIssuesSince(context.Background(), "o/r", "")
+	got, err := c.ListIssuesLabeledSince(context.Background(), "o/r", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

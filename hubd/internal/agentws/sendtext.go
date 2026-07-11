@@ -13,21 +13,30 @@ import (
 	"agentmon/shared"
 )
 
-func FirstPaneID(sessions []shared.Session, name string) (string, bool) {
+// SessionPane finds the named session's first pane and the session's
+// AGENT-RESOLVED target label. The label — never a project's raw Target
+// config ("" = agent default) — is what the agent verifies directives
+// against; minting with the raw value 403s on every default-target project.
+func SessionPane(sessions []shared.Session, name string) (paneID, target string, ok bool) {
 	for _, s := range sessions {
 		if s.Name != name {
 			continue
 		}
 		for _, w := range s.Windows {
 			if len(w.Panes) > 0 {
-				return w.Panes[0].ID, true
+				return w.Panes[0].ID, s.Target, true
 			}
 		}
 	}
-	return "", false
+	return "", "", false
 }
-func SendText(ctx context.Context, srv db.Server, minter *directive.Minter, principalID, target, session, text string, sessions []shared.Session) error {
-	paneID, ok := FirstPaneID(sessions, session)
+
+// SendText injects text into a session's first pane over the agent's rw WS —
+// the same channel a browser terminal uses, so no new agent surface and no
+// new credentials. The directive and dial target come from the session's
+// resolved label (see SessionPane).
+func SendText(ctx context.Context, srv db.Server, minter *directive.Minter, principalID, session, text string, sessions []shared.Session) error {
+	paneID, target, ok := SessionPane(sessions, session)
 	if !ok {
 		return fmt.Errorf("agentws: session %q has no pane", session)
 	}

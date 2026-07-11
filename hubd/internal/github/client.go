@@ -30,6 +30,11 @@ var (
 // validRepo/validRef reject anything that could re-route the PAT-authenticated
 // request to an unintended endpoint should a repo/ref ever arrive from
 // less-trusted input. Defense-in-depth: current callers are admin config.
+// IsValidRepo reports whether repo is a bare owner/name slug — exported for
+// API-edge validation so malformed repos are rejected before they become
+// permanently-failing project rows.
+func IsValidRepo(repo string) bool { return repoRe.MatchString(repo) }
+
 func validRepo(repo string) error {
 	if !repoRe.MatchString(repo) {
 		return fmt.Errorf("github: invalid repo %q", repo)
@@ -169,13 +174,6 @@ func (c *Client) GetIssue(ctx context.Context, repo string, num int) (Issue, err
 		return Issue{}, err
 	}
 	return w.issue(), nil
-}
-
-// ListIssuesSince paginates to exhaustion: a single page silently truncates
-// on boot (empty since = full listing, newest-created first), which would
-// permanently skip older epics once the sync watermark advances.
-func (c *Client) ListIssuesSince(ctx context.Context, repo, since string) ([]Issue, error) {
-	return c.ListIssuesLabeledSince(ctx, repo, "", since)
 }
 
 // ListIssuesLabeledSince scopes the listing to one label — the sync loop only

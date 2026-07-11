@@ -12,6 +12,7 @@ import (
 	"agentmon/hubd/internal/audit"
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
+	"agentmon/hubd/internal/registry"
 )
 
 func orchDB(t *testing.T) *db.DB {
@@ -32,7 +33,7 @@ func orchReq(method, url, body string) (*http.Request, *httptest.ResponseRecorde
 }
 func TestRegisterAndListProjects(t *testing.T) {
 	database := orchDB(t)
-	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Reg: registry.New(database), Audit: audit.NewRecorder(&captureSink{})}
 	r, w := orchReq("POST", "/api/v1/orchestrator/projects", `{"name":"proj","repo":"o/r","server_id":"h1","workdir":"/w"}`)
 	d.OrchestratorProjectsHandler()(w, r)
 	if w.Code != 201 {
@@ -84,5 +85,30 @@ func TestActionsDispatch(t *testing.T) {
 	d.OrchestratorActionsHandler()(w, r)
 	if w.Code != 400 {
 		t.Fatalf("nope=%d", w.Code)
+	}
+	// epic-scoped actions bind the epic to the URL project
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 9, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	r, w = orchReq("POST", "/api/v1/orchestrator/projects/p2/actions", `{"action":"approve","epic_id":"`+e.ID+`"}`)
+	r.SetPathValue("id", "p2")
+	d.OrchestratorActionsHandler()(w, r)
+	if w.Code != 404 {
+		t.Fatalf("cross-project epic action must 404, got %d", w.Code)
+	}
+	r, w = orchReq("POST", "/api/v1/orchestrator/projects/p1/actions", `{"action":"approve","epic_id":"`+e.ID+`"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorActionsHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("in-project approve = %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestActionsDisabledOrchestrator(t *testing.T) {
+	database := orchDB(t)
+	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})} // Orch nil = disabled
+	r, w := orchReq("POST", "/api/v1/orchestrator/projects/p1/actions", `{"action":"pause"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorActionsHandler()(w, r)
+	if w.Code != 503 {
+		t.Fatalf("disabled orchestrator must 503, got %d", w.Code)
 	}
 }
