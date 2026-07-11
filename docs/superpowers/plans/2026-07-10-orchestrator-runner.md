@@ -455,7 +455,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report.Store 
 - Consumes: `hooks.SocketFromTmux` / `hooks.MatchTarget` (renamed here), `tmux.ValidatePaneID` (`agent/internal/tmux/control.go:58`), `report.Store` (Task 3), `shared.ReportableStage`.
 - Produces: `report.SessionResolver`, `report.IntakeHandler`, package-local `writeError` (Task 5 reuses it).
 
-- [ ] **Step 1: Export the two `/hook` resolution helpers**
+- [x] **Step 1: Export the two `/hook` resolution helpers**
 
 In `agent/internal/hooks/hooks.go`:
 1. Rename `socketFromTmux` → `SocketFromTmux` (function at line 107; update its doc comment first word and BOTH call sites: `HookHandler` line 68 and the `epochFromTmux` sibling is unrelated — only `socketFromTmux` calls change).
@@ -484,7 +484,7 @@ func MatchTarget(cfg config.Config, socket string) (config.Target, bool) {
 Run: `cd /root/agentmon/agent && go build ./... && go test ./internal/hooks/`
 Expected: PASS (the hooks tests exercise the handler, not the unexported helpers directly).
 
-- [ ] **Step 2: Write the failing intake tests**
+- [x] **Step 2: Write the failing intake tests**
 
 Create `agent/internal/report/intake_test.go`:
 
@@ -598,12 +598,12 @@ func TestIntakeRejectsUnknownSocketOrBadPane(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/`
 Expected: FAIL — `undefined: IntakeHandler`, `undefined: SessionResolver`.
 
-- [ ] **Step 4: Implement the intake**
+- [x] **Step 4: Implement the intake**
 
 Create `agent/internal/report/intake.go`:
 
@@ -702,11 +702,11 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass, then the full gate**
+- [x] **Step 5: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/ ./internal/hooks/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): orchestrator report intake — loopback POST with server-side session stamping"
