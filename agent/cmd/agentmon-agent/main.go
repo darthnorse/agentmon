@@ -13,6 +13,7 @@ import (
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/directive"
 	"agentmon/agent/internal/hooks"
+	"agentmon/agent/internal/report"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
 )
@@ -79,6 +80,10 @@ func main() {
 	}
 
 	machine := state.New(nil)
+	reportStore := report.NewStore(report.NewInstanceID(), report.DefaultCap)
+	resolveSession := func(ctx context.Context, socket, pane string) (string, error) {
+		return tmux.SessionNameForPane(ctx, tmux.ExecRunner, socket, pane)
+	}
 
 	_, tmuxErr := exec.LookPath("tmux")
 	mux := http.NewServeMux()
@@ -88,6 +93,7 @@ func main() {
 	mux.Handle("POST /sessions/rename", api.RequireBearer(cfg.HubToken, api.RenameSessionHandler(cfg, renameSession)))
 	mux.Handle("POST /sessions/kill", api.RequireBearer(cfg.HubToken, api.KillSessionHandler(cfg, killSession)))
 	mux.Handle("GET /state", api.RequireBearer(cfg.HubToken, api.StateHandler(cfg, machine)))
+	mux.Handle("GET /orchestrator/reports", api.RequireBearer(cfg.HubToken, report.DrainHandler(cfg, reportStore)))
 
 	paneIO := &api.PaneIO{
 		Cfg:      cfg,
@@ -109,6 +115,8 @@ func main() {
 		}
 		mux.Handle("POST /hook", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, hooks.HookHandler(cfg, machine, nil))))
 		log.Printf("hook intake enabled at POST /hook")
+		mux.Handle("POST /orchestrator/report", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, report.IntakeHandler(cfg, reportStore, resolveSession, nil))))
+		log.Printf("orchestrator report intake enabled at POST /orchestrator/report")
 	}
 
 	log.Printf("agentmon-agent %s listening on %s (server %s)", version, cfg.Listen, cfg.ServerID)

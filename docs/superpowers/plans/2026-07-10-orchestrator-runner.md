@@ -864,7 +864,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report drain 
 - Consumes: everything from Tasks 2–5.
 - Produces: live routes `GET /orchestrator/reports` (bearer) and `POST /orchestrator/report` (loopback+token).
 
-- [ ] **Step 1: Wire the store and routes**
+- [x] **Step 1: Wire the store and routes**
 
 In `agent/cmd/agentmon-agent/main.go`:
 
@@ -893,18 +893,18 @@ In `agent/cmd/agentmon-agent/main.go`:
 
 (The drain endpoint stays mounted regardless of HookToken — with the intake disabled it simply serves empty batches, and the hub cannot tell a hookless agent from a quiet one, which is fine.)
 
-- [ ] **Step 2: Run the full gate**
+- [x] **Step 2: Run the full gate**
 
 Run the Global Constraints gate command.
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): mount orchestrator report intake + drain routes"
 ```
 
-- [ ] **Step 4: CHECKPOINT 1 — STOP**
+- [x] **Step 4: CHECKPOINT 1 — STOP**
 
 Report: tasks 1–6 committed, full gate green. WAIT for explicit fix instructions or "continue". Do NOT begin Task 7.
 
