@@ -3256,20 +3256,38 @@ Action methods: `Approve` = load epic; must be `escalated`; `mergeEpic(…, "use
 
 `reconcile`: `ListNonTerminalEpics`; group by project; for `PRNumber > 0`: fetch PR; merged ⇒ transition to `merged` (note "reconcile"); closed ⇒ `canceled`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -v -race`
 Expected: PASS — all orchestrator tests including the four new scenario tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/internal/orchestrator/ && git commit -m "feat(hub): orchestrator core loop — sync, reports, stalls, gate, schedule"
 ```
 
-- [ ] **Step 6: CHECKPOINT 3 — STOP**
+- [x] **Step 6: CHECKPOINT 3 — STOP**
 
 Tasks 12–15 (scheduler, report drain, sync, core loop — the highest-judgment code in the plan) are a review checkpoint. STOP here — do not begin Task 16. Report that checkpoint 3 is reached, listing completed tasks and the final `go test ./...` result. Resume only on an explicit "continue" or after applying explicit fix instructions from the checkpoint review.
+
+**CHECKPOINT-3 CONTRACT CHANGES (applied in commit `b3568c5` — the code on disk
+is authoritative over the Task 12–15 sections above):**
+- `GitHubAPI`: `ListIssuesLabeledSince(ctx, repo, label, since)` replaces
+  `ListIssuesSince`; `RemoveLabel` was removed from the interface (the client
+  method remains).
+- `LivenessAPI` is now `Server(server string) []state.SessionView` — liveness is
+  checked by scanning session NAMES (the projection keys on agent-resolved target
+  labels, never a project's raw `Target`). Task 21's wiring (`Live: proj`) still
+  works — `state.Projection.Server` satisfies it.
+- `SessionNameFor(project string, issue, attempt int)` — names carry a project
+  slug and an attempt suffix (e.g. `epic-schoolplatfo-16`, `-r2` on retries).
+- `db.TransitionEpic`'s `note` doubles as the needs text when entering
+  escalated/stalled (atomic; separate `SetEpicNeeds` calls before transitions
+  were removed).
+- `mergeEpic` returns `error`; `Approve` propagates it. Test fakes changed
+  accordingly (`fakeGH.ListIssuesLabeledSince`, no `RemoveLabel`,
+  `fakeLive.Server`, `sessionName(n)` helper).
 
 ---
 
@@ -4158,14 +4176,14 @@ func TestRequireCIHoldsMergeUntilChecksRegister(t *testing.T) {
 		checks: map[string][]github.CheckRun{}, // no runs registered yet
 	}
 	ag := &fakeAgents{}
-	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{"epic-16": true}})
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
 	ctx := context.Background()
 	// flip the project to require CI
 	if ok, err := d.SetProjectRequireCI(ctx, "p1", true); err != nil || !ok {
 		t.Fatalf("SetProjectRequireCI: ok=%v err=%v", ok, err)
 	}
 	o.Tick(ctx)
-	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: "epic-16", Ts: "t"}}
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
 	o.Tick(ctx) // gate must WAIT (zero runs + require_ci), not merge
 	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
 	if e.Stage != "pr_open" || len(gh.merged) != 0 {
