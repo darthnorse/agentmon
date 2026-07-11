@@ -6,6 +6,10 @@ server_id = "web-01"
 hub_token = "file:/etc/agentmon/hub_token"
 directive_key = "file:/etc/agentmon/signing_key"
 scrollback_lines = 5000
+# hook_token (written by the installer when hooks are provisioned) also gates
+# the orchestrator report intake: `agentmon report` posts runner stage reports
+# to the loopback endpoint it enables.
+# hook_token = "file:/etc/agentmon/hook_token"
 [[targets]]
   os_user = "dev"
   socket_name = ""

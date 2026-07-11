@@ -60,6 +60,34 @@ func TestInstallScriptDefaultsToDedicatedSocket(t *testing.T) {
 	}
 }
 
+func TestInstallScriptInstallsRunnerFiles(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	for _, want := range []string{
+		`ln -sfnT /usr/local/bin/agentmon-agent /usr/local/bin/agentmon`,
+		`install-skills --home`,
+		// getent failure must not abort the installer under set -euo pipefail.
+		`cut -d: -f6 || true`,
+		// The update path must serve the ENROLLED user (config os_user), not
+		// the invoking user — a root-shell fleet update would otherwise write
+		// the skills to /root and skip the monitored user.
+		`RUN_USER="$cfg_user"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh missing %q", want)
+		}
+	}
+	// Both the update path and the fresh path must install runner files, so a
+	// fleet UPDATE delivers new skills too (the whole point of binary-embedded
+	// distribution). Two call sites of the same function.
+	if strings.Count(body, "install_runner_files\n") < 2 {
+		t.Fatal("install_runner_files must run on both the update and fresh paths")
+	}
+}
+
 func TestInstallScriptUnitUsesKillModeProcess(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/install.sh", nil)

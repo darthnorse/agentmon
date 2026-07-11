@@ -5,8 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 
@@ -108,19 +106,8 @@ func hookTestMain(args []string, stdout io.Writer) error {
 	if cfg.HookToken == "" {
 		return fmt.Errorf("hook_token not configured; /hook is disabled")
 	}
-	_, port, err := net.SplitHostPort(cfg.Listen)
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
 	body := fmt.Sprintf(`{"hook_event_name":%q,"notification_type":%q,"session_id":"hook-test"}`, *event, *kind)
-	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+port+"/hook", strings.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+cfg.HookToken)
-	req.Header.Set("X-AgentMon-Pane", *pane)
-	req.Header.Set("X-AgentMon-Tmux", os.Getenv("TMUX"))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loopbackPost(cfg, "/hook", *pane, "", strings.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("post: %w", err)
 	}

@@ -2,6 +2,7 @@ package shared
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +39,20 @@ func TestOrchestratorReportJSON(t *testing.T) {
 	}
 	if r.Repo != "o/r" || r.Epic != 15 || r.Stage != EpicPROpen || r.PR != 58 {
 		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestOrchestratorReportBatchJSONShape(t *testing.T) {
+	b, err := json.Marshal(OrchestratorReportBatch{
+		Instance: "a1b2", Cursor: 7,
+		Reports: []OrchestratorReport{{Repo: "o/r", Epic: 3, Stage: EpicPlanning, Session: "epic-p-3", Ts: "t"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"instance":"a1b2"`, `"cursor":7`, `"reports":[{`} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("missing %s in %s", want, b)
+		}
 	}
 }

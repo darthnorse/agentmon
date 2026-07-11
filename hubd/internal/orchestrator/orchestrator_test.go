@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -66,9 +67,12 @@ func (f *fakeGH) AddLabels(_ context.Context, _ string, n int, ls []string) erro
 }
 
 type fakeAgents struct {
-	created  []shared.CreateSessionRequest
-	reports  []shared.OrchestratorReport
-	spawnErr error
+	created   []shared.CreateSessionRequest
+	reports   []shared.OrchestratorReport
+	drainAcks [][2]any
+	killed    []string
+	killErr   error
+	spawnErr  error
 }
 
 func (f *fakeAgents) CreateSession(_ context.Context, _ db.Server, _ string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error) {
@@ -78,10 +82,16 @@ func (f *fakeAgents) CreateSession(_ context.Context, _ db.Server, _ string, req
 	f.created = append(f.created, req)
 	return shared.CreateSessionResponse{Name: req.Name}, nil
 }
-func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _ string) ([]shared.OrchestratorReport, error) {
+func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance string, ack uint64) (shared.OrchestratorReportBatch, error) {
+	f.drainAcks = append(f.drainAcks, [2]any{instance, ack})
 	out := f.reports
 	f.reports = nil
-	return out, nil
+	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: uint64(len(out)), Reports: out}, nil
+}
+
+func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) error {
+	f.killed = append(f.killed, name)
+	return f.killErr
 }
 
 type fakeReg struct{}
@@ -130,6 +140,135 @@ func newTestOrch(t *testing.T, gh *fakeGH, ag *fakeAgents, live fakeLive) (*Orch
 		Cfg:   config.OrchestratorCfg{MaxAttempts: 2},
 		Now:   func() string { return clock }})
 	return o, d
+}
+
+func TestDrainAcksPreviousBatchOnNextPoll(t *testing.T) {
+	ag := &fakeAgents{reports: []shared.OrchestratorReport{
+		{Repo: "o/r", Epic: 999, Stage: shared.EpicPlanning, Session: "s", Ts: "t"}}}
+	o, d := newTestOrch(t, &fakeGH{}, ag, fakeLive{})
+	ctx := context.Background()
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.drainReports(ctx, p) // batch of 1 (epic unknown → dropped) — cursor 1 remembered
+	o.drainReports(ctx, p) // must echo instance+cursor as the ack
+	if len(ag.drainAcks) != 2 {
+		t.Fatalf("drains = %d", len(ag.drainAcks))
+	}
+	if ag.drainAcks[0] != [2]any{"", uint64(0)} {
+		t.Fatalf("first drain must ack nothing: %+v", ag.drainAcks[0])
+	}
+	if ag.drainAcks[1] != [2]any{"test-instance", uint64(1)} {
+		t.Fatalf("second drain must ack the first batch: %+v", ag.drainAcks[1])
+	}
+}
+
+// spawnEpic16 boots one epic through Tick so it holds a session assignment
+// (mirrors TestTickSyncsAndSpawns' setup).
+func spawnEpic16(t *testing.T, ag *fakeAgents) (*Orchestrator, *db.DB, db.Epic) {
+	t.Helper()
+	gh := &fakeGH{issues: map[int]github.Issue{
+		16: {Number: 16, Title: "Epic", State: "open", Labels: []string{"agentmon:epic"}},
+	}}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{}})
+	o.Tick(context.Background())
+	e, err := d.GetEpicByIssue(context.Background(), "p1", 16)
+	if err != nil || e.SessionName == "" {
+		t.Fatalf("epic not spawned: %+v err=%v", e, err)
+	}
+	return o, d, e
+}
+
+func TestCancelKillsRunnerSession(t *testing.T) {
+	ag := &fakeAgents{}
+	o, _, e := spawnEpic16(t, ag)
+	if err := o.Cancel(context.Background(), e.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.killed) != 1 || ag.killed[0] != e.SessionName {
+		t.Fatalf("killed = %v, want [%s]", ag.killed, e.SessionName)
+	}
+}
+
+func TestRetryKillsPredecessorSession(t *testing.T) {
+	ag := &fakeAgents{}
+	o, d, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	if ok, err := d.TransitionEpic(ctx, e.ID, "starting", "stalled", "hub", "test", "2026-07-10T14:01:00Z"); err != nil || !ok {
+		t.Fatalf("force stall: ok=%v err=%v", ok, err)
+	}
+	if err := o.Retry(ctx, e.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.killed) != 1 || ag.killed[0] != e.SessionName {
+		t.Fatalf("killed = %v, want [%s]", ag.killed, e.SessionName)
+	}
+}
+
+func TestFailedKillRetriedUntilRetired(t *testing.T) {
+	ag := &fakeAgents{killErr: errors.New("agent unreachable")}
+	o, _, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	if err := o.Cancel(ctx, e.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.killed) != 1 {
+		t.Fatalf("killed = %v", ag.killed)
+	}
+	// Agent recovers: the next tick must retry the failed kill and retire the
+	// zombie (it shares the epic's attempt-agnostic branch/worktree).
+	ag.killErr = nil
+	o.Tick(ctx)
+	if len(ag.killed) != 2 || ag.killed[1] != e.SessionName {
+		t.Fatalf("failed kill was not retried: %v", ag.killed)
+	}
+	// Retired sessions are forgotten, not re-killed forever.
+	o.Tick(ctx)
+	if len(ag.killed) != 2 {
+		t.Fatalf("retired session was re-killed: %v", ag.killed)
+	}
+}
+
+func TestRetryPendingEnforcesCrossHostBoundary(t *testing.T) {
+	ag := &fakeAgents{}
+	o, d, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	rep := shared.OrchestratorReport{Repo: "o/r", Epic: 16, Stage: shared.EpicPlanning, Session: e.SessionName, Ts: "t"}
+	// A report deferred from a drain of ANOTHER server must not drive p1's epic.
+	o.pending = append(o.pending, pendingReport{ServerID: "evil-host", Target: "default", R: rep})
+	o.retryPending(ctx)
+	got, _ := d.GetEpic(ctx, e.ID)
+	if got.Stage != "starting" {
+		t.Fatalf("cross-host pending report must be dropped, stage = %s", got.Stage)
+	}
+	// The same report deferred from the epic's own server applies normally.
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.pending = append(o.pending, pendingReport{ServerID: p.ServerID, Target: p.Target, R: rep})
+	o.retryPending(ctx)
+	got, _ = d.GetEpic(ctx, e.ID)
+	if got.Stage != "planning" {
+		t.Fatalf("same-origin pending report must apply, stage = %s", got.Stage)
+	}
+}
+
+func TestKillFailureDoesNotBlockRetry(t *testing.T) {
+	ag := &fakeAgents{killErr: errors.New("agent unreachable")}
+	o, d, e := spawnEpic16(t, ag)
+	ctx := context.Background()
+	if ok, err := d.TransitionEpic(ctx, e.ID, "starting", "stalled", "hub", "test", "2026-07-10T14:01:00Z"); err != nil || !ok {
+		t.Fatalf("force stall: ok=%v err=%v", ok, err)
+	}
+	if err := o.Retry(ctx, e.ID, "user"); err != nil {
+		t.Fatalf("retry must be best-effort about the kill: %v", err)
+	}
+	got, _ := d.GetEpic(ctx, e.ID)
+	if got.Stage != "queued" {
+		t.Fatalf("stage = %s, want queued", got.Stage)
+	}
 }
 
 func TestTickSyncsAndSpawns(t *testing.T) {

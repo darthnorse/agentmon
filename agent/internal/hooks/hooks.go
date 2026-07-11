@@ -65,8 +65,8 @@ func HookHandler(cfg config.Config, m *state.Machine, now func() time.Time) http
 	return func(w http.ResponseWriter, r *http.Request) {
 		pane := r.Header.Get("X-AgentMon-Pane")
 		tmuxEnv := r.Header.Get("X-AgentMon-Tmux")
-		socket := socketFromTmux(tmuxEnv)
-		target, matched := matchTarget(cfg, socket)
+		socket := SocketFromTmux(tmuxEnv)
+		t, matched := MatchTarget(cfg, socket)
 		if !tmux.ValidatePaneID(pane) || !matched {
 			log.Printf("hook: soft drop (pane=%q socket=%q matched=%v)", pane, socket, matched)
 			w.WriteHeader(http.StatusNoContent)
@@ -80,7 +80,7 @@ func HookHandler(cfg config.Config, m *state.Machine, now func() time.Time) http
 			return
 		}
 		m.Apply(state.Event{
-			Target:           target,
+			Target:           t.Label,
 			Pane:             pane,
 			Name:             body.HookEventName,
 			NotificationKind: body.NotificationType,
@@ -102,9 +102,9 @@ func epochFromTmux(tmuxEnv string) string {
 	return parts[1]
 }
 
-// socketFromTmux extracts the socket name from $TMUX ("<path>,<pid>,<idx>"): the
+// SocketFromTmux extracts the socket name from $TMUX ("<path>,<pid>,<idx>"): the
 // basename of the path before the first comma. "" when $TMUX is empty/malformed.
-func socketFromTmux(tmuxEnv string) string {
+func SocketFromTmux(tmuxEnv string) string {
 	if tmuxEnv == "" {
 		return ""
 	}
@@ -118,18 +118,20 @@ func socketFromTmux(tmuxEnv string) string {
 	return filepath.Base(path)
 }
 
-// matchTarget maps a tmux socket name to a configured target label. The default
-// socket is named "default" on disk but configured as SocketName "".
-func matchTarget(cfg config.Config, socket string) (string, bool) {
+// MatchTarget maps a tmux socket name to its configured target. The default
+// socket is named "default" on disk but configured as SocketName "". Exported
+// for the report intake, which needs the target's SocketName (tmux calls) as
+// well as its Label (store key).
+func MatchTarget(cfg config.Config, socket string) (config.Target, bool) {
 	if socket == "" {
-		return "", false
+		return config.Target{}, false
 	}
 	for _, t := range cfg.Targets {
 		if t.SocketName == socket || (socket == "default" && t.SocketName == "") {
-			return t.Label, true
+			return t, true
 		}
 	}
-	return "", false
+	return config.Target{}, false
 }
 
 func isLoopback(remoteAddr string) bool {

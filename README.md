@@ -272,7 +272,20 @@ session_dirs = ["/home/dev/projects", "/srv/work"]
 > of these roots (symlinks resolved, `..` traversal blocked) before it runs `tmux new-session -c <dir>`. If
 > you omit a directory, the first root is used; if `session_dirs` is unset, it defaults to the agent user's
 > `$HOME`. This keeps session creation confined to directories you explicitly sanction rather than anywhere
-> on the filesystem. Custom start *commands* are not exposed in v1 — new sessions start your default shell.
+> on the filesystem. A custom start *command* is optional: when set, the agent runs it as the session's
+> shell-command and the session ends when it exits (the orchestrator's kickoff path uses this; the web UI
+> does not expose it). Omitted, new sessions start your default shell.
+
+**Runner CLI (orchestrator hosts).** The installer symlinks `agentmon` →
+`agentmon-agent` and installs the runner skills into the run user's
+`~/.claude/commands/` (`epic-pipeline`, `plan-epics`) and `~/.codex/prompts/`
+(`epic-pipeline`). Inside a monitored session:
+
+```bash
+agentmon report --epic 16 --stage implementing   # runner stage reports
+agentmon doctor                                  # validate a project host (gh auth, clone, reporter, providers)
+agentmon import-epics --dir docs/plan            # epic files → GitHub issues (idempotent)
+```
 
 ---
 

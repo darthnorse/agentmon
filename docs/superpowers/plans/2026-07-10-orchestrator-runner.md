@@ -63,7 +63,7 @@ Design doc (authoritative for WHY): `docs/superpowers/specs/2026-07-10-orchestra
 - Consumes: `shared.OrchestratorReport` (exists).
 - Produces: `shared.OrchestratorReportBatch` — the drain wire format for Tasks 3, 5, 10, 11.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `shared/orchestrator_test.go`:
 
@@ -86,12 +86,12 @@ func TestOrchestratorReportBatchJSONShape(t *testing.T) {
 
 If `strings` or `encoding/json` are not already imported in the test file, add them.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/shared && go test ./... -run TestOrchestratorReportBatchJSONShape`
 Expected: FAIL — `undefined: OrchestratorReportBatch`.
 
-- [ ] **Step 3: Write the type**
+- [x] **Step 3: Write the type**
 
 Append to `shared/orchestrator.go`:
 
@@ -110,12 +110,12 @@ type OrchestratorReportBatch struct {
 }
 ```
 
-- [ ] **Step 4: Run the full gate**
+- [x] **Step 4: Run the full gate**
 
 Run the Global Constraints gate command.
 Expected: PASS everywhere (hubd still compiles — nothing references the new type yet).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add shared/ && git commit -m "feat(shared): OrchestratorReportBatch — ack-on-next-drain wire format"
@@ -133,7 +133,7 @@ cd /root/agentmon && git add shared/ && git commit -m "feat(shared): Orchestrato
 - Consumes: `tmux.Runner`, `with`, `socketArgs` (all in `agent/internal/tmux/discovery.go:27,144,150`).
 - Produces: `SessionNameForPane(ctx, run, socket, pane) (string, error)` — Task 4's production resolver.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/internal/tmux/session_name_test.go` (the `recordRunner` helper already exists in `create_test.go`, same package):
 
@@ -183,12 +183,12 @@ func TestSessionNameForPaneErrors(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/tmux/ -run TestSessionNameForPane`
 Expected: FAIL — `undefined: SessionNameForPane`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/internal/tmux/session_name.go`:
 
@@ -220,11 +220,11 @@ func SessionNameForPane(ctx context.Context, run Runner, socket, pane string) (s
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/tmux/ -run TestSessionNameForPane` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): tmux.SessionNameForPane — pane-to-session resolution for the report intake"
@@ -242,7 +242,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): tmux.SessionN
 - Consumes: `shared.OrchestratorReport`, `shared.OrchestratorReportBatch` (Task 1).
 - Produces: `NewStore(instance, max) *Store`, `(*Store).Add(target, r)`, `(*Store).Drain(target, instance, ack) shared.OrchestratorReportBatch`, `NewInstanceID() string`, `DefaultCap`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/internal/report/store_test.go`:
 
@@ -325,12 +325,12 @@ func TestNewInstanceID(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/`
 Expected: FAIL to build — package does not exist yet.
 
-- [ ] **Step 3: Implement the store**
+- [x] **Step 3: Implement the store**
 
 Create `agent/internal/report/store.go`:
 
@@ -432,11 +432,11 @@ func (s *Store) Drain(target, instance string, ack uint64) shared.OrchestratorRe
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report.Store — buffered orchestrator reports with ack-on-next-drain semantics"
@@ -455,7 +455,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report.Store 
 - Consumes: `hooks.SocketFromTmux` / `hooks.MatchTarget` (renamed here), `tmux.ValidatePaneID` (`agent/internal/tmux/control.go:58`), `report.Store` (Task 3), `shared.ReportableStage`.
 - Produces: `report.SessionResolver`, `report.IntakeHandler`, package-local `writeError` (Task 5 reuses it).
 
-- [ ] **Step 1: Export the two `/hook` resolution helpers**
+- [x] **Step 1: Export the two `/hook` resolution helpers**
 
 In `agent/internal/hooks/hooks.go`:
 1. Rename `socketFromTmux` → `SocketFromTmux` (function at line 107; update its doc comment first word and BOTH call sites: `HookHandler` line 68 and the `epochFromTmux` sibling is unrelated — only `socketFromTmux` calls change).
@@ -484,7 +484,7 @@ func MatchTarget(cfg config.Config, socket string) (config.Target, bool) {
 Run: `cd /root/agentmon/agent && go build ./... && go test ./internal/hooks/`
 Expected: PASS (the hooks tests exercise the handler, not the unexported helpers directly).
 
-- [ ] **Step 2: Write the failing intake tests**
+- [x] **Step 2: Write the failing intake tests**
 
 Create `agent/internal/report/intake_test.go`:
 
@@ -598,12 +598,12 @@ func TestIntakeRejectsUnknownSocketOrBadPane(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/`
 Expected: FAIL — `undefined: IntakeHandler`, `undefined: SessionResolver`.
 
-- [ ] **Step 4: Implement the intake**
+- [x] **Step 4: Implement the intake**
 
 Create `agent/internal/report/intake.go`:
 
@@ -702,11 +702,11 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass, then the full gate**
+- [x] **Step 5: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/ ./internal/hooks/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): orchestrator report intake — loopback POST with server-side session stamping"
@@ -724,7 +724,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): orchestrator 
 - Consumes: `report.Store` (Task 3), `config.Config.ResolveTarget` (`agent/internal/config/config.go:60`), `writeError` (Task 4).
 - Produces: `DrainHandler(cfg, st) http.HandlerFunc` — mounted in Task 6, dialed by Task 10.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/internal/report/drain_test.go`:
 
@@ -793,12 +793,12 @@ func TestDrainHandlerErrors(t *testing.T) {
 
 Note: `testCfg` and `rep` come from Tasks 3–4's test files (same package). An empty `?target=` resolves to the FIRST configured target (`ResolveTarget` semantics) — that is why `TestDrainHandlerEmptyIsJSONArrayNotNull` works without a target param.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/`
 Expected: FAIL — `undefined: DrainHandler`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/internal/report/drain.go`:
 
@@ -843,11 +843,11 @@ func DrainHandler(cfg config.Config, st *Store) http.HandlerFunc {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/report/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report drain endpoint — ack-on-next-drain protocol"
@@ -864,7 +864,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): report drain 
 - Consumes: everything from Tasks 2–5.
 - Produces: live routes `GET /orchestrator/reports` (bearer) and `POST /orchestrator/report` (loopback+token).
 
-- [ ] **Step 1: Wire the store and routes**
+- [x] **Step 1: Wire the store and routes**
 
 In `agent/cmd/agentmon-agent/main.go`:
 
@@ -893,18 +893,18 @@ In `agent/cmd/agentmon-agent/main.go`:
 
 (The drain endpoint stays mounted regardless of HookToken — with the intake disabled it simply serves empty batches, and the hub cannot tell a hookless agent from a quiet one, which is fine.)
 
-- [ ] **Step 2: Run the full gate**
+- [x] **Step 2: Run the full gate**
 
 Run the Global Constraints gate command.
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): mount orchestrator report intake + drain routes"
 ```
 
-- [ ] **Step 4: CHECKPOINT 1 — STOP**
+- [x] **Step 4: CHECKPOINT 1 — STOP**
 
 Report: tasks 1–6 committed, full gate green. WAIT for explicit fix instructions or "continue". Do NOT begin Task 7.
 
@@ -920,7 +920,7 @@ Report: tasks 1–6 committed, full gate green. WAIT for explicit fix instructio
 - Consumes: existing `with`/`socketArgs`/`Runner`.
 - Produces: `CreateSession(ctx, run, socket, name, cwd, command string) error` — Task 8's exec target.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `agent/internal/tmux/create_test.go`:
 
@@ -939,14 +939,14 @@ func TestCreateSessionWithCommandArgArray(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Update the existing tests' calls and verify compile failure**
+- [x] **Step 2: Update the existing tests' calls and verify compile failure**
 
 Every existing `CreateSession(` call in `create_test.go` gains a trailing `""` argument (empty command — e.g. `CreateSession(context.Background(), run, "mysock", "proj", "/tmp", "")`). Their `want` argv arrays stay EXACTLY as they are — that is the regression assertion that an empty command changes nothing.
 
 Run: `cd /root/agentmon/agent && go test ./internal/tmux/ -run TestCreateSession`
 Expected: FAIL to build — signature mismatch (and `main.go` will fail the build too; that call site is fixed in Task 8, so use the package-scoped test run above, not the full gate, for this red step).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `agent/internal/tmux/create.go`, change `CreateSession` to:
 
@@ -987,11 +987,11 @@ Update the ONE production call site in `agent/cmd/agentmon-agent/main.go:71-73` 
 	}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/tmux/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): tmux.CreateSession takes an optional session command"
@@ -1010,7 +1010,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): tmux.CreateSe
 - Consumes: `tmux.CreateSession` (Task 7 signature).
 - Produces: `api.SessionCreator = func(ctx, socket, name, cwd, command string) error`; the handler forwards `req.Command`.
 
-- [ ] **Step 1: Replace the rejection test with a forwarding test**
+- [x] **Step 1: Replace the rejection test with a forwarding test**
 
 In `agent/internal/api/sessions_test.go`: DELETE `TestCreateSessionHandlerCommandRejected400` (line 322) entirely and add:
 
@@ -1040,12 +1040,12 @@ func TestCreateSessionHandlerForwardsCommand(t *testing.T) {
 
 Every OTHER fake `SessionCreator` closure in this test file gains the extra `command string` parameter (compiler-guided; behavior unchanged).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/api/ -run TestCreateSessionHandler`
 Expected: FAIL to build (signature) — then, after mechanical fake updates, FAIL at the removed-rejection assertion until Step 3.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `agent/internal/api/sessions.go`:
 
@@ -1080,11 +1080,11 @@ type SessionCreator func(ctx context.Context, socket, name, cwd, command string)
 	}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/api/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): execute CreateSessionRequest.Command — lift the shell-only rejection at the exec boundary"
@@ -1102,7 +1102,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): execute Creat
 - Consumes: `registry.Client.CreateSession` (already marshals the whole `CreateSessionRequest`, `Command` included — no client change).
 - Produces: hub-side New-Session-with-command capability (board uses it in sub-3; the orchestrator's own spawn path never passes through this handler).
 
-- [ ] **Step 1: Replace the rejection test**
+- [x] **Step 1: Replace the rejection test**
 
 In `hubd/internal/api/sessions_test.go`: DELETE `TestServerCreateSessionCommandRejectedIs400` (lines 244–254) and add (it uses the existing `depsWith`, `createReq`, `createListBody` helpers in this file):
 
@@ -1138,23 +1138,23 @@ func TestServerCreateSessionForwardsCommand(t *testing.T) {
 
 (Add `io` to imports if missing.)
 
-- [ ] **Step 2: Run tests to verify the new one fails**
+- [x] **Step 2: Run tests to verify the new one fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestServerCreateSessionForwardsCommand`
 Expected: FAIL — hub returns 400 "custom commands are not supported".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/api/sessions.go`:
 
 1. DELETE lines 100–105 (the "Reject custom commands early" comment + block).
 2. In the handler doc comment (lines 74–80), replace "the agent enforces the cwd allow-list + rejects custom commands (mapped here from its 400)" with "the agent enforces the cwd allow-list and executes an optional command (design doc D13: no new authz permission — session-create + send-keys already grant arbitrary exec on the target)".
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): forward CreateSessionRequest.Command to the agent — New-Session-with-command"
@@ -1172,7 +1172,7 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): forward CreateSe
 - Consumes: `shared.OrchestratorReportBatch` (Task 1).
 - Produces: `DrainReports(ctx, srv, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)` — Task 11's transport. **Note:** hubd compiles but `orchestrator.AgentAPI` still declares the OLD signature until Task 11 — so this task must ALSO update that interface line and the orchestrator call site minimally, or the gate fails. To keep the diff coherent, do it here: see Step 3 item 3.
 
-- [ ] **Step 1: Rewrite the drain tests**
+- [x] **Step 1: Rewrite the drain tests**
 
 Replace `TestDrainReports` and `TestDrainReportsOldAgent404` in `hubd/internal/registry/client_test.go` with:
 
@@ -1210,12 +1210,12 @@ func TestDrainReportsOldAgent404(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ -run TestDrainReports`
 Expected: FAIL to build — signature mismatch.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 1. In `hubd/internal/registry/client.go`, replace `DrainReports` (lines 64–94) with:
 
@@ -1296,11 +1296,11 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 
 and add the field `drainAcks [][2]any` to the `fakeAgents` struct.
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/registry/ ./internal/orchestrator/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): DrainReports speaks the ack-on-next-drain protocol"
@@ -1318,7 +1318,7 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): DrainReports spe
 - Consumes: Task 10's client signature; `registry.Client.KillSession` (exists at `hubd/internal/registry/client.go:169` — the concrete type already satisfies the widened interface).
 - Produces: `AgentAPI.KillSession`, `drainAck`, `Orchestrator.ackState` — Task 12 consumes `KillSession`; `fakeAgents.killed []string` + `killErr error` for tests.
 
-- [ ] **Step 1: Write the failing ack test**
+- [x] **Step 1: Write the failing ack test**
 
 Append to `hubd/internal/orchestrator/orchestrator_test.go` (uses the `newTestOrch` harness at line 110, which seeds project `p1` repo `o/r` on server `h1`):
 
@@ -1346,12 +1346,12 @@ func TestDrainAcksPreviousBatchOnNextPoll(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run TestDrainAcksPreviousBatchOnNextPoll`
 Expected: FAIL — second drain still acks `["", 0]` (Task 10 hardcoded them).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/orchestrator/orchestrator.go`:
 
@@ -1419,11 +1419,11 @@ func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string)
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): orchestrator remembers drain cursors and acks on the next poll; AgentAPI gains KillSession"
@@ -1441,7 +1441,7 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): orchestrator rem
 - Consumes: `AgentAPI.KillSession` (Task 11), `registry.ErrNoSession` (`hubd/internal/registry/client.go` — import `agentmon/hubd/internal/registry`; no import cycle: registry only imports db/shared/authn-level packages).
 - Produces: `killEpicSession(ctx, e, phase)` — best-effort session retirement (design doc D12).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `hubd/internal/orchestrator/orchestrator_test.go`:
 
@@ -1507,12 +1507,12 @@ func TestKillFailureDoesNotBlockRetry(t *testing.T) {
 
 (Add `errors` to the test imports if missing. If `ValidTransition(starting, canceled)` or `(starting, stalled)` is not permitted by the shipped state machine, STOP per rule 7 and report — do not invent a different path.)
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/ -run 'TestCancelKills|TestRetryKills|TestKillFailure'`
 Expected: FAIL — `ag.killed` is empty (nothing calls KillSession yet).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/orchestrator/orchestrator.go`:
 
@@ -1557,17 +1557,17 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 	o.killEpicSession(ctx, e, "retry")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/orchestrator/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): Cancel/Retry retire the epic's runner session (best-effort KillSession)"
 ```
 
-- [ ] **Step 6: CHECKPOINT 2 — STOP**
+- [x] **Step 6: CHECKPOINT 2 — STOP**
 
 Report: tasks 7–12 committed, full gate green. WAIT for explicit fix instructions or an explicit "continue". Do NOT begin Task 13.
 
@@ -1584,7 +1584,7 @@ Report: tasks 7–12 committed, full gate green. WAIT for explicit fix instructi
 - Consumes: `config.Load`, `shared.ReportableStage`, the intake wire shape (Task 4).
 - Produces: `reportMain(args, stdout) error`; helpers `postReport(cfgPath string, payload map[string]any, dryRun bool) (string, error)`, `repoFromGit(dir string) (string, error)`, `normalizeRepoURL(u string) (string, error)` — Task 16 reuses `postReport` and `repoFromGit`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/cmd/agentmon-agent/report_cli_test.go`:
 
@@ -1606,16 +1606,21 @@ import (
 
 // reportTestServer returns an httptest server and an agent.toml whose listen
 // port points at it (mirrors the hook-test pattern: the CLI derives the intake
-// URL from the config's listen port).
+// URL from the config's listen port). config.Load resolves hub_token and
+// directive_key unconditionally and every secret must be an env:/file: ref
+// (bare literals are rejected) — mirror writeAgentConfig in hooks_cli_test.go.
 func reportTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, string) {
 	t.Helper()
+	t.Setenv("RPT_HUB", "h")
+	t.Setenv("RPT_DK", "d")
+	t.Setenv("RPT_HOOK", "htok")
 	srv := httptest.NewServer(handler)
 	_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(t.TempDir(), "agent.toml")
-	cfg := fmt.Sprintf("listen = \"127.0.0.1:%s\"\nserver_id = \"t\"\nhook_token = \"htok\"\n", port)
+	cfg := fmt.Sprintf("listen = \"127.0.0.1:%s\"\nserver_id = \"t\"\nhub_token = \"env:RPT_HUB\"\ndirective_key = \"env:RPT_DK\"\nhook_token = \"env:RPT_HOOK\"\n", port)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1708,12 +1713,12 @@ func TestNormalizeRepoURL(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/ -run 'TestReport|TestNormalize'`
 Expected: FAIL to build — `undefined: reportMain`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/cmd/agentmon-agent/report_cli.go`:
 
@@ -1860,11 +1865,11 @@ In `agent/cmd/agentmon-agent/main.go`, add to the subcommand switch (after the `
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon report subcommand — posts runner stage reports to the loopback intake"
@@ -1882,7 +1887,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon repo
 - Consumes: stdlib only.
 - Produces: `epicfile.Epic`, `Parse(path) (Epic, error)`, `StampIssue(path, n) error` — Task 15's file layer.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/internal/epicfile/epicfile_test.go`:
 
@@ -1980,12 +1985,12 @@ func TestStampIssueInsertsAndReplaces(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./internal/epicfile/`
 Expected: FAIL to build — package does not exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/internal/epicfile/epicfile.go`:
 
@@ -2113,11 +2118,11 @@ func StampIssue(path string, n int) error {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/epicfile/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): epicfile — strict epic front-matter parser with issue stamp-back"
@@ -2137,7 +2142,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): epicfile — 
 - Produces: `cmdRunner`/`execRunner` (Task 16 reuses), `importEpicsMain`, `importEpics`, `resolveRef`.
 - Emits issue bodies whose dependency lines match the hub's parser: `Blocked-by: #a, #b` (`hubd/internal/orchestrator/sync.go:16` regex).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/cmd/agentmon-agent/import_epics_cli_test.go`:
 
@@ -2249,6 +2254,24 @@ func TestImportDryRunCallsNothing(t *testing.T) {
 	if len(calls) != 0 {
 		t.Fatalf("dry-run must not call gh: %v", calls)
 	}
+	// Dry-run still previews the dependency pass; unstamped siblings resolve
+	// to their symbolic basename.
+	if !strings.Contains(out.String(), "Blocked-by: <epic-01-auth>") {
+		t.Fatalf("dry-run must preview the planned dependency edit:\n%s", out.String())
+	}
+}
+
+func TestImportDryRunStillValidatesRefs(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ntitle: X\nblocked-by: epic-99\n---\nbody"
+	if err := os.WriteFile(filepath.Join(dir, "epic-01-x.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []ghCall
+	var out bytes.Buffer
+	if err := importEpics([]string{"--dir", dir, "--repo", "o/r", "--dry-run"}, &out, fakeGH(t, &calls)); err == nil {
+		t.Fatal("dry-run must reject an unresolvable blocked-by ref")
+	}
 }
 
 func TestImportUnresolvableRefErrors(t *testing.T) {
@@ -2265,12 +2288,12 @@ func TestImportUnresolvableRefErrors(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/ -run TestImport`
 Expected: FAIL to build — `undefined: importEpics`, `undefined: cmdRunner`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/cmd/agentmon-agent/import_epics_cli.go`:
 
@@ -2383,55 +2406,67 @@ func importEpics(args []string, stdout io.Writer, run cmdRunner) error {
 		fmt.Fprintf(stdout, "+ %s → #%d\n", filepath.Base(e.Path), e.Issue)
 	}
 	// Phase 2: resolve blocked-by refs and write the dependency lines the hub
-	// parses (ParseBlockedBy: "Blocked-by: #a, #b").
+	// parses (ParseBlockedBy: "Blocked-by: #a, #b"). Dry-run MUST still walk
+	// this phase for unstamped epics (Issue==0 because phase 1 only printed):
+	// its whole point is validating refs before a real run creates issues.
 	for _, e := range epics {
-		if len(e.BlockedBy) == 0 || e.Issue == 0 {
+		if len(e.BlockedBy) == 0 || (e.Issue == 0 && !*dryRun) {
 			continue
 		}
-		nums := make([]string, 0, len(e.BlockedBy))
+		refs := make([]string, 0, len(e.BlockedBy))
 		for _, ref := range e.BlockedBy {
-			n, err := resolveRef(ref, epics)
+			tok, err := resolveRef(ref, epics, *dryRun)
 			if err != nil {
 				return fmt.Errorf("%s: %w", e.Path, err)
 			}
-			nums = append(nums, "#"+strconv.Itoa(n))
+			refs = append(refs, tok)
 		}
-		body := e.Body + "\n\nBlocked-by: " + strings.Join(nums, ", ")
 		if *dryRun {
-			fmt.Fprintf(stdout, "[dry-run] gh issue edit %d --body … (Blocked-by: %s)\n", e.Issue, strings.Join(nums, ", "))
+			target := "#" + strconv.Itoa(e.Issue)
+			if e.Issue == 0 {
+				target = "<" + strings.TrimSuffix(filepath.Base(e.Path), ".md") + ">"
+			}
+			fmt.Fprintf(stdout, "[dry-run] gh issue edit %s --body … (Blocked-by: %s)\n", target, strings.Join(refs, ", "))
 			continue
 		}
+		body := e.Body + "\n\nBlocked-by: " + strings.Join(refs, ", ")
 		if _, err := run(".", "gh", "issue", "edit", strconv.Itoa(e.Issue), "--repo", r, "--body", body); err != nil {
 			return fmt.Errorf("edit #%d: %w", e.Issue, err)
 		}
-		fmt.Fprintf(stdout, "~ #%d Blocked-by: %s\n", e.Issue, strings.Join(nums, ", "))
+		fmt.Fprintf(stdout, "~ #%d Blocked-by: %s\n", e.Issue, strings.Join(refs, ", "))
 	}
 	return nil
 }
 
-// resolveRef maps a blocked-by ref to an issue number: "#12"/"12" directly;
-// "epic-01" by unique basename-prefix match against the sibling files.
-func resolveRef(ref string, epics []*epicfile.Epic) (int, error) {
+// resolveRef maps a blocked-by ref to its "#N" token: "#12"/"12" directly;
+// "epic-01" by unique basename-prefix match against the sibling files. Missing
+// and ambiguous refs are ALWAYS errors. An unstamped sibling is an error on a
+// real run (phase 1 stamps before phase 2 reaches it) but legal in dry-run,
+// where creates were only printed: it resolves to a symbolic "<basename>".
+func resolveRef(ref string, epics []*epicfile.Epic, dryRun bool) (string, error) {
 	if n, err := strconv.Atoi(strings.TrimPrefix(ref, "#")); err == nil && n > 0 {
-		return n, nil
+		return "#" + strconv.Itoa(n), nil
 	}
 	var match *epicfile.Epic
 	for _, e := range epics {
 		base := strings.TrimSuffix(filepath.Base(e.Path), ".md")
 		if base == ref || strings.HasPrefix(base, ref+"-") {
 			if match != nil {
-				return 0, fmt.Errorf("blocked-by ref %q is ambiguous", ref)
+				return "", fmt.Errorf("blocked-by ref %q is ambiguous", ref)
 			}
 			match = e
 		}
 	}
 	if match == nil {
-		return 0, fmt.Errorf("blocked-by ref %q matches no epic file", ref)
+		return "", fmt.Errorf("blocked-by ref %q matches no epic file", ref)
 	}
 	if match.Issue == 0 {
-		return 0, fmt.Errorf("blocked-by ref %q resolves to unstamped %s", ref, filepath.Base(match.Path))
+		if dryRun {
+			return "<" + strings.TrimSuffix(filepath.Base(match.Path), ".md") + ">", nil
+		}
+		return "", fmt.Errorf("blocked-by ref %q resolves to unstamped %s", ref, filepath.Base(match.Path))
 	}
-	return match.Issue, nil
+	return "#" + strconv.Itoa(match.Issue), nil
 }
 ```
 
@@ -2445,11 +2480,11 @@ In `main.go`, add the switch case:
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon import-epics — idempotent epic-file → GitHub issue import with stamp-back"
@@ -2468,7 +2503,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon impo
 - Consumes: `cmdRunner`/`execRunner` (Task 15), `postReport`/`repoFromGit` (Task 13), `github.com/BurntSushi/toml` (existing agent dep).
 - Produces: `doctorRun(args, stdout, run, look, home) error` — spec §5/§12 host validation.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `agent/cmd/agentmon-agent/doctor_cli_test.go`:
 
@@ -2600,14 +2635,29 @@ func TestDoctorCodexConfigChecked(t *testing.T) {
 		t.Fatalf("err=%v out:\n%s", err, out.String())
 	}
 }
+
+func TestDoctorCodexReadOnlySandboxFails(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	// writable_roots and network_access are valid — only the active sandbox
+	// is explicitly read-only, which cannot commit or run test gates.
+	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"),
+		[]byte("sandbox_mode = \"read-only\"\n[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"\"]\nnetwork_access = true\n"), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err == nil || !strings.Contains(out.String(), "✗ codex sandbox config") {
+		t.Fatalf("err=%v out:\n%s", err, out.String())
+	}
+}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/ -run TestDoctor`
 Expected: FAIL to build — `undefined: doctorRun`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/cmd/agentmon-agent/doctor_cli.go`:
 
@@ -2731,6 +2781,7 @@ func statFile(p string) error {
 // codexConfig is the subset of ~/.codex/config.toml the doctor validates
 // (spec §12: without these, runner sessions cannot commit or pass test gates).
 type codexConfig struct {
+	SandboxMode           string `toml:"sandbox_mode"`
 	SandboxWorkspaceWrite struct {
 		WritableRoots []string `toml:"writable_roots"`
 		NetworkAccess bool     `toml:"network_access"`
@@ -2741,6 +2792,12 @@ func checkCodexConfig(path string) error {
 	var c codexConfig
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
+	}
+	// Unset defaults to workspace-write for interactive sessions (the kickoff
+	// path). An explicit read-only sandbox passes the checks below yet cannot
+	// commit or run test gates — the exact misconfig the doctor exists to catch.
+	if c.SandboxMode != "" && c.SandboxMode != "workspace-write" && c.SandboxMode != "danger-full-access" {
+		return fmt.Errorf("%s: sandbox_mode %q cannot write the workspace (runner sessions must commit)", path, c.SandboxMode)
 	}
 	if !c.SandboxWorkspaceWrite.NetworkAccess {
 		return fmt.Errorf("%s: [sandbox_workspace_write] network_access must be true (httptest loopback binds)", path)
@@ -2771,17 +2828,17 @@ In `main.go`, add the switch case:
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): agentmon doctor — validates gh auth, clone, reporter, providers, codex sandbox"
 ```
 
-- [ ] **Step 6: CHECKPOINT 3 — STOP**
+- [x] **Step 6: CHECKPOINT 3 — STOP**
 
 Report: tasks 13–16 committed, full gate green. WAIT for explicit fix instructions or an explicit "continue". Do NOT begin Task 17.
 
@@ -2800,7 +2857,7 @@ Report: tasks 13–16 committed, full gate green. WAIT for explicit fix instruct
 - Consumes: the three authored skill files; stdlib `embed`.
 - Produces: `runnerfiles.InstallSkills(home) ([]string, error)`, `installSkillsMain` — Task 18's installer target.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `agent/internal/runnerfiles/runnerfiles_test.go`:
 
@@ -2849,12 +2906,12 @@ func TestInstallSkillsRequiresHome(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/agent && go test ./internal/runnerfiles/`
 Expected: FAIL to build — package `runnerfiles.go` does not exist (only `files/` do).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `agent/internal/runnerfiles/runnerfiles.go`:
 
@@ -2962,11 +3019,11 @@ In `main.go`, add the switch case:
 			return
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/agent && go test ./internal/runnerfiles/ ./cmd/agentmon-agent/` → PASS, then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add agent/ && git commit -m "feat(agent): embed runner skills in the binary + agentmon install-skills"
@@ -2984,7 +3041,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): embed runner 
 - Consumes: `agentmon-agent install-skills --home` (Task 17).
 - Produces: `/usr/local/bin/agentmon` symlink + per-user skills on every install AND update run.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `hubd/internal/api/install_test.go` (mirrors `TestInstallScriptDefaultsToDedicatedSocket` at line 51):
 
@@ -3012,12 +3069,12 @@ func TestInstallScriptInstallsRunnerFiles(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestInstallScriptInstallsRunnerFiles`
 Expected: FAIL — strings missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/api/install.sh.tmpl`:
 
@@ -3059,11 +3116,11 @@ install_runner_files
   echo "[dry-run] would install the /usr/local/bin/agentmon symlink + runner skills for '$RUN_USER'"
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/` → PASS (including `TestInstallScriptBashSyntax`, which shellchecks the rendered script), then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): installer distributes the agentmon CLI symlink + runner skills on install and update"
@@ -3074,12 +3131,12 @@ cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): installer distri
 ### Task 19: docs — config reference + README
 
 **Files:**
-- Modify: `deploy/agent.example.toml` (append)
+- Modify: `deploy/agent.example.toml` (insert BEFORE the `[[targets]]` table — see Step 1)
 - Modify: `README.md` (Agent config reference section, line ~249)
 
-- [ ] **Step 1: Document the runner surfaces**
+- [x] **Step 1: Document the runner surfaces**
 
-Append to `deploy/agent.example.toml`:
+Insert into `deploy/agent.example.toml` immediately BEFORE the `[[targets]]` line, alongside the other top-level keys (hub_token, directive_key). Do NOT append at the end of the file: the file ends inside the `[[targets]]` table, so an appended example a user later uncomments would define `targets[].hook_token` — a key config ignores — and the report intake would stay silently disabled:
 
 ```toml
 # hook_token (written by the installer when hooks are provisioned) also gates
@@ -3103,12 +3160,12 @@ agentmon import-epics --dir docs/plan            # epic files → GitHub issues 
 ```
 ````
 
-- [ ] **Step 2: Run the full gate**
+- [x] **Step 2: Run the full gate**
 
 Run the Global Constraints gate command.
 Expected: PASS (docs only — the gate guards against accidental code drift).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /root/agentmon && git add deploy/ README.md && git commit -m "docs: runner CLI + hook_token reporter note in config reference"

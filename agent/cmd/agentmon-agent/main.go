@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"agentmon/agent/internal/config"
 	"agentmon/agent/internal/directive"
 	"agentmon/agent/internal/hooks"
+	"agentmon/agent/internal/report"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
 )
@@ -34,16 +36,20 @@ func newAgentServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
+// subcommands dispatches every CLI verb; all share func(args, stdout) error.
+var subcommands = map[string]func([]string, io.Writer) error{
+	"hooks":          hooksMain,
+	"hook-test":      hookTestMain,
+	"report":         reportMain,
+	"import-epics":   importEpicsMain,
+	"doctor":         doctorMain,
+	"install-skills": installSkillsMain,
+}
+
 func main() {
 	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "hooks":
-			if err := hooksMain(os.Args[2:], os.Stdout); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "hook-test":
-			if err := hookTestMain(os.Args[2:], os.Stdout); err != nil {
+		if run, ok := subcommands[os.Args[1]]; ok {
+			if err := run(os.Args[2:], os.Stdout); err != nil {
 				log.Fatal(err)
 			}
 			return
@@ -68,8 +74,8 @@ func main() {
 		return tmux.DiscoverDetailed(ctx, tmux.ExecRunner, opts)
 	}
 
-	createSession := func(ctx context.Context, socket, name, cwd string) error {
-		return tmux.CreateSession(ctx, tmux.ExecRunner, socket, name, cwd)
+	createSession := func(ctx context.Context, socket, name, cwd, command string) error {
+		return tmux.CreateSession(ctx, tmux.ExecRunner, socket, name, cwd, command)
 	}
 	renameSession := func(ctx context.Context, socket, from, to string) error {
 		return tmux.RenameSession(ctx, tmux.ExecRunner, socket, from, to)
@@ -79,6 +85,10 @@ func main() {
 	}
 
 	machine := state.New(nil)
+	reportStore := report.NewStore(report.NewInstanceID(), report.DefaultCap)
+	resolveSession := func(ctx context.Context, socket, pane string) (string, error) {
+		return tmux.SessionNameForPane(ctx, tmux.ExecRunner, socket, pane)
+	}
 
 	_, tmuxErr := exec.LookPath("tmux")
 	mux := http.NewServeMux()
@@ -88,6 +98,7 @@ func main() {
 	mux.Handle("POST /sessions/rename", api.RequireBearer(cfg.HubToken, api.RenameSessionHandler(cfg, renameSession)))
 	mux.Handle("POST /sessions/kill", api.RequireBearer(cfg.HubToken, api.KillSessionHandler(cfg, killSession)))
 	mux.Handle("GET /state", api.RequireBearer(cfg.HubToken, api.StateHandler(cfg, machine)))
+	mux.Handle("GET /orchestrator/reports", api.RequireBearer(cfg.HubToken, report.DrainHandler(cfg, reportStore)))
 
 	paneIO := &api.PaneIO{
 		Cfg:      cfg,
@@ -109,6 +120,8 @@ func main() {
 		}
 		mux.Handle("POST /hook", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, hooks.HookHandler(cfg, machine, nil))))
 		log.Printf("hook intake enabled at POST /hook")
+		mux.Handle("POST /orchestrator/report", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, report.IntakeHandler(cfg, reportStore, resolveSession, nil))))
+		log.Printf("orchestrator report intake enabled at POST /orchestrator/report")
 	}
 
 	log.Printf("agentmon-agent %s listening on %s (server %s)", version, cfg.Listen, cfg.ServerID)

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"agentmon/hubd/internal/db"
@@ -61,33 +63,47 @@ func (c *Client) Sessions(ctx context.Context, srv db.Server, target string) ([]
 	return out, nil
 }
 
-// DrainReports pulls-and-clears buffered orchestrator reports from an agent.
-// 404 means the agent predates the reporter endpoint (sub-project 2): treated
-// as "no reports", so mixed-fleet rollout is safe.
-func (c *Client) DrainReports(ctx context.Context, srv db.Server, target string) ([]shared.OrchestratorReport, error) {
-	u := srv.URL + "/orchestrator/reports?drain=1"
+// DrainReports pulls buffered orchestrator reports from an agent using the
+// ack-on-next-drain protocol (design doc §4): instance+ack acknowledge — and
+// delete agent-side — the batch received on the PREVIOUS call; the response
+// carries everything still buffered for the target. 404 means the agent
+// predates the reporter endpoint (sub-project 2): treated as an empty batch,
+// so mixed-fleet rollout is safe.
+func (c *Client) DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error) {
+	u := srv.URL + "/orchestrator/reports?ack=" + strconv.FormatUint(ack, 10)
+	if instance != "" {
+		u += "&instance=" + url.QueryEscape(instance)
+	}
 	if target != "" {
 		u += "&target=" + url.QueryEscape(target)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, err
+		return shared.OrchestratorReportBatch{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+srv.Bearer)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("dial agent %s: %w", srv.ID, err)
+		return shared.OrchestratorReportBatch{}, fmt.Errorf("dial agent %s: %w", srv.ID, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
+		// An agent that predates the endpoint 404s generically — tolerated as
+		// an empty batch (mixed-fleet rollout). A NEW agent also 404s a target
+		// label it doesn't know; that misconfig must surface, not drain as
+		// permanent silence.
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if bytes.Contains(b, []byte("unknown target")) {
+			return shared.OrchestratorReportBatch{}, fmt.Errorf("agent %s reports: unknown target %q — check the project's target label", srv.ID, target)
+		}
+		return shared.OrchestratorReportBatch{}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("agent %s reports returned %d", srv.ID, resp.StatusCode)
+		return shared.OrchestratorReportBatch{}, fmt.Errorf("agent %s reports returned %d", srv.ID, resp.StatusCode)
 	}
-	var out []shared.OrchestratorReport
+	var out shared.OrchestratorReportBatch
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("agent %s reports decode: %w", srv.ID, err)
+		return shared.OrchestratorReportBatch{}, fmt.Errorf("agent %s reports decode: %w", srv.ID, err)
 	}
 	return out, nil
 }

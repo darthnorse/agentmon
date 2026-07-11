@@ -9,8 +9,10 @@ import (
 	"testing"
 )
 
-// writeAgentConfig writes a minimal valid agent.toml (env: secret refs) and returns its path.
-func writeAgentConfig(t *testing.T) string {
+// writeAgentConfig writes a minimal valid agent.toml (env: secret refs — the
+// authoritative config.Load rejects bare literals) listening on listen, and
+// returns its path. Shared with the report-CLI tests.
+func writeAgentConfig(t *testing.T, listen string) string {
 	t.Helper()
 	t.Setenv("M6_HUB", "h")
 	t.Setenv("M6_DK", "d")
@@ -18,7 +20,7 @@ func writeAgentConfig(t *testing.T) string {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "agent.toml")
 	if err := os.WriteFile(p, []byte(`
-listen = "10.0.0.5:8377"
+listen = "`+listen+`"
 server_id = "s"
 hub_token = "env:M6_HUB"
 directive_key = "env:M6_DK"
@@ -33,7 +35,7 @@ hook_token = "env:M6_HOOK"
 }
 
 func TestHooksMainPrint(t *testing.T) {
-	cfg := writeAgentConfig(t)
+	cfg := writeAgentConfig(t, "10.0.0.5:8377")
 	var out bytes.Buffer
 	if err := hooksMain([]string{"print", "--config", cfg}, &out); err != nil {
 		t.Fatal(err)
@@ -51,7 +53,7 @@ func TestHooksMainPrint(t *testing.T) {
 }
 
 func TestHooksMainInstallUninstallRoundTrip(t *testing.T) {
-	cfg := writeAgentConfig(t)
+	cfg := writeAgentConfig(t, "10.0.0.5:8377")
 	settings := filepath.Join(t.TempDir(), "settings.json")
 	var out bytes.Buffer
 	if err := hooksMain([]string{"install", "--config", cfg, "--settings", settings}, &out); err != nil {
@@ -71,7 +73,7 @@ func TestHooksMainInstallUninstallRoundTrip(t *testing.T) {
 }
 
 func TestHooksMainCodexInstallUninstallPreservesUserHooks(t *testing.T) {
-	cfg := writeAgentConfig(t)
+	cfg := writeAgentConfig(t, "10.0.0.5:8377")
 	settings := filepath.Join(t.TempDir(), "hooks.json")
 	userConfig := `{
   "hooks": {
@@ -137,7 +139,7 @@ func TestHooksMainInvalidProviderDoesNotCreateSettings(t *testing.T) {
 }
 
 func TestHooksMainInstallRequiresSettings(t *testing.T) {
-	cfg := writeAgentConfig(t)
+	cfg := writeAgentConfig(t, "10.0.0.5:8377")
 	if err := hooksMain([]string{"install", "--config", cfg}, new(bytes.Buffer)); err == nil {
 		t.Fatal("install without --settings must error")
 	}

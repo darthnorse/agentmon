@@ -76,7 +76,9 @@ const maxCreateSessionBody = 8 << 10 // 8 KiB
 // asks the agent to create the tmux session, then re-lists and returns the full
 // Session (with its pane id) so the web can open the new terminal atomically.
 // CSRF is enforced upstream by RequireAuth on this mutating method; the agent
-// enforces the cwd allow-list + rejects custom commands (mapped here from its 400).
+// enforces the cwd allow-list and executes an optional command (design doc D13:
+// no new authz permission — session-create + send-keys already grant arbitrary
+// exec on the target).
 func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -95,12 +97,6 @@ func (d Deps) ServerCreateSessionHandler() http.HandlerFunc {
 		// exec boundary (defense in depth).
 		if err := shared.ValidateSessionName(req.Name); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Reject custom commands early (the agent would too) so the user gets the
-		// specific reason without a round-trip — v1 sessions are shell-only.
-		if req.Command != "" {
-			writeJSONError(w, http.StatusBadRequest, "custom commands are not supported")
 			return
 		}
 		srv, found, err := d.Reg.Get(r.Context(), id)

@@ -37,9 +37,16 @@ exist. Sub-2 is everything runner-side.
   reject duplicates (validated in sub-1). Chosen over separate peek+ack (second
   endpoint/round-trip, same crash semantics) and over keeping the destructive
   drain (the dossier-flagged loss window: an escalation note vanishing when the
-  hub crashes between agent-clear and apply).
+  hub crashes between agent-clear and apply). One residual, accepted window
+  narrows the redelivery guarantee: a report deferred to the hub's in-memory
+  pending queue on a transient DB error is still acked on the next drain, so a
+  hub crash before the next tick's retry loses it — GitHub reconcile covers
+  the gap.
 - **D2 — No run tokens.** Provenance = agent-side server-stamped session names
-  (the CLI cannot forge its session) + the hub's assigned-session check
+  (the stamp binds a report to the session of the pane its headers name — it
+  authenticates pane→session, not caller→pane, so a local token-holder naming
+  another pane is inside the §12 accepted threat class) + the hub's
+  assigned-session check
   (`orchestrator.go:307`) + attempt-suffixed session names (`-rN`). Residual
   risk on single-user trusted hosts ≈ nil. Revisit only if PR authorship opens
   to untrusted runners (same posture as the gate's "signed attestation is
@@ -262,8 +269,16 @@ must encode (dossier §§1–4):
    `CLAUDE.md`/`AGENTS.md`/docs in the same branch; push; `gh pr create` with
    the body ending in the **v1 verdict block populated from the final review
    only** (D8), `reviews:` satisfying the project's `required_reviews`;
-   `agentmon report --stage pr_open --pr <num>`; exit (command ends → session
-   ends → normal).
+   `agentmon report --stage pr_open --pr <num>`; then END TURN. (Authoring
+   correction to the parent spec's "exit": the kickoff runs the provider CLI
+   interactively, so the session IDLES after the final turn instead of dying
+   — deliberately kept, because an attachable runner session is the product's
+   whole point: humans join escalated/finished sessions to discuss or steer.
+   pr_open has no stall timeout, and Cancel/Retry retire idle sessions.
+   Verdict `reviews` convention: list each lens that ran PLUS the pseudo-entry
+   `cross-model` when at least one reviewing model differs from the authoring
+   model — projects should set `required_reviews: [cross-model]` so the
+   requirement stays provider-agnostic for both runner types.)
 7. **`pipeline:light`** (D10): skip plan artifact + checkpoints; implement
    directly; single pre-PR multi-review; full verdict block; all reporting/
    escalation/worktree/learnings rules unchanged.
@@ -271,13 +286,21 @@ must encode (dossier §§1–4):
 ## 9. Codex playbook — `agent/internal/runnerfiles/files/codex/epic-pipeline.md`
 
 Installed to `~/.codex/prompts/epic-pipeline.md`; invoked by the shipped
-kickoff `codex -a never "/epic-pipeline N"`. Same pipeline with two provider
+kickoff `codex -a never "/epic-pipeline N"` (custom-prompt argument passing
+empirically verified on codex-cli 0.144.1). Same pipeline with two provider
 inversions: subagent-heavy steps become `codex exec` subprocesses (Codex has
 no subagent primitive), and checkpoint/final reviews invert to **headless
-`claude` as the cross-provider reviewer** (`claude -p` driving `/multi-review`
-in the worktree, report written to a file Codex reads). The exact invocation
-form is UNPROVEN (dossier §7) — Claude hand-tests it on a real diff while
-authoring the playbook, before the text lands.
+`claude` as the cross-provider reviewer**. The invocation was VALIDATED live
+on 2026-07-10 (toy repo, planted index-out-of-range + contract bug):
+
+```
+IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md
+```
+
+found both bugs, applied 3 fixes with a regression test, committed them
+(`fix(review): …`), wrote the consolidated report to stdout, exit 0. The
+reviewer commits fixes on the runner's branch; the playbook has Codex re-run
+the full suite afterward and read the new commits.
 
 ## 10. Skill: `plan-epics` + import script
 
@@ -325,9 +348,10 @@ distributes skill updates with agent updates — the skills ride the binary.
   design; the hub validates repo routing, the server+target trust boundary,
   the assigned-session check, and guarded transitions — the report can
   request, never command.
-- Server-side session stamping means a report cannot claim a session its pane
-  does not belong to; combined with attempt-suffixed names this is the D2
-  provenance story.
+- Server-side session stamping means a report cannot claim a session that the
+  pane named in its headers does not belong to (the caller→pane binding itself
+  is not verified — that attacker is the accepted local-process class above);
+  combined with attempt-suffixed names this is the D2 provenance story.
 - The exec surface (create-with-command) is hub-bearer-gated like every agent
   API; D13 documents why no new permission is needed.
 - Drain is hub-bearer-gated; the instance/cursor protocol cannot be driven by

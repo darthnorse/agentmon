@@ -129,11 +129,18 @@ install_hooks_into() {
   echo "✓ AgentMon $provider hooks installed into $settings — $restart_note."
 }
 
-# provider_detected checks the run user's config directory and PATH. Running the
-# command lookup as RUN_USER avoids mistaking root's PATH for the monitored user's.
+# provider_detected checks provider-AUTHORED config files and the run user's
+# PATH. A bare ~/.claude or ~/.codex directory proves NOTHING: install-skills
+# creates both on every host, so directory existence stopped implying the
+# provider is installed. Running the command lookup as RUN_USER avoids
+# mistaking root's PATH for the monitored user's.
 provider_detected() {
   local home_dir="$1" provider="$2"
-  [ -d "$home_dir/.$provider" ] && return 0
+  case "$provider" in
+    claude) [ -f "$home_dir/.claude/settings.json" ] || [ -f "$home_dir/.claude.json" ] ;;
+    codex)  [ -f "$home_dir/.codex/config.toml" ] || [ -f "$home_dir/.codex/auth.json" ] ;;
+    *)      false ;;
+  esac && return 0
   command -v runuser >/dev/null 2>&1 || return 1
   runuser -u "$RUN_USER" -- sh -lc "command -v $provider" </dev/null >/dev/null 2>&1
 }
@@ -144,14 +151,41 @@ provider_has_hooks() {
   grep -q 'agentmon-hook' "$settings" 2>/dev/null
 }
 
+# run_user_home resolves $RUN_USER's home. The `|| true` is load-bearing:
+# under set -euo pipefail a missing passwd entry (user typo, NSS outage)
+# would otherwise abort the whole installer at the assignment, never
+# reaching the fallback.
+run_user_home() {
+  local h
+  h="$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6 || true)"
+  [ -n "$h" ] || h="${HOME:-/root}"
+  printf '%s' "$h"
+}
+
+# Runner CLI + skills: the `agentmon` symlink gives runner sessions the
+# report/doctor/import-epics CLI; install-skills writes the binary-embedded
+# epic-pipeline / plan-epics prompts into the run user's provider dirs.
+# Idempotent; runs on update too — that is how skill edits reach the fleet.
+# Skills go to the single enrolled run user; hand-edited multi-target configs
+# with extra os_users run `agentmon install-skills` for those users manually.
+install_runner_files() {
+  ln -sfnT /usr/local/bin/agentmon-agent /usr/local/bin/agentmon
+  local home_dir
+  home_dir="$(run_user_home)"
+  if runuser -u "$RUN_USER" -- /usr/local/bin/agentmon-agent install-skills --home "$home_dir" >/dev/null; then
+    echo "✓ runner skills installed for '$RUN_USER' (epic-pipeline, plan-epics)."
+  else
+    echo "warning: runner skill install failed — re-run: runuser -u $RUN_USER -- agentmon-agent install-skills" >&2
+  fi
+}
+
 # maybe_install_hooks selects explicit providers or auto-detects Claude Code and
 # Codex. Auto mode offers every detected provider that is not already configured,
 # prompts once, provisions one shared token, then performs idempotent per-user merges.
 maybe_install_hooks() {
   [ "$HOOKS_MODE" = "none" ] && return 0
   local home_dir install_claude="0" install_codex="0" token_ready="0" label rerun
-  home_dir="$(getent passwd "$RUN_USER" 2>/dev/null | cut -d: -f6)"
-  [ -n "$home_dir" ] || home_dir="${HOME:-/root}"
+  home_dir="$(run_user_home)"
   hook_token_ready && token_ready="1"
 
   case "$HOOKS_MODE" in
@@ -257,6 +291,7 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "[dry-run] would enroll at $HUB_URL/api/v1/enroll as '$HOST'"
     echo "[dry-run] would write /etc/agentmon/agent.toml + secrets, install + start the systemd unit"
   fi
+  echo "[dry-run] would install the /usr/local/bin/agentmon symlink + runner skills for '$RUN_USER'"
   case "$HOOKS_MODE" in
     claude) echo "[dry-run] would provision a hook token + install Claude Code hooks for '$RUN_USER'" ;;
     codex)  echo "[dry-run] would provision a hook token + install Codex hooks for '$RUN_USER'" ;;
@@ -288,6 +323,17 @@ ensure_killmode
 
 # ── Update path: existing install → swap the binary in place, keep everything else.
 if [ "$INSTALLED" = "1" ]; then
+  # Serve the ENROLLED user, not the invoker: fleet updates often run from a
+  # plain root shell (no SUDO_USER), which would misdirect the skills and any
+  # hook re-runs to /root. The fresh install recorded the run user as the
+  # target's os_user; prefer it unless --user explicitly overrides.
+  if [ -z "$USER_OVERRIDE" ]; then
+    cfg_user="$(sed -n 's/^[[:space:]]*os_user[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' /etc/agentmon/agent.toml 2>/dev/null | head -n1 || true)"
+    if [ -n "$cfg_user" ] && [ "$cfg_user" != "$RUN_USER" ]; then
+      echo "using enrolled run user '$cfg_user' from agent.toml (invoked as '$RUN_USER'; pass --user to override)"
+      RUN_USER="$cfg_user"
+    fi
+  fi
   if [ -x /usr/local/bin/agentmon-agent ] && \
      [ "$(sha256sum /usr/local/bin/agentmon-agent | cut -d' ' -f1)" = "$SHA256_EXPECT" ]; then
     # Binary is current. Re-running the installer is also the documented heal path,
@@ -308,6 +354,7 @@ if [ "$INSTALLED" = "1" ]; then
     smoke_test
     echo "✓ $HOST updated and restarted."
   fi
+  install_runner_files
   maybe_install_hooks # re-run with --hooks to add hooks to an existing agent
   exit 0
 fi
@@ -369,6 +416,7 @@ systemctl daemon-reload
 systemctl enable --now agentmon-agent
 
 smoke_test
+install_runner_files
 maybe_install_hooks
 
 echo "✓ $HOST enrolled — pending approval. Approve it in the AgentMon web UI (or 'agentmon-hubd server approve $HOST' on the hub)."
