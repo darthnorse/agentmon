@@ -68,3 +68,22 @@ func TestKickoffAndProvider(t *testing.T) {
 		t.Fatal("project default")
 	}
 }
+
+func TestCapacityCountsSessionsNotParkedStages(t *testing.T) {
+	// An epic waiting in pr_open/merging has no live runner (§7.7) and must
+	// not block new spawns at max_parallel=1.
+	epics := []db.Epic{
+		qe(10, "pr_open", "open"),
+		qe(11, "merging", "open"),
+		qe(12, "queued", "open"),
+	}
+	got := ReadyEpics(epics, 1, false)
+	if len(got) != 1 || got[0].IssueNumber != 12 {
+		t.Fatalf("pr_open/merging must not consume capacity, got %+v", got)
+	}
+	// but a stage with a live session still does
+	epics = append(epics, qe(9, "implementing", "open"))
+	if len(ReadyEpics(epics, 1, false)) != 0 {
+		t.Fatal("implementing must consume the slot")
+	}
+}

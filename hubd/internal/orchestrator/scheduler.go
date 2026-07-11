@@ -9,6 +9,18 @@ import (
 	"agentmon/shared"
 )
 
+// sessionStages are the stages during which a runner session is expected to
+// be alive — the capacity unit per spec §5 ("running sessions < max_parallel").
+// pr_open/merging are excluded: the runner exits after reporting pr_open
+// (§7.7), so an epic waiting on CI must not block new spawns. Escalated is
+// also excluded even though a plan-gate hold can keep its session alive —
+// documented tradeoff until liveness-aware capacity arrives with the sub-2
+// agent contract.
+var sessionStages = map[shared.EpicStage]bool{
+	shared.EpicStarting: true, shared.EpicPlanning: true,
+	shared.EpicImplementing: true, shared.EpicReviewing: true,
+}
+
 // ReadyEpics computes which queued epics may start now. Pure function; deps
 // are resolved against the passed slice (one project's epics). A blocked_by
 // issue with no epic row BLOCKS — fail closed, same philosophy as the gate.
@@ -20,7 +32,7 @@ func ReadyEpics(epics []db.Epic, maxParallel int, paused bool) []db.Epic {
 	active := 0
 	for _, e := range epics {
 		byIssue[e.IssueNumber] = e
-		if activeStages[shared.EpicStage(e.Stage)] {
+		if sessionStages[shared.EpicStage(e.Stage)] {
 			active++
 		}
 	}
