@@ -118,6 +118,11 @@ type Orchestrator struct {
 	// worktree names are attempt-agnostic, so a forgotten zombie would share
 	// them with its successor. Keyed like ackState; guarded by tickMu.
 	retire map[string][]string // serverID+"\x00"+target → session names
+	// liveCache memoizes liveSessions results for ONE Tick (reset at Tick
+	// start): co-hosted projects share a single agent dial. A present-but-nil
+	// entry is a failed fetch (liveness unknown). Keyed like ackState;
+	// guarded by tickMu.
+	liveCache map[string]map[string]bool
 }
 
 func New(d Deps) *Orchestrator {
@@ -127,7 +132,8 @@ func New(d Deps) *Orchestrator {
 	return &Orchestrator{d: d, wake: make(chan struct{}, 1),
 		watermarks: map[string]string{}, syncSkip: map[string]int{},
 		syncFails: map[string]int{}, stallSeen: map[string]int{},
-		ackState: map[string]drainAck{}, retire: map[string][]string{}}
+		ackState: map[string]drainAck{}, retire: map[string][]string{},
+		liveCache: map[string]map[string]bool{}}
 }
 
 func (o *Orchestrator) Wake() {
@@ -164,6 +170,7 @@ func (o *Orchestrator) Run(ctx context.Context) {
 func (o *Orchestrator) Tick(ctx context.Context) {
 	o.tickMu.Lock()
 	defer o.tickMu.Unlock()
+	o.liveCache = map[string]map[string]bool{}
 	projects, err := o.d.DB.ListProjects(ctx)
 	if err != nil {
 		log.Printf("orchestrator: list projects: %v", err)
@@ -440,6 +447,55 @@ func (o *Orchestrator) retryPending(ctx context.Context) {
 	}
 }
 
+// stallSessionsTimeout bounds the per-tick liveness GET tighter than the
+// generic agent client timeout: liveness is optional this tick (unknown =
+// fail safe), so a black-holed host should cost seconds under tickMu, not
+// the full client timeout stacked per server.
+const stallSessionsTimeout = 3 * time.Second
+
+// liveSessions returns the live tmux session-name set for the project's
+// (server, target), fetched at most ONCE per Tick across all projects (the
+// cache is reset at Tick start; failures are cached too, so a dead agent
+// costs one bounded dial per tick, not one per project). nil = liveness
+// UNKNOWN this tick: fail SAFE — no stall verdicts, counters freeze, stage
+// timeouts still run.
+//
+// Liveness = the agent's REAL tmux session list, queried with the project's
+// RAW target — the same value CreateSession got (create-with-command sessions
+// end with their runner, so tmux existence tracks the runner process). NOT
+// the hook-fed state projection: a runner with missing/mispointed provider
+// hooks emits no state events at all yet works fine — hook state is a display
+// surface, never a liveness source (learned live: the 2026-07-11 toy-repo
+// acceptance mass-false-stalled on it).
+func (o *Orchestrator) liveSessions(ctx context.Context, p db.Project) map[string]bool {
+	key := p.ServerID + "\x00" + p.Target
+	if names, ok := o.liveCache[key]; ok {
+		return names
+	}
+	var names map[string]bool
+	if srv, ok := o.server(ctx, p, "stalls"); ok {
+		sctx, cancel := context.WithTimeout(ctx, stallSessionsTimeout)
+		list, err := o.d.Agents.Sessions(sctx, srv, p.Target)
+		cancel()
+		if err != nil {
+			log.Printf("orchestrator[%s]: stalls: agent %s sessions: %v", p.Name, p.ServerID, err)
+		} else {
+			// The stall verdict trusts this list to be COMPLETE. Agent
+			// discovery omits malformed session records from a Partial
+			// snapshot (and the wire envelope drops the Partial flag) —
+			// safe here only because SessionNameFor emits charset-validated
+			// names that can never hit the malformed-record skip. Revisit
+			// if orchestrator session naming ever loosens.
+			names = make(map[string]bool, len(list))
+			for _, s := range list {
+				names[s.Name] = true
+			}
+		}
+	}
+	o.liveCache[key] = names
+	return names
+}
+
 func (o *Orchestrator) checkStalls(ctx context.Context, p db.Project, now string) {
 	epics, err := o.d.DB.ListEpicsByProject(ctx, p.ID)
 	if err != nil {
@@ -447,14 +503,6 @@ func (o *Orchestrator) checkStalls(ctx context.Context, p db.Project, now string
 		return
 	}
 	nowTime, _ := time.Parse(time.RFC3339, now)
-	// Liveness = the agent's REAL tmux session list for the project's target
-	// (create-with-command sessions end with their runner, so tmux existence
-	// tracks the runner process). NOT the hook-fed state projection: a runner
-	// with missing/mispointed provider hooks emits no state events at all yet
-	// works fine — hook state is a display surface, never a liveness source
-	// (learned live: toy-repo acceptance 2026-07-11 mass-false-stalled on it).
-	// nil = liveness unknown this tick (agent unreachable / unknown server):
-	// fail SAFE — no stall verdicts, counters freeze, stage timeouts still run.
 	var liveNames map[string]bool
 	sessionsFetched := false
 	for _, e := range epics {
@@ -466,16 +514,7 @@ func (o *Orchestrator) checkStalls(ctx context.Context, p db.Project, now string
 		}
 		if !sessionsFetched {
 			sessionsFetched = true
-			if srv, ok, err := o.d.Reg.Get(ctx, p.ServerID); err != nil || !ok {
-				log.Printf("orchestrator[%s]: stalls: server %s unavailable: %v", p.Name, p.ServerID, err)
-			} else if list, err := o.d.Agents.Sessions(ctx, srv, p.Target); err != nil {
-				log.Printf("orchestrator[%s]: stalls: agent %s sessions: %v", p.Name, p.ServerID, err)
-			} else {
-				liveNames = make(map[string]bool, len(list))
-				for _, s := range list {
-					liveNames[s.Name] = true
-				}
-			}
+			liveNames = o.liveSessions(ctx, p)
 		}
 		reason := ""
 		if liveNames != nil {

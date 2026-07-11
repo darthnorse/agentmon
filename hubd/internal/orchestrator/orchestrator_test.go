@@ -72,17 +72,19 @@ type fakeAgents struct {
 	killed      []string
 	killErr     error
 	spawnErr    error
-	sessions    []string // live tmux session names the agent would list
-	sessionsErr error
+	sessions        []string // live tmux session names the agent would list
+	sessionsErr     error
+	sessionsTargets []string // target arg of every Sessions call, in order
 }
 
-func (f *fakeAgents) Sessions(_ context.Context, _ db.Server, _ string) ([]shared.Session, error) {
+func (f *fakeAgents) Sessions(_ context.Context, _ db.Server, target string) ([]shared.Session, error) {
+	f.sessionsTargets = append(f.sessionsTargets, target)
 	if f.sessionsErr != nil {
 		return nil, f.sessionsErr
 	}
 	out := make([]shared.Session, 0, len(f.sessions))
 	for _, n := range f.sessions {
-		out = append(out, shared.Session{Name: n, Target: "default"})
+		out = append(out, shared.Session{Name: n})
 	}
 	return out, nil
 }
@@ -385,6 +387,33 @@ func TestStallLivenessComesFromAgentSessionsNotHookState(t *testing.T) {
 	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
 	if e.Stage == "stalled" {
 		t.Fatalf("hookless-but-alive session must not stall, got %+v", e)
+	}
+}
+
+// One liveness fetch per (server,target) per tick, shared across projects —
+// N co-hosted projects must not issue N identical GETs, each able to hold
+// tickMu for the full client timeout on a black-holed agent. The fetch must
+// also pass the project's RAW target (the same value CreateSession gets):
+// resolving it hub-side on one path but not the other would mass-false-stall.
+func TestStallLivenessFetchSharedAcrossProjectsPerTick(t *testing.T) {
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
+	ag := &fakeAgents{sessions: []string{sessionName(16), SessionNameFor("other", 16, 1)}}
+	o, d := newTestOrch(t, gh, ag)
+	ctx := context.Background()
+	// Second project on the SAME server and target ("" = agent default).
+	if err := d.CreateProject(ctx, db.Project{ID: "p2", Name: "other", Repo: "o/other",
+		ServerID: "h1", Workdir: "/w2", BaseBranch: "main", Provider: "claude", MaxParallel: 1}); err != nil {
+		t.Fatal(err)
+	}
+	o.Tick(ctx) // both projects spawn; no active-stage epics at checkStalls time
+	before := len(ag.sessionsTargets)
+	o.Tick(ctx) // both epics now starting → liveness consulted
+	calls := ag.sessionsTargets[before:]
+	if len(calls) != 1 {
+		t.Fatalf("one shared (server,target) must mean ONE Sessions fetch per tick, got %d: %v", len(calls), calls)
+	}
+	if calls[0] != "" {
+		t.Fatalf("liveness must query the project's RAW target %q, got %q", "", calls[0])
 	}
 }
 
