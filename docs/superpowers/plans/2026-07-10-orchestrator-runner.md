@@ -3041,7 +3041,7 @@ cd /root/agentmon && git add agent/ && git commit -m "feat(agent): embed runner 
 - Consumes: `agentmon-agent install-skills --home` (Task 17).
 - Produces: `/usr/local/bin/agentmon` symlink + per-user skills on every install AND update run.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `hubd/internal/api/install_test.go` (mirrors `TestInstallScriptDefaultsToDedicatedSocket` at line 51):
 
@@ -3069,12 +3069,12 @@ func TestInstallScriptInstallsRunnerFiles(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/ -run TestInstallScriptInstallsRunnerFiles`
 Expected: FAIL — strings missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `hubd/internal/api/install.sh.tmpl`:
 
@@ -3116,11 +3116,11 @@ install_runner_files
   echo "[dry-run] would install the /usr/local/bin/agentmon symlink + runner skills for '$RUN_USER'"
 ```
 
-- [ ] **Step 4: Run tests to verify they pass, then the full gate**
+- [x] **Step 4: Run tests to verify they pass, then the full gate**
 
 Run: `cd /root/agentmon/hubd && go test ./internal/api/` → PASS (including `TestInstallScriptBashSyntax`, which shellchecks the rendered script), then the full gate → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/agentmon && git add hubd/ && git commit -m "feat(hub): installer distributes the agentmon CLI symlink + runner skills on install and update"

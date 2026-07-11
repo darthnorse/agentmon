@@ -144,6 +144,22 @@ provider_has_hooks() {
   grep -q 'agentmon-hook' "$settings" 2>/dev/null
 }
 
+# Runner CLI + skills: the `agentmon` symlink gives runner sessions the
+# report/doctor/import-epics CLI; install-skills writes the binary-embedded
+# epic-pipeline / plan-epics prompts into the run user's provider dirs.
+# Idempotent; runs on update too — that is how skill edits reach the fleet.
+install_runner_files() {
+  ln -sfn /usr/local/bin/agentmon-agent /usr/local/bin/agentmon
+  local home_dir
+  home_dir="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+  [ -n "$home_dir" ] || home_dir="${HOME:-/root}"
+  if runuser -u "$RUN_USER" -- /usr/local/bin/agentmon-agent install-skills --home "$home_dir" >/dev/null; then
+    echo "✓ runner skills installed for '$RUN_USER' (epic-pipeline, plan-epics)."
+  else
+    echo "warning: runner skill install failed — re-run: runuser -u $RUN_USER -- agentmon-agent install-skills" >&2
+  fi
+}
+
 # maybe_install_hooks selects explicit providers or auto-detects Claude Code and
 # Codex. Auto mode offers every detected provider that is not already configured,
 # prompts once, provisions one shared token, then performs idempotent per-user merges.
@@ -257,6 +273,7 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "[dry-run] would enroll at $HUB_URL/api/v1/enroll as '$HOST'"
     echo "[dry-run] would write /etc/agentmon/agent.toml + secrets, install + start the systemd unit"
   fi
+  echo "[dry-run] would install the /usr/local/bin/agentmon symlink + runner skills for '$RUN_USER'"
   case "$HOOKS_MODE" in
     claude) echo "[dry-run] would provision a hook token + install Claude Code hooks for '$RUN_USER'" ;;
     codex)  echo "[dry-run] would provision a hook token + install Codex hooks for '$RUN_USER'" ;;
@@ -308,6 +325,7 @@ if [ "$INSTALLED" = "1" ]; then
     smoke_test
     echo "✓ $HOST updated and restarted."
   fi
+  install_runner_files
   maybe_install_hooks # re-run with --hooks to add hooks to an existing agent
   exit 0
 fi
@@ -369,6 +387,7 @@ systemctl daemon-reload
 systemctl enable --now agentmon-agent
 
 smoke_test
+install_runner_files
 maybe_install_hooks
 
 echo "✓ $HOST enrolled — pending approval. Approve it in the AgentMon web UI (or 'agentmon-hubd server approve $HOST' on the hub)."
