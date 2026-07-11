@@ -390,3 +390,27 @@ func TestMergingRetryPinsApprovedSHA(t *testing.T) {
 		t.Fatalf("epic = %+v", got)
 	}
 }
+
+func TestRequireCIHoldsMergeUntilChecksRegister(t *testing.T) {
+	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" + "findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" + "uncertain: false\nlearnings_updated: true\n```"
+	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}, prs: map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s"}}, checks: map[string][]github.CheckRun{}}
+	ag := &fakeAgents{}
+	o, d := newTestOrch(t, gh, ag, fakeLive{alive: map[string]bool{sessionName(16): true}})
+	ctx := context.Background()
+	if ok, err := d.SetProjectRequireCI(ctx, "p1", true); err != nil || !ok {
+		t.Fatalf("SetProjectRequireCI: ok=%v err=%v", ok, err)
+	}
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx)
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "pr_open" || len(gh.merged) != 0 {
+		t.Fatalf("must hold in pr_open with no merge, got stage=%s merged=%v", e.Stage, gh.merged)
+	}
+	gh.checks["s"] = []github.CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}}
+	o.Tick(ctx)
+	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("must merge once checks exist and pass, got %+v", e)
+	}
+}

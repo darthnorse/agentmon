@@ -18,15 +18,16 @@ type Project struct {
 	RequiredReviews []string
 	MaxParallel     int
 	Paused          bool
+	RequireCI       bool
 }
 
-const projectCols = "id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused"
+const projectCols = "id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, require_ci"
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
 	var reviews string
 	if err := row.Scan(&p.ID, &p.Name, &p.Repo, &p.ServerID, &p.Target, &p.Workdir,
-		&p.BaseBranch, &p.Provider, &reviews, &p.MaxParallel, &p.Paused); err != nil {
+		&p.BaseBranch, &p.Provider, &reviews, &p.MaxParallel, &p.Paused, &p.RequireCI); err != nil {
 		return Project{}, err
 	}
 	p.RequiredReviews = unmarshalStrings(reviews)
@@ -35,10 +36,10 @@ func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 
 func (d *DB) CreateProject(ctx context.Context, p Project) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO projects(id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))`,
+		`INSERT INTO projects(id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, require_ci, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))`,
 		p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider,
-		marshalStrings(p.RequiredReviews), p.MaxParallel, p.Paused)
+		marshalStrings(p.RequiredReviews), p.MaxParallel, p.Paused, p.RequireCI)
 	return err
 }
 
@@ -80,6 +81,10 @@ func (d *DB) SetProjectPaused(ctx context.Context, id string, paused bool) (bool
 
 func (d *DB) SetProjectMaxParallel(ctx context.Context, id string, n int) (bool, error) {
 	return d.execFound(ctx, `UPDATE projects SET max_parallel = ?, updated_at = datetime('now') WHERE id = ?`, n, id)
+}
+
+func (d *DB) SetProjectRequireCI(ctx context.Context, id string, v bool) (bool, error) {
+	return d.execFound(ctx, `UPDATE projects SET require_ci = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
 }
 
 // marshalStrings / unmarshalStrings mirror servers.go's label helpers for

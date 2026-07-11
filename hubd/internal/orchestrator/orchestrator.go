@@ -473,6 +473,9 @@ func (o *Orchestrator) evaluateGates(ctx context.Context, p db.Project) {
 			continue
 		}
 		green, pending := github.ChecksState(runs)
+		if p.RequireCI && len(runs) == 0 {
+			pending = true
+		}
 		res := Decide(GateInput{Verdict: v, VerdictErr: verr, Epic: e.IssueNumber, Labels: e.Labels,
 			RequiredReviews: p.RequiredReviews, ChecksGreen: green, ChecksPending: pending})
 		switch {

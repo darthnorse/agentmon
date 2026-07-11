@@ -63,6 +63,21 @@ func TestProjectSetters(t *testing.T) {
 	}
 }
 
+func TestProjectRequireCIRoundTrip(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	enrollTestServer(t, d, "aigallery")
+	p := testProject("aigallery")
+	p.RequireCI = true
+	if err := d.CreateProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetProject(ctx, "p1")
+	if err != nil || !got.RequireCI {
+		t.Fatalf("RequireCI must round-trip: %+v err=%v", got, err)
+	}
+}
+
 func TestGetProjectByRepoIsCaseInsensitive(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()

@@ -49,11 +49,12 @@ type projectDTO struct {
 	RequiredReviews []string       `json:"required_reviews"`
 	MaxParallel     int            `json:"max_parallel"`
 	Paused          bool           `json:"paused"`
+	RequireCI       bool           `json:"require_ci"`
 	Counts          map[string]int `json:"counts,omitempty"`
 }
 
 func projectOut(p db.Project, counts map[string]int) projectDTO {
-	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, counts}
+	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, counts}
 }
 
 func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
@@ -93,6 +94,7 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 			Provider        string   `json:"provider"`
 			RequiredReviews []string `json:"required_reviews"`
 			MaxParallel     int      `json:"max_parallel"`
+			RequireCI       bool     `json:"require_ci"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
 			writeJSONError(w, 400, "bad request")
@@ -111,7 +113,7 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 		if in.MaxParallel == 0 {
 			in.MaxParallel = 1
 		}
-		pr := db.Project{ID: uuid.NewString(), Name: in.Name, Repo: in.Repo, ServerID: in.ServerID, Target: in.Target, Workdir: in.Workdir, BaseBranch: in.BaseBranch, Provider: in.Provider, RequiredReviews: in.RequiredReviews, MaxParallel: in.MaxParallel}
+		pr := db.Project{ID: uuid.NewString(), Name: in.Name, Repo: in.Repo, ServerID: in.ServerID, Target: in.Target, Workdir: in.Workdir, BaseBranch: in.BaseBranch, Provider: in.Provider, RequiredReviews: in.RequiredReviews, MaxParallel: in.MaxParallel, RequireCI: in.RequireCI}
 		if err := d.DB.CreateProject(r.Context(), pr); err != nil {
 			writeJSONError(w, 400, "create failed")
 			return
