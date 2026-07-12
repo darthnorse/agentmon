@@ -33,21 +33,26 @@ export async function openOrFocusSession(opts: OpenOpts, isDesktop: boolean, nav
         session!,
       ]);
     } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 409) throw err;
-      // Already exists — find it in a fresh list. A failed re-list must NOT
-      // throw out of this helper: fall through to the home navigation below so
-      // the button click always resolves.
-      try {
-        const list = await listSessions(opts.serverId, opts.target || undefined);
-        session = list.find((s) => s.name === opts.name);
-      } catch {
-        /* re-list failed — session stays undefined → navigate home */
+      if (err instanceof ApiError && err.status === 409) {
+        // Already exists — find it in a fresh list. A failed re-list must NOT
+        // throw: fall through and report below instead of leaking a rejection.
+        try {
+          const list = await listSessions(opts.serverId, opts.target || undefined);
+          session = list.find((s) => s.name === opts.name);
+        } catch { /* re-list failed — session stays undefined */ }
+      } else {
+        // Real failure (offline host, bad workdir, hub error). Callers invoke
+        // this as `void`, so a throw would be an unhandled rejection with no user
+        // feedback — surface it and stop.
+        toast.error(err instanceof ApiError ? err.message : "Couldn't start the session.");
+        return;
       }
     }
   }
   void queryClient.invalidateQueries({ queryKey: sessionsKey(opts.serverId) });
   const pane = session?.windows[0]?.panes[0];
   if (!session || !pane) {
+    toast.error("Session couldn't be opened — it may have ended.");
     void navigate({ to: "/" });
     return;
   }

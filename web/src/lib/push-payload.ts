@@ -13,8 +13,12 @@ export interface EpicPush {
 export function isEpicPush(d: unknown): d is EpicPush {
   if (!d || typeof d !== "object") return false;
   const p = d as Record<string, unknown>;
-  return p.type === "epic" && typeof p.project === "string" && typeof p.epic_id === "string" &&
-    typeof p.issue === "number" && typeof p.title === "string";
+  return p.type === "epic" &&
+    typeof p.project === "string" && p.project !== "" &&
+    typeof p.epic_id === "string" && p.epic_id !== "" &&
+    typeof p.issue === "number" && Number.isSafeInteger(p.issue) && p.issue > 0 &&
+    typeof p.title === "string" &&
+    typeof p.needs === "string" && typeof p.stage === "string";
 }
 
 export function epicNotification(p: EpicPush): { title: string; options: NotificationOptions } {

@@ -58,7 +58,8 @@ func TestBoardPushFiresOnEscalatedOnly(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(payloads) != 1 || payloads[0]["type"] != "epic" || payloads[0]["stage"] != "escalated" || payloads[0]["epic_id"] != "e15" {
+	if len(payloads) != 1 || payloads[0]["type"] != "epic" || payloads[0]["stage"] != "escalated" ||
+		payloads[0]["epic_id"] != "e15" || payloads[0]["issue"] != float64(15) {
 		t.Fatalf("payloads = %+v", payloads)
 	}
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  createSession: vi.fn(), listSessions: vi.fn(), setQueryData: vi.fn(), invalidateQueries: vi.fn(), toast: vi.fn(),
+  createSession: vi.fn(), listSessions: vi.fn(), setQueryData: vi.fn(), invalidateQueries: vi.fn(), toast: Object.assign(vi.fn(), { error: vi.fn() }),
 }));
 vi.mock("@/lib/api-client", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api-client")>();
@@ -19,7 +19,7 @@ const session = { name: "plan-school", server: "h1", target: "default", cwd: "/w
 
 describe("openOrFocusSession", () => {
   beforeEach(() => {
-    h.createSession.mockReset(); h.listSessions.mockReset(); h.setQueryData.mockReset(); h.invalidateQueries.mockReset(); h.toast.mockReset();
+    h.createSession.mockReset(); h.listSessions.mockReset(); h.setQueryData.mockReset(); h.invalidateQueries.mockReset(); h.toast.mockReset(); h.toast.error.mockReset();
     usePanes.setState({ panes: [], focusedId: null });
   });
 
@@ -67,6 +67,14 @@ describe("openOrFocusSession", () => {
     const navigate = vi.fn();
     await openOrFocusSession({ serverId: "h1", serverName: "host", target: "", name: session.name, session }, true, navigate);
     expect(h.toast).toHaveBeenCalledWith("Close a terminal tile first (6 open max).");
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("toasts and stops (no silent home) when session creation fails outright", async () => {
+    h.createSession.mockRejectedValue(new ApiError(500, "host offline"));
+    const navigate = vi.fn();
+    await openOrFocusSession({ serverId: "h1", serverName: "h1", target: "", name: "plan-school", command: "x" }, true, navigate);
+    expect(h.toast.error).toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
   });
 });

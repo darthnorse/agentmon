@@ -2,6 +2,10 @@ import type { EpicDTO, EpicStage, ProjectDTO, Session } from "@/lib/contracts";
 import type { Provider } from "@/lib/provider";
 
 export const PLAN_GATE_PREFIX = "plan-gate:";
+// Ceiling for a project's max_parallel — mirrors the hub's maxParallelCeiling
+// (hubd/internal/api/orchestrator.go). Shared by the header stepper and the
+// create form so the clamp lives in one place.
+export const MAX_PARALLEL_CEILING = 32;
 
 export type BoardColumn = "working" | "needs" | "pr" | "queued" | "done";
 export const COLUMN_ORDER: BoardColumn[] = ["working", "needs", "pr", "queued", "done"];

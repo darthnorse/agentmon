@@ -54,4 +54,11 @@ describe("ProjectHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "run_issue", issue: 47 });
   });
+
+  it("disables Run for an out-of-range issue number", () => {
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));
+    fireEvent.change(screen.getByPlaceholderText(/issue number or URL/i), { target: { value: "99999999999999999999" } });
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  });
 });

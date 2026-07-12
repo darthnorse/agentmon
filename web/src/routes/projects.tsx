@@ -38,6 +38,10 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
   const navigate = useNavigate();
   const [editing, setEditing] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
+  // Close any open create/edit modal when the route switches projects, so the
+  // edit form can never end up bound to a different project than it was opened
+  // for (which would PATCH the wrong project on save).
+  React.useEffect(() => { setEditing(false); setCreating(false); }, [projectId]);
   // Both routes share the search schema; read it loosely to avoid binding to
   // one route id.
   const search = useSearch({ strict: false }) as Partial<ProjectsSearch>;
@@ -109,7 +113,7 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
               <h2 className="text-base font-semibold">Edit {project.name}</h2>
               <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>✕</Button>
             </div>
-            <ProjectForm mode="edit" project={project} onDone={() => setEditing(false)} />
+            <ProjectForm key={project.id} mode="edit" project={project} onDone={() => setEditing(false)} />
             <DeleteProject project={project}
               onDeleted={() => { setEditing(false); void navigate({ to: "/projects", search: { tab: "board", epic: "" } }); }}
               onCancel={() => setEditing(false)} />

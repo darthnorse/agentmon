@@ -4,18 +4,18 @@ import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { openOrFocusSession } from "@/components/board/open-session";
 import { useEpicActions } from "@/hooks/useEpicActions";
-import { boardStats, sessionSlug } from "@/lib/board";
+import { boardStats, MAX_PARALLEL_CEILING, sessionSlug } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
-
-const MAX_PARALLEL_CEILING = 32;
 
 // Parse "47", "#47", or a GitHub issue/PR URL → issue number (0 = invalid).
 function parseIssue(input: string): number {
   const t = input.trim();
   const m = t.match(/(?:issues|pull)\/(\d+)/) ?? t.match(/^#?(\d+)$/);
-  return m ? Number(m[1]) : 0;
+  if (!m) return 0;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) && n > 0 ? n : 0;
 }
 
 export function ProjectHeader({ project, epics, onEdit }: {

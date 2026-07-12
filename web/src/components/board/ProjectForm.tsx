@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { openOrFocusSession } from "@/components/board/open-session";
-import { sessionSlug } from "@/lib/board";
+import { MAX_PARALLEL_CEILING, sessionSlug } from "@/lib/board";
 import { ApiError, allBoardKey, createProject, patchProject } from "@/lib/api-client";
 import type { ProjectCreateRequest, ProjectDTO, ProjectPatchRequest, ServerSummary } from "@/lib/contracts";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -111,7 +111,7 @@ export function ProjectForm(props: Mode) {
         {props.mode === "create" && (
           <>
             {field("pf-max", "Max parallel",
-              <Input id="pf-max" type="number" min={1} max={32} value={maxParallel} onChange={(e) => setMaxParallel(Math.max(1, Math.min(32, Number(e.target.value) || 1)))} />)}
+              <Input id="pf-max" type="number" min={1} max={MAX_PARALLEL_CEILING} value={maxParallel} onChange={(e) => setMaxParallel(Math.max(1, Math.min(MAX_PARALLEL_CEILING, Number(e.target.value) || 1)))} />)}
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={requireCI} onChange={(e) => setRequireCI(e.target.checked)} />
               Require CI green before merge
@@ -148,7 +148,7 @@ function HostChecklist({ provider }: { provider: string }) {
   );
 }
 
-export function DoctorVerify({ project, onDone }: { project: ProjectDTO; onDone(): void }) {
+function DoctorVerify({ project, onDone }: { project: ProjectDTO; onDone(): void }) {
   const navigate = useNavigate();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   return (

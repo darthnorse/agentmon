@@ -313,6 +313,10 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 				d.Orch.Wake()
 			}
 		case "run_issue":
+			if in.Issue < 1 {
+				writeJSONError(w, http.StatusBadRequest, "issue must be a positive number")
+				return
+			}
 			err = d.Orch.RunIssue(r.Context(), id, in.Issue)
 		case "guidance":
 			err = d.sendGuidance(r.Context(), epic, p.ID, in.Text)

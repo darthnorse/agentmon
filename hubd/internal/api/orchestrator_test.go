@@ -105,6 +105,13 @@ func TestActionsDispatch(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("in-project approve = %d %s", w.Code, w.Body.String())
 	}
+	// run_issue rejects a non-positive issue number before touching GitHub
+	r, w = orchReq("POST", "/api/v1/orchestrator/projects/p1/actions", `{"action":"run_issue","issue":0}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorActionsHandler()(w, r)
+	if w.Code != 400 {
+		t.Fatalf("run_issue issue=0 must 400, got %d", w.Code)
+	}
 }
 
 func TestActionsDisabledOrchestrator(t *testing.T) {
