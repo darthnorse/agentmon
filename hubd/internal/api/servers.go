@@ -62,6 +62,7 @@ type Deps struct {
 	Orch                OrchestratorAPI
 	WebhookSecret       string
 	BoardBcast          *orchestrator.BoardBroadcaster
+	Contents            ContentsFetcher // sub-3: plan-doc proxy; nil until github.token is set
 }
 
 // authorizeOr403 resolves the principal from the request context, calls

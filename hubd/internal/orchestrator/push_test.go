@@ -41,7 +41,7 @@ func TestBoardPushFiresOnEscalatedOnly(t *testing.T) {
 		Send: send, Now: func() string { return "t" }})
 	time.Sleep(20 * time.Millisecond) // let it subscribe
 	b.Publish(BoardChange{ProjectID: "p1", Issue: 15, Stage: shared.EpicMerged})
-	b.Publish(BoardChange{ProjectID: "p1", Issue: 15, Stage: shared.EpicEscalated, Needs: "2 findings", Title: "GDPR"})
+	b.Publish(BoardChange{ProjectID: "p1", EpicID: "e15", Issue: 15, Stage: shared.EpicEscalated, Needs: "2 findings", Title: "GDPR"})
 	deadline := time.After(2 * time.Second)
 	for {
 		mu.Lock()
@@ -58,7 +58,8 @@ func TestBoardPushFiresOnEscalatedOnly(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(payloads) != 1 || payloads[0]["type"] != "epic" || payloads[0]["stage"] != "escalated" {
+	if len(payloads) != 1 || payloads[0]["type"] != "epic" || payloads[0]["stage"] != "escalated" ||
+		payloads[0]["epic_id"] != "e15" || payloads[0]["issue"] != float64(15) {
 		t.Fatalf("payloads = %+v", payloads)
 	}
 }

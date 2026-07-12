@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -311,6 +313,10 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 				d.Orch.Wake()
 			}
 		case "run_issue":
+			if in.Issue < 1 {
+				writeJSONError(w, http.StatusBadRequest, "issue must be a positive number")
+				return
+			}
 			err = d.Orch.RunIssue(r.Context(), id, in.Issue)
 		case "guidance":
 			err = d.sendGuidance(r.Context(), epic, p.ID, in.Text)
@@ -377,4 +383,290 @@ func writeActionError(w http.ResponseWriter, err error) {
 	// log it, don't ship it to the browser.
 	log.Printf("api: orchestrator action failed: %v", err)
 	writeJSONError(w, http.StatusBadGateway, "action failed")
+}
+
+// OrchestratorProjectPatchHandler edits the registration fields. Partial
+// semantics via pointer fields: absent = unchanged. repo/server_id are
+// immutable (spec §5.3) — rejecting them loudly beats silently ignoring.
+func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		p, ok := d.authorizeOr403(w, r, authz.OrchestratorControl, "project:"+id)
+		if !ok {
+			return
+		}
+		if d.Orch == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		var in struct {
+			Name            *string   `json:"name"`
+			Repo            *string   `json:"repo"`
+			ServerID        *string   `json:"server_id"`
+			Workdir         *string   `json:"workdir"`
+			Target          *string   `json:"target"`
+			BaseBranch      *string   `json:"base_branch"`
+			Provider        *string   `json:"provider"`
+			RequiredReviews *[]string `json:"required_reviews"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		if in.Repo != nil {
+			writeJSONError(w, http.StatusBadRequest, "repo cannot be changed — register a new project")
+			return
+		}
+		if in.ServerID != nil {
+			writeJSONError(w, http.StatusBadRequest, "server cannot be changed")
+			return
+		}
+		pr, err := d.DB.GetProject(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if in.Name != nil {
+			pr.Name = *in.Name
+		}
+		if in.Workdir != nil {
+			pr.Workdir = *in.Workdir
+		}
+		if in.Target != nil && *in.Target != pr.Target {
+			// Target is the tmux socket identity the orchestrator drains, checks
+			// liveness on, and cancels/retires runner sessions against. Changing it
+			// while a runner is live would strand that session on the old socket —
+			// reports lost, control actions misrouted. Refuse while any non-terminal
+			// epic exists (repo/server_id are already immutable above). provider and
+			// base_branch stay mutable: they affect only future spawns, not a
+			// running session's socket, so they can't orphan a live runner.
+			active, err := d.DB.CountActiveEpics(r.Context(), id)
+			if err != nil {
+				log.Printf("api: count active epics: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if active > 0 {
+				writeJSONError(w, http.StatusBadRequest, "cannot change target while epics are running")
+				return
+			}
+			pr.Target = *in.Target
+		}
+		if in.BaseBranch != nil {
+			pr.BaseBranch = *in.BaseBranch
+		}
+		if in.Provider != nil {
+			pr.Provider = *in.Provider
+		}
+		if in.RequiredReviews != nil {
+			pr.RequiredReviews = *in.RequiredReviews
+		}
+		if pr.Name == "" || pr.Workdir == "" || pr.BaseBranch == "" {
+			writeJSONError(w, http.StatusBadRequest, "missing required field")
+			return
+		}
+		if pr.Provider != "claude" && pr.Provider != "codex" {
+			writeJSONError(w, http.StatusBadRequest, "provider must be claude or codex")
+			return
+		}
+		found, err := d.DB.UpdateProject(r.Context(), pr)
+		if errors.Is(err, db.ErrDuplicateName) {
+			writeJSONError(w, http.StatusBadRequest, "name already in use")
+			return
+		}
+		if err != nil {
+			// A genuine backend failure (lock/IO) is not a client error; don't
+			// misreport it as a 400 name collision.
+			log.Printf("api: project update: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if d.Audit != nil {
+			d.Audit.ProjectUpdate(r.Context(), p.ID, "project:"+id, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
+		}
+		writeJSON(w, http.StatusOK, projectOut(pr, nil))
+	}
+}
+
+// OrchestratorProjectDeleteHandler removes a project once nothing is running:
+// the DB layer refuses (found, active>0) while non-terminal epics exist.
+func (d Deps) OrchestratorProjectDeleteHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		p, ok := d.authorizeOr403(w, r, authz.OrchestratorControl, "project:"+id)
+		if !ok {
+			return
+		}
+		if d.Orch == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		pr, err := d.DB.GetProject(r.Context(), id)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		found, active, err := d.DB.DeleteProject(r.Context(), id)
+		if err != nil {
+			log.Printf("api: project delete: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if active > 0 {
+			plural := "s"
+			if active == 1 {
+				plural = ""
+			}
+			writeJSONError(w, http.StatusConflict, fmt.Sprintf("project has %d active epic%s — cancel or finish them first", active, plural))
+			return
+		}
+		if d.Audit != nil {
+			d.Audit.ProjectDelete(r.Context(), p.ID, "project:"+id, pr.Repo, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// boardSnapshot assembles the cross-project board (projects + bounded epics).
+// One source of truth for both the SSE board-snapshot event and GET /board —
+// the two must never drift. Slices are always non-nil so they marshal as [].
+func (d Deps) boardSnapshot(ctx context.Context) ([]projectDTO, []epicDTO, error) {
+	projects, err := d.DB.ListProjects(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	projDTOs := make([]projectDTO, 0, len(projects))
+	epics := make([]epicDTO, 0, 64)
+	for _, pr := range projects {
+		projDTOs = append(projDTOs, projectOut(pr, nil))
+		es, err := d.DB.ListBoardEpics(ctx, pr.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, e := range es {
+			epics = append(epics, toEpicDTO(e))
+		}
+	}
+	return projDTOs, epics, nil
+}
+
+// OrchestratorAllBoardHandler is the All-projects board query (spec §5.1).
+// orchestrator_enabled tells the web "dormant hub" apart from "no projects".
+func (d Deps) OrchestratorAllBoardHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := d.authorizeOr403(w, r, authz.OrchestratorView, "orchestrator:*"); !ok {
+			return
+		}
+		projects, epics, err := d.boardSnapshot(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"orchestrator_enabled": d.Orch != nil,
+			"projects":             projects,
+			"epics":                epics,
+		})
+	}
+}
+
+// ContentsFetcher is the slice of the GitHub client the plan proxy needs.
+type ContentsFetcher interface {
+	GetContents(ctx context.Context, repo, path, ref string) ([]byte, error)
+}
+
+var (
+	planNoteRe = regexp.MustCompile(`plan ready at (\S+)`)
+	planPathRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+)
+
+// planDirPrefix is the runner-skill plan convention (epic-pipeline.md commits and
+// reports docs/plans/epic-N.md). A note that names any other repo-relative path
+// falls back to the default so the proxy can only ever serve a plan doc.
+const planDirPrefix = "docs/plans/"
+
+// planDocPath resolves the plan document path from the escalation note
+// (runner-skill convention: "plan-gate: plan ready at <path>"), falling back
+// to the docs/plans convention. The note is runner-controlled text, so
+// sanitization failure falls back silently — never an error, never a 500.
+func planDocPath(needs string, issue int) string {
+	def := fmt.Sprintf("%sepic-%d.md", planDirPrefix, issue)
+	m := planNoteRe.FindStringSubmatch(needs)
+	if m == nil {
+		return def
+	}
+	p := m[1]
+	// Constrain to the plan directory (defense-in-depth): even a traversal-safe
+	// path outside docs/plans/ falls back to the default rather than letting the
+	// proxy fetch an arbitrary repo file. The note is runner-controlled today,
+	// not user-settable — this bounds a future code path that might change that.
+	if len(p) > 512 || strings.HasPrefix(p, "/") || strings.Contains(p, "..") ||
+		!strings.HasPrefix(p, planDirPrefix) || !planPathRe.MatchString(p) {
+		return def
+	}
+	return p
+}
+
+// OrchestratorEpicPlanHandler proxies the epic's committed plan doc off its
+// branch (spec §5.2). Hub-side because the PAT never reaches the browser; it
+// can only ever read from the project's registered repo.
+func (d Deps) OrchestratorEpicPlanHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, ok := d.authorizeOr403(w, r, authz.OrchestratorView, "project:"+id); !ok {
+			return
+		}
+		if d.Contents == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		e, err := d.DB.GetEpic(r.Context(), r.PathValue("epicID"))
+		switch {
+		case errors.Is(err, sql.ErrNoRows) || (err == nil && e.ProjectID != id):
+			writeJSONError(w, http.StatusNotFound, "epic not found in project")
+			return
+		case err != nil:
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if e.Branch == "" {
+			writeJSONError(w, http.StatusConflict, "epic has no branch yet — the plan is committed once the runner starts")
+			return
+		}
+		p, err := d.DB.GetProject(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		path := planDocPath(e.Needs, e.IssueNumber)
+		b, err := d.Contents.GetContents(r.Context(), p.Repo, path, e.Branch)
+		switch {
+		case errors.Is(err, github.ErrNotFound):
+			writeJSONError(w, http.StatusNotFound, fmt.Sprintf("no plan doc found at %s on %s", path, e.Branch))
+		case errors.Is(err, github.ErrTooLarge):
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "plan doc exceeds 256 KiB — open it on GitHub")
+		case err != nil:
+			log.Printf("api: epic plan fetch: %v", err)
+			writeJSONError(w, http.StatusBadGateway, "plan fetch failed")
+		default:
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]string{"path": path, "ref": e.Branch, "markdown": string(b)})
+		}
+	}
 }

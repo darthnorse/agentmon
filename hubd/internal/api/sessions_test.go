@@ -433,6 +433,35 @@ func TestServerSessionsReturnsStampedList(t *testing.T) {
 	}
 }
 
+// TestServerSessionsForwardsTargetToAgent: the list handler must forward the
+// ?target= query param to the agent, so a board viewing a project bound to a
+// non-default tmux target lists THAT socket — not the agent's default — else the
+// live runner shows as "session ended". Regression for the dropped-param bug
+// (the handler used to hardcode an empty target while the web layer sends one).
+func TestServerSessionsForwardsTargetToAgent(t *testing.T) {
+	var gotTarget string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok-a" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		gotTarget = r.URL.Query().Get("target") // what the hub forwarded
+		_, _ = w.Write([]byte(createListBody))
+	}))
+	defer ts.Close()
+	d := depsWith(db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a", Status: "active"})
+	r := withPrincipal(httptest.NewRequest("GET", "/api/v1/servers/server-a/sessions?target=work", nil), authz.Principal{ID: "u1"})
+	r.SetPathValue("id", "server-a")
+	w := httptest.NewRecorder()
+	d.ServerSessionsHandler()(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	if gotTarget != "work" {
+		t.Fatalf("list handler must forward ?target= to the agent, got %q", gotTarget)
+	}
+}
+
 func TestServerSessionsAgentErrorIs502(t *testing.T) {
 	ts := fakeAgentSrv(t, "tok-a")
 	defer ts.Close()

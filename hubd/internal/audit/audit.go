@@ -87,6 +87,20 @@ func (r *Recorder) ProjectRegister(ctx context.Context, principalID, resource, r
 		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
 }
 
+func (r *Recorder) ProjectUpdate(ctx context.Context, principalID, resource, ip, ua string) {
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "project.update",
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: "{}"})
+}
+
+func (r *Recorder) ProjectDelete(ctx context.Context, principalID, resource, repo, ip, ua string) {
+	meta, err := json.Marshal(map[string]string{"repo": repo})
+	if err != nil {
+		meta = []byte("{}")
+	}
+	r.write(ctx, db.AuditEntry{PrincipalID: principalID, Action: "project.delete",
+		Resource: resource, Result: "allow", IP: ip, UserAgent: ua, Meta: string(meta)})
+}
+
 func (r *Recorder) EpicAction(ctx context.Context, principalID, resource, action, epicID, ip, ua string) {
 	meta, err := json.Marshal(map[string]string{"epic": epicID})
 	if err != nil {

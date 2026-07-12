@@ -54,6 +54,28 @@ func TestReportPostsToIntake(t *testing.T) {
 	}
 }
 
+func TestReportEscalatedCarriesBranch(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%3")
+	t.Setenv("TMUX", "/tmp/tmux-0/agentmon,42,0")
+	var gotBody string
+	cfgPath := reportTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"session":"epic-p-7"}`))
+	})
+	var out bytes.Buffer
+	err := reportMain([]string{"--config", cfgPath, "--epic", "7", "--stage", "escalated", "--branch", "epic/7-x", "--repo", "o/r", "--note", "plan-gate: x"}, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"branch":"epic/7-x"`, `"stage":"escalated"`} {
+		if !strings.Contains(gotBody, want) {
+			t.Fatalf("body missing %s: %s", want, gotBody)
+		}
+	}
+}
+
 func TestReportValidation(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%3")
 	cfgPath := reportTestServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })

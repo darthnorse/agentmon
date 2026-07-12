@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -96,5 +97,95 @@ func TestGetProjectByRepoIsCaseInsensitive(t *testing.T) {
 	dup.ID, dup.Name, dup.Repo = "p2", "dupe", "DARTHNORSE/school-platform"
 	if err := d.CreateProject(ctx, dup); err == nil {
 		t.Fatal("differently-cased duplicate repo must violate UNIQUE")
+	}
+}
+
+func projDB(t *testing.T) (*DB, context.Context) {
+	t.Helper()
+	d := openTestDB(t)
+	enrollTestServer(t, d, "h1")
+	ctx := context.Background()
+	if err := d.CreateProject(ctx, Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1}); err != nil {
+		t.Fatal(err)
+	}
+	return d, ctx
+}
+
+func TestUpdateProject(t *testing.T) {
+	d, ctx := projDB(t)
+	ok, err := d.UpdateProject(ctx, Project{ID: "p1", Name: "p2", Workdir: "/w2", Target: "tgt", BaseBranch: "dev", Provider: "codex", RequiredReviews: []string{"cross-model"}})
+	if err != nil || !ok {
+		t.Fatalf("update: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "p2" || p.Workdir != "/w2" || p.Target != "tgt" || p.BaseBranch != "dev" || p.Provider != "codex" || len(p.RequiredReviews) != 1 || p.RequiredReviews[0] != "cross-model" {
+		t.Fatalf("got %+v", p)
+	}
+	if p.Repo != "o/r" || p.ServerID != "h1" {
+		t.Fatalf("immutable fields changed: %+v", p)
+	}
+	if ok, err := d.UpdateProject(ctx, Project{ID: "nope", Name: "x", Workdir: "/w", BaseBranch: "main", Provider: "claude"}); err != nil || ok {
+		t.Fatalf("missing project: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestUpdateProjectDuplicateNameIsSentinel(t *testing.T) {
+	d, ctx := projDB(t)
+	// A second project whose name p1's rename will collide with.
+	if err := d.CreateProject(ctx, Project{ID: "p2", Name: "taken", Repo: "o/r2", ServerID: "h1", Workdir: "/w2", BaseBranch: "main", Provider: "claude", MaxParallel: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// UNIQUE(name) violation must surface as the ErrDuplicateName sentinel so
+	// the API can map it to 400 while a genuine failure still becomes a 500.
+	if _, err := d.UpdateProject(ctx, Project{ID: "p1", Name: "taken", Workdir: "/w", BaseBranch: "main", Provider: "claude"}); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("duplicate rename: got %v, want ErrDuplicateName", err)
+	}
+}
+
+func TestUpdateProjectNonConstraintErrorPassesThrough(t *testing.T) {
+	d, ctx := projDB(t)
+	d.Close() // any subsequent statement fails with a non-constraint error
+	// A closed-DB (or lock/IO) failure must NOT be masquerade as ErrDuplicateName —
+	// otherwise the handler would 400 a real outage as "name already in use".
+	if _, err := d.UpdateProject(ctx, Project{ID: "p1", Name: "x", Workdir: "/w", BaseBranch: "main", Provider: "claude"}); err == nil || errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("non-constraint failure must pass through unchanged, got %v", err)
+	}
+}
+
+func TestDeleteProjectRefusesActiveEpics(t *testing.T) {
+	d, ctx := projDB(t)
+	e, err := d.UpsertEpicIssue(ctx, Epic{ProjectID: "p1", IssueNumber: 1, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, active, err := d.DeleteProject(ctx, "p1")
+	if err != nil || !found || active != 1 {
+		t.Fatalf("active refuse: found=%v active=%d err=%v", found, active, err)
+	}
+	if _, err := d.GetProject(ctx, "p1"); err != nil {
+		t.Fatalf("project must survive a refused delete: %v", err)
+	}
+	// Terminal epic (with an event row) → delete succeeds and cascades.
+	if ok, err := d.TransitionEpic(ctx, e.ID, "queued", "canceled", "user:u1", "n", "t2"); err != nil || !ok {
+		t.Fatalf("transition: %v", err)
+	}
+	if err := d.AppendEpicEvent(ctx, EpicEvent{ID: "ev1", EpicID: e.ID, FromStage: "queued", ToStage: "canceled", Source: "user:u1", Ts: "t2"}); err != nil {
+		t.Fatal(err)
+	}
+	found, active, err = d.DeleteProject(ctx, "p1")
+	if err != nil || !found || active != 0 {
+		t.Fatalf("delete: found=%v active=%d err=%v", found, active, err)
+	}
+	if _, err := d.GetProject(ctx, "p1"); err == nil {
+		t.Fatal("project must be gone")
+	}
+	if _, _, err := d.DeleteProject(ctx, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if found, _, _ := d.DeleteProject(ctx, "p1"); found {
+		t.Fatal("second delete must report not-found")
 	}
 }

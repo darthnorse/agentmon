@@ -41,7 +41,7 @@ func RunBoardPushDispatcher(ctx context.Context, d BoardPushDeps) {
 func dispatchBoardPush(ctx context.Context, d BoardPushDeps, c BoardChange) {
 	payload, err := json.Marshal(map[string]any{
 		"type": "epic", "stage": string(c.Stage), "project": c.ProjectID,
-		"epic": c.Issue, "title": c.Title, "needs": c.Needs, "ts": d.Now(),
+		"issue": c.Issue, "epic_id": c.EpicID, "title": c.Title, "needs": c.Needs, "ts": d.Now(),
 	})
 	if err != nil {
 		return

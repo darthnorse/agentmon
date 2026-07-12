@@ -1,6 +1,8 @@
 import type {
   ServerSummary, SessionInfo, Session, SeenRequest,
   PushSubscriptionJSON, VapidKeyResponse, CreateSessionRequest, PendingServer, ChangePasswordRequest,
+  AllBoardResponse, ProjectBoardResponse, EpicPlanResponse, EpicActionRequest,
+  ProjectCreateRequest, ProjectPatchRequest, ProjectDTO,
 } from "@/lib/contracts";
 
 const BASE = "/api/v1";
@@ -124,3 +126,32 @@ export const subscribePush = (sub: PushSubscriptionJSON) =>
 
 export const unsubscribePush = (endpoint: string) =>
   request<void>("POST", "/push/unsubscribe", { endpoint });
+
+// ---- Orchestrator board (sub-3) ----
+// All board query keys share the ["board", …] prefix: one
+// invalidateQueries({ queryKey: ["board"] }) refreshes every board view.
+export const allBoardKey = () => ["board"] as const;
+export const projectBoardKey = (projectId: string) => ["board", projectId] as const;
+export const epicPlanKey = (projectId: string, epicId: string) => ["epic-plan", projectId, epicId] as const;
+// A runner session lives under the project's TARGET socket. Key by target so
+// same-host projects on different targets don't collide; an empty target
+// reuses the home screen's sessionsKey (identical default-target list).
+export const boardSessionsKey = (serverId: string, target: string) =>
+  target ? (["sessions", serverId, target] as const) : sessionsKey(serverId);
+
+export const getAllBoard = () => request<AllBoardResponse>("GET", "/orchestrator/board");
+export const getProjectBoard = (projectId: string) =>
+  request<ProjectBoardResponse>("GET", `/orchestrator/projects/${encodeURIComponent(projectId)}/board`);
+export const getEpicPlan = (projectId: string, epicId: string) =>
+  request<EpicPlanResponse>(
+    "GET",
+    `/orchestrator/projects/${encodeURIComponent(projectId)}/epics/${encodeURIComponent(epicId)}/plan`,
+  );
+export const epicAction = (projectId: string, body: EpicActionRequest) =>
+  request<{ ok: boolean }>("POST", `/orchestrator/projects/${encodeURIComponent(projectId)}/actions`, body);
+export const createProject = (body: ProjectCreateRequest) =>
+  request<ProjectDTO>("POST", "/orchestrator/projects", body);
+export const patchProject = (projectId: string, body: ProjectPatchRequest) =>
+  request<ProjectDTO>("PATCH", `/orchestrator/projects/${encodeURIComponent(projectId)}`, body);
+export const deleteProject = (projectId: string) =>
+  request<{ ok: boolean }>("DELETE", `/orchestrator/projects/${encodeURIComponent(projectId)}`);

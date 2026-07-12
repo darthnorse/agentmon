@@ -4,7 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { StateEventFrame } from "@/lib/contracts";
 import { stateKey } from "@/lib/state";
 import { blockedTitle, doneTitle } from "@/lib/alerts";
-import { audioCue } from "@/lib/audio-cue";
+import { raiseAttentionCue } from "@/lib/attention-cue";
 
 // M9 Tier 1/2 in-app attention driver. Returns the `onAttention` handler that
 // `useStateStream` invokes when a *different* session transitions into `blocked`
@@ -31,29 +31,10 @@ export function useAttentionAlerts(): (frame: StateEventFrame) => void {
         // best-effort: a toast failure must not break sound/haptic/notification.
       }
 
-      audioCue.play();
-
-      try {
-        navigator.vibrate?.([120, 60, 120]);
-      } catch {
-        // some browsers throw if vibrate is gated; ignore.
-      }
-
-      if (
-        typeof document !== "undefined" &&
-        document.visibilityState === "hidden" &&
-        typeof Notification !== "undefined" &&
-        Notification.permission === "granted"
-      ) {
-        try {
-          new Notification(title, {
-            body: frame.server,
-            tag: stateKey(frame.server, frame.target, frame.session),
-          });
-        } catch {
-          // constructing a Notification can throw on some platforms; ignore.
-        }
-      }
+      raiseAttentionCue(title, {
+        body: frame.server,
+        tag: stateKey(frame.server, frame.target, frame.session),
+      });
     },
     [navigate],
   );

@@ -354,6 +354,130 @@ func TestGateEscalatesOnUnresolvedAndApproveRecovers(t *testing.T) {
 	}
 }
 
+func TestPlanGateReportPersistsBranchWithoutClobber(t *testing.T) {
+	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
+	ctx := context.Background()
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{
+		ProjectID: "p1", IssueNumber: 7, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.TransitionEpic(ctx, e.ID, "queued", "starting", "hub", "", "t1"); err != nil || !ok {
+		t.Fatalf("starting: ok=%v err=%v", ok, err)
+	}
+	if ok, err := d.TransitionEpic(ctx, e.ID, "starting", "planning", "report", "", "t2"); err != nil || !ok {
+		t.Fatalf("planning: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred := o.applyReport(ctx, p, shared.OrchestratorReport{
+		Repo: "o/r", Epic: 7, Stage: shared.EpicEscalated, Branch: "epic/7-x", Note: "plan-gate: x", Ts: "t3",
+	}); deferred {
+		t.Fatal("escalated report unexpectedly deferred")
+	}
+	got, err := d.GetEpic(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Branch != "epic/7-x" || got.Stage != "escalated" {
+		t.Fatalf("after plan gate: %+v", got)
+	}
+
+	// The approved plan resumes implementation before the runner opens a PR.
+	if deferred := o.applyReport(ctx, p, shared.OrchestratorReport{
+		Repo: "o/r", Epic: 7, Stage: shared.EpicImplementing, Ts: "t4",
+	}); deferred {
+		t.Fatal("implementing report unexpectedly deferred")
+	}
+	if deferred := o.applyReport(ctx, p, shared.OrchestratorReport{
+		Repo: "o/r", Epic: 7, Stage: shared.EpicPROpen, PR: 61, Ts: "t5",
+	}); deferred {
+		t.Fatal("pr_open report unexpectedly deferred")
+	}
+	got, err = d.GetEpic(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PRNumber != 61 || got.Branch != "epic/7-x" {
+		t.Fatalf("pr report must preserve plan-gate branch: %+v", got)
+	}
+}
+
+func TestPlanGateReportIgnoresNonconformingBranch(t *testing.T) {
+	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
+	ctx := context.Background()
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{
+		ProjectID: "p1", IssueNumber: 7, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.TransitionEpic(ctx, e.ID, "queued", "starting", "hub", "", "t1"); err != nil || !ok {
+		t.Fatalf("starting: ok=%v err=%v", ok, err)
+	}
+	if ok, err := d.TransitionEpic(ctx, e.ID, "starting", "planning", "report", "", "t2"); err != nil || !ok {
+		t.Fatalf("planning: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred := o.applyReport(ctx, p, shared.OrchestratorReport{
+		Repo: "o/r", Epic: 7, Stage: shared.EpicEscalated, Branch: "main", Note: "plan-gate: x", Ts: "t3",
+	}); deferred {
+		t.Fatal("escalated report unexpectedly deferred")
+	}
+	got, err := d.GetEpic(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Stage != "escalated" || got.Branch != "" {
+		t.Fatalf("nonconforming branch must be ignored: %+v", got)
+	}
+}
+
+func TestBranchClaimRequiresEscalatedStage(t *testing.T) {
+	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
+	ctx := context.Background()
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{
+		ProjectID: "p1", IssueNumber: 7, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.TransitionEpic(ctx, e.ID, "queued", "starting", "hub", "", "t1"); err != nil || !ok {
+		t.Fatalf("starting: ok=%v err=%v", ok, err)
+	}
+	if ok, err := d.TransitionEpic(ctx, e.ID, "starting", "planning", "report", "", "t2"); err != nil || !ok {
+		t.Fatalf("planning: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A non-plan-gate report (implementing) carrying a well-formed epic branch is
+	// a legal transition, but branch persistence is escalation-only — it must NOT
+	// claim the branch slot, or a genuine plan-gate branch could never be recorded.
+	if deferred := o.applyReport(ctx, p, shared.OrchestratorReport{
+		Repo: "o/r", Epic: 7, Stage: shared.EpicImplementing, Branch: "epic/7-x", Ts: "t3",
+	}); deferred {
+		t.Fatal("implementing report unexpectedly deferred")
+	}
+	got, err := d.GetEpic(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Stage != "implementing" || got.Branch != "" {
+		t.Fatalf("non-escalated report must not claim the branch: %+v", got)
+	}
+}
+
 func TestStallOnDeadSession(t *testing.T) {
 	gh := &fakeGH{issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}}}
 	ag := &fakeAgents{}

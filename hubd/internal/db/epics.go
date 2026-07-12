@@ -133,6 +133,16 @@ func (d *DB) ListNonTerminalEpics(ctx context.Context) ([]Epic, error) {
 		`SELECT `+epicCols+` FROM epics WHERE stage NOT IN `+terminalStagesSQL+` ORDER BY issue_number`)
 }
 
+// CountActiveEpics returns the number of non-terminal epics for a project — the
+// same predicate DeleteProject guards on, exposed so a project PATCH can refuse
+// a target change while a runner is live on the current socket.
+func (d *DB) CountActiveEpics(ctx context.Context, projectID string) (int, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM epics WHERE project_id = ? AND stage NOT IN `+terminalStagesSQL, projectID).Scan(&n)
+	return n, err
+}
+
 func (d *DB) listEpics(ctx context.Context, q string, args ...any) ([]Epic, error) {
 	rows, err := d.sql.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -178,6 +188,13 @@ func (d *DB) SetEpicAssignment(ctx context.Context, id, session string, attempt 
 
 func (d *DB) SetEpicPR(ctx context.Context, id string, pr int, branch string) (bool, error) {
 	return d.execFound(ctx, `UPDATE epics SET pr_number=?, branch=?, updated_at=datetime('now') WHERE id=?`, pr, branch, id)
+}
+
+// SetEpicBranch records the epic's branch WITHOUT a PR — used at plan-gate
+// escalation so the plan proxy can serve the committed plan off GitHub
+// before any PR exists. Never touches pr_number.
+func (d *DB) SetEpicBranch(ctx context.Context, id, branch string) (bool, error) {
+	return d.execFound(ctx, `UPDATE epics SET branch=?, updated_at=datetime('now') WHERE id=?`, branch, id)
 }
 
 func (d *DB) SetEpicVerdict(ctx context.Context, id, verdictJSON string) (bool, error) {

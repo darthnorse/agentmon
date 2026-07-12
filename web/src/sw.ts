@@ -4,6 +4,7 @@
 import { precacheAndRoute } from "workbox-precaching";
 import { stateKey } from "@/lib/state";
 import { blockedTitle } from "@/lib/alerts";
+import { epicNotification, epicUrl, isEpicPush } from "@/lib/push-payload";
 
 // `self` is the ServiceWorkerGlobalScope here; cast rather than redeclare so this
 // file still type-checks under the app's DOM-libbed tsconfig.
@@ -41,6 +42,11 @@ sw.addEventListener("push", (event) => {
   } catch {
     data = undefined;
   }
+  if (isEpicPush(data)) {
+    const n = epicNotification(data);
+    event.waitUntil(sw.registration.showNotification(n.title, n.options));
+    return;
+  }
   if (!data || data.type !== "blocked") {
     // The subscription is userVisibleOnly:true, so EVERY received push must produce a
     // visible notification or the browser may penalise/revoke the subscription. The hub
@@ -66,12 +72,22 @@ sw.addEventListener("push", (event) => {
 // Focus an existing window (or open one) when the user taps the notification.
 sw.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const data = event.notification.data as unknown;
+  const url = isEpicPush(data) ? epicUrl(data) : "/";
   event.waitUntil(
     sw.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
       for (const c of cs) {
-        if ("focus" in c) return c.focus();
+        if ("focus" in c) {
+          // Focused client is already running the SPA — hand it the route so we
+          // don't spawn a second tab. The page bridges this into the router.
+          // Return focus()'s promise so waitUntil keeps the worker alive until the
+          // window is actually foregrounded — a bare `void focus()` lets waitUntil
+          // resolve immediately and the browser may kill the SW mid-focus.
+          if (url !== "/") (c as WindowClient).postMessage({ kind: "navigate", url });
+          return (c as WindowClient).focus();
+        }
       }
-      return sw.clients.openWindow("/");
+      return sw.clients.openWindow(url);
     }),
   );
 });

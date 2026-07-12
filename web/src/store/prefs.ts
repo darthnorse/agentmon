@@ -14,12 +14,14 @@ export interface PrefsState {
   alertOnDone: boolean;
   gridMaxColumns: number;
   windowSwitchShortcut: ShortcutScheme;
+  projectsBoardLayout: "stack" | "columns";
   setFontSizeDesktop(n: number): void;
   setFontSizeMobile(n: number): void;
   setTerminalTheme(t: ThemeName): void;
   setAlertOnDone(v: boolean): void;
   setGridMaxColumns(n: number): void;
   setWindowSwitchShortcut(v: ShortcutScheme): void;
+  setProjectsBoardLayout(v: "stack" | "columns"): void;
 }
 
 export const usePrefs = create<PrefsState>()(
@@ -31,12 +33,14 @@ export const usePrefs = create<PrefsState>()(
       alertOnDone: false,
       gridMaxColumns: 3,
       windowSwitchShortcut: "alt",
+      projectsBoardLayout: "stack",
       setFontSizeDesktop: (n) => set({ fontSizeDesktop: n }),
       setFontSizeMobile: (n) => set({ fontSizeMobile: n }),
       setTerminalTheme: (t) => set({ terminalTheme: t }),
       setAlertOnDone: (v) => set({ alertOnDone: v }),
       setGridMaxColumns: (n) => set({ gridMaxColumns: Math.max(1, Math.min(4, Math.floor(n))) }),
       setWindowSwitchShortcut: (v) => set({ windowSwitchShortcut: v }),
+      setProjectsBoardLayout: (v) => set({ projectsBoardLayout: v }),
     }),
     {
       name: PREFS_STORAGE_KEY,
@@ -48,6 +52,7 @@ export const usePrefs = create<PrefsState>()(
         alertOnDone: s.alertOnDone,
         gridMaxColumns: s.gridMaxColumns,
         windowSwitchShortcut: s.windowSwitchShortcut,
+        projectsBoardLayout: s.projectsBoardLayout,
       }),
     },
   ),

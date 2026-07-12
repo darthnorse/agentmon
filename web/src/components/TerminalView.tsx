@@ -6,7 +6,7 @@ import { useTerminalSession } from "@/hooks/useTerminalSession";
 
 export function TerminalView({
   serverId, paneId, target, showKeyBar = false, active, focusNonce, fontSize, theme,
-  ended, onClose,
+  ended, onClose, readOnly = false,
 }: {
   serverId: string;
   paneId: string;
@@ -20,10 +20,14 @@ export function TerminalView({
   // only: the socket keeps its slow retry so a recycled pane id self-heals.
   ended?: boolean;
   onClose?: () => void;
+  // Watch-only mode (drawer preview): never forward input, never resize the real
+  // tmux pane, never steal keyboard focus. Defaults off so the grid/terminal route
+  // are unchanged.
+  readOnly?: boolean;
 }) {
   const targetObj = React.useMemo(() => ({ serverId, paneId, target }), [serverId, paneId, target]);
   const { xtermRef, controller, connected, everConnected, handleData, handleResize, retryNow } =
-    useTerminalSession(targetObj);
+    useTerminalSession(targetObj, { readOnly });
 
   // Hand keyboard focus to this pane's xterm when it becomes active (the mobile pool's
   // visible pane, or a desktop grid tile). The effect also re-runs when `focusNonce`

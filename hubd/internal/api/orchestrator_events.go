@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"agentmon/hubd/internal/authz"
+	"agentmon/hubd/internal/orchestrator"
 )
 
 func (d Deps) OrchestratorEventsHandler() http.HandlerFunc {
@@ -19,36 +20,30 @@ func (d Deps) OrchestratorEventsHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "stream unsupported")
 			return
 		}
-		if d.BoardBcast == nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "board streaming not configured")
-			return
+		// Subscribe BEFORE the snapshot (no delta lost in the gap) when live. A
+		// dormant hub (no GitHub token) has no broadcaster: ch stays nil, so the
+		// delta arm of the select below never fires and the stream stays open+idle
+		// rather than 503 — the app-wide EventSource must not reconnect-loop. The
+		// dormant hub still serves the REAL snapshot: projects can live in the DB
+		// (registered while enabled, then restarted dormant), and boardSnapshot's
+		// invariant is that this payload never drifts from GET /board.
+		var ch <-chan orchestrator.BoardChange
+		if d.BoardBcast != nil {
+			_, sub, cancel := d.BoardBcast.Subscribe()
+			ch = sub
+			defer cancel()
 		}
-		// Subscribe BEFORE the snapshot (no delta lost in the gap), but query
-		// BEFORE setting SSE headers so a failing DB yields a loud 500, not a
+		// Query BEFORE setting SSE headers so a failing DB yields a loud 500, not a
 		// silent empty 200 the EventSource reconnect-loops against.
-		_, ch, cancel := d.BoardBcast.Subscribe()
-		defer cancel()
-		projects, err := d.DB.ListProjects(r.Context())
+		projDTOs, epics, err := d.boardSnapshot(r.Context())
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		projDTOs := make([]projectDTO, 0, len(projects))
-		var epics []epicDTO
-		for _, pr := range projects {
-			projDTOs = append(projDTOs, projectOut(pr, nil))
-			es, err := d.DB.ListBoardEpics(r.Context(), pr.ID)
-			if err != nil {
-				writeJSONError(w, http.StatusInternalServerError, "internal error")
-				return
-			}
-			for _, e := range es {
-				epics = append(epics, toEpicDTO(e))
-			}
-		}
 		// Board viewers are online viewers: suppress redundant web-push for
-		// escalations they are already watching (mirrors events.go).
-		if d.Presence != nil {
+		// escalations they're already watching (mirrors events.go). Live only — a
+		// dormant hub never pushes.
+		if d.BoardBcast != nil && d.Presence != nil {
 			d.Presence.Add(p.ID)
 			defer d.Presence.Remove(p.ID)
 		}
@@ -67,9 +62,9 @@ func (d Deps) OrchestratorEventsHandler() http.HandlerFunc {
 			select {
 			case <-r.Context().Done():
 				return
-			case c, ok := <-ch:
+			case c, ok := <-ch: // nil ch (dormant) never fires
 				if !ok {
-					return
+					return // live broadcaster closed
 				}
 				writeSSE(w, "board", map[string]any{"project_id": c.ProjectID, "epic_id": c.EpicID, "issue": c.Issue, "stage": c.Stage, "needs": c.Needs, "title": c.Title})
 				flusher.Flush()

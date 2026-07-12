@@ -40,7 +40,7 @@ func intakePost(t *testing.T, st *Store, resolve SessionResolver, url, body stri
 func TestIntakeBuffersServerStampedReport(t *testing.T) {
 	st := NewStore("i", 10)
 	w := intakePost(t, st, okResolver("epic-proj-16"), "/orchestrator/report",
-		`{"repo":"o/r","epic":16,"stage":"planning","note":"n"}`)
+		`{"repo":"o/r","epic":16,"stage":"planning","note":"n","branch":"epic/7-x"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code %d body %s", w.Code, w.Body)
 	}
@@ -49,7 +49,7 @@ func TestIntakeBuffersServerStampedReport(t *testing.T) {
 		t.Fatalf("buffered = %+v", b)
 	}
 	r := b.Reports[0]
-	if r.Session != "epic-proj-16" || r.Ts != "2026-07-10T14:00:00Z" || r.Epic != 16 || r.Note != "n" {
+	if r.Session != "epic-proj-16" || r.Ts != "2026-07-10T14:00:00Z" || r.Epic != 16 || r.Note != "n" || r.Branch != "epic/7-x" {
 		t.Fatalf("report = %+v", r)
 	}
 }

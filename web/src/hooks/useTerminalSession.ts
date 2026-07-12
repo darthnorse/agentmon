@@ -17,10 +17,15 @@ export interface TerminalController {
   focusTerminal(): void;
 }
 
-export function useTerminalSession(target: TerminalTarget) {
+export function useTerminalSession(target: TerminalTarget, opts?: { readOnly?: boolean }) {
   const xtermRef = React.useRef<XTermHandle>(null);
   const sockRef = React.useRef<TerminalSocket | null>(null);
   const ctrlArmedRef = React.useRef(false);
+  // Watch-only preview: suppress input, resize, and focus so viewing an epic can
+  // never type into or reshape the live runner's tmux pane. Held in a ref so the
+  // socket effect (which only re-creates on target change) always sees the latest.
+  const readOnlyRef = React.useRef(opts?.readOnly ?? false);
+  readOnlyRef.current = opts?.readOnly ?? false;
   const [ctrlArmed, setCtrlArmed] = React.useState(false);
   const [connected, setConnected] = React.useState(false);
   const [everConnected, setEverConnected] = React.useState(false);
@@ -29,6 +34,7 @@ export function useTerminalSession(target: TerminalTarget) {
 
   // typed/pasted text from xterm → apply sticky Ctrl → socket
   const handleData = React.useCallback((d: string) => {
+    if (readOnlyRef.current) return; // watch-only: never forward keystrokes to the runner
     if (ctrlArmedRef.current) {
       send(keys.encodeCtrl(d));
       ctrlArmedRef.current = false;
@@ -39,6 +45,7 @@ export function useTerminalSession(target: TerminalTarget) {
   }, [send]);
 
   const handleResize = React.useCallback((cols: number, rows: number) => {
+    if (readOnlyRef.current) return; // watch-only: never resize the real tmux pane
     sockRef.current?.resize(cols, rows);
   }, []);
 
@@ -52,8 +59,8 @@ export function useTerminalSession(target: TerminalTarget) {
         setEverConnected(true);
         xtermRef.current?.reset();           // fresh paint; snapshot arrives next as binary
         const size = xtermRef.current?.fit();
-        if (size) sock.resize(size.cols, size.rows);
-        xtermRef.current?.focus();
+        if (size && !readOnlyRef.current) sock.resize(size.cols, size.rows);
+        if (!readOnlyRef.current) xtermRef.current?.focus();
       },
       onClose: () => setConnected(false),
       // Live hub state delta for this pane. ONLY the focused pane consumes it (its

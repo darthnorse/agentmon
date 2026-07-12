@@ -46,6 +46,7 @@ type OrchestratorReport struct {
 	Stage   EpicStage `json:"stage"`
 	Note    string    `json:"note,omitempty"`
 	PR      int       `json:"pr,omitempty"`
+	Branch  string    `json:"branch,omitempty"`
 	Session string    `json:"session"`
 	Ts      string    `json:"ts"`
 }

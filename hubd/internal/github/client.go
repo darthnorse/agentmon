@@ -5,6 +5,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -315,4 +316,64 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, num int, label st
 		return nil
 	}
 	return err
+}
+
+// ErrTooLarge marks a contents fetch rejected by the size cap.
+var ErrTooLarge = errors.New("github: file too large")
+
+// maxContentsBytes caps plan-doc fetches (spec §5.2). GitHub's JSON contents
+// API itself omits content above 1 MiB; we cap far below that.
+const maxContentsBytes = 256 << 10 // 256 KiB
+
+// validPath guards a repo-relative file path interpolated into the URL —
+// same defense-in-depth role as validRef, plus traversal/absolute rejection.
+func validPath(p string) error {
+	if p == "" || len(p) > 512 || strings.HasPrefix(p, "/") || strings.Contains(p, "..") || !refRe.MatchString(p) {
+		return fmt.Errorf("github: invalid path %q", p)
+	}
+	return nil
+}
+
+type wireContents struct {
+	Type     string `json:"type"`
+	Encoding string `json:"encoding"`
+	Size     int    `json:"size"`
+	Content  string `json:"content"`
+}
+
+// GetContents fetches one file's bytes at ref via the JSON contents API —
+// do() is JSON-only by design, and this reuses its auth/error/status handling
+// (raw-accept mode would need a parallel request path). Directories decode
+// into a JSON array and fail loudly rather than returning garbage.
+func (c *Client) GetContents(ctx context.Context, repo, path, ref string) ([]byte, error) {
+	if err := validRepo(repo); err != nil {
+		return nil, err
+	}
+	if err := validPath(path); err != nil {
+		return nil, err
+	}
+	if err := validRef(ref); err != nil {
+		return nil, err
+	}
+	var w wireContents
+	if _, err := c.do(ctx, "GET", fmt.Sprintf("/repos/%s/contents/%s?ref=%s", repo, path, url.QueryEscape(ref)), nil, &w, 200); err != nil {
+		return nil, err
+	}
+	if w.Type != "" && w.Type != "file" {
+		return nil, fmt.Errorf("github: %s is not a file", path)
+	}
+	if w.Size > maxContentsBytes || w.Encoding == "none" {
+		return nil, ErrTooLarge
+	}
+	if w.Encoding != "base64" {
+		return nil, fmt.Errorf("github: unexpected contents encoding %q", w.Encoding)
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(w.Content, "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("github: decode contents: %w", err)
+	}
+	if len(b) > maxContentsBytes {
+		return nil, ErrTooLarge
+	}
+	return b, nil
 }
