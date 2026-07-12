@@ -1,4 +1,4 @@
-import type { EpicDTO, EpicStage } from "@/lib/contracts";
+import type { EpicDTO, EpicStage, ProjectDTO, Session } from "@/lib/contracts";
 import type { Provider } from "@/lib/provider";
 
 export const PLAN_GATE_PREFIX = "plan-gate:";
@@ -37,6 +37,12 @@ export const STAGE_META: Record<EpicStage, StageMeta> = {
 export function stageMeta(stage: string): StageMeta {
   return STAGE_META[stage as EpicStage] ?? { label: stage, dotClass: "bg-zinc-400", barClass: "bg-zinc-400", column: "working" };
 }
+
+// Terminal stages: the epic is done (merged) or dead (failed/canceled). Shared by
+// the gantt bar (freeze the bar) and the drawer (hide live actions) so the set
+// lives in one place.
+export const isTerminalStage = (s: string): boolean =>
+  s === "merged" || s === "failed" || s === "canceled";
 
 const ts = (s: string) => (s ? Date.parse(s) : 0);
 
@@ -133,4 +139,16 @@ export function fmtElapsed(fromIso: string, now: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ${m % 60}m`;
   return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+// Match an epic to its live runner session. A non-default project target scopes
+// the lookup to that socket; an empty target accepts the agent-default list. The
+// drawer's open-full-session and the terminal preview share this so the predicate
+// lives in one place.
+export function findRunnerSession(
+  sessions: Session[] | undefined, epic: EpicDTO, project: ProjectDTO,
+): Session | undefined {
+  return sessions?.find(
+    (s) => s.name === epic.session && (project.target === "" || s.target === project.target),
+  );
 }

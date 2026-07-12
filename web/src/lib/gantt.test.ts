@@ -21,6 +21,15 @@ describe("ganttWindow", () => {
     const w = ganttWindow([epic({ started_at: "2026-07-01T00:00:00Z" })], NOW, "24h")!;
     expect(w.t0).toBe(NOW - 86400000);
   });
+  it("ignores an unparseable started_at instead of poisoning the window to NaN", () => {
+    expect(ganttWindow([epic({ started_at: "not-a-date" })], NOW, "all")).toBeNull();
+    const w = ganttWindow(
+      [epic({ started_at: "not-a-date" }), epic({ id: "e2", started_at: "2026-07-11T08:00:00Z" })],
+      NOW, "all",
+    )!;
+    expect(Number.isFinite(w.t0)).toBe(true);
+    expect(w.t0).toBe(Date.parse("2026-07-11T08:00:00Z"));
+  });
 });
 
 describe("ganttBar", () => {
@@ -44,6 +53,16 @@ describe("ganttBar", () => {
     expect(b.live).toBe(false);
     expect(b.endMs).toBe(Date.parse("2026-07-11T11:00:00Z"));
     expect(ganttBar(epic({ stage: "queued", started_at: "" }), w, NOW)).toBeNull();
+  });
+  it("caps a right-edge bar so leftPct + widthPct never exceeds 100", () => {
+    const w = { t0: NOW - 1000, t1: NOW };
+    const b = ganttBar(epic({ started_at: new Date(NOW - 5).toISOString() }), w, NOW)!;
+    expect(b.leftPct).toBeGreaterThan(99);
+    expect(b.leftPct + b.widthPct).toBeLessThanOrEqual(100);
+  });
+  it("returns null for an unparseable started_at", () => {
+    const w = ganttWindow([epic({})], NOW, "all")!;
+    expect(ganttBar(epic({ started_at: "garbage" }), w, NOW)).toBeNull();
   });
 });
 

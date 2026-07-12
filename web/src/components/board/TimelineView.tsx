@@ -5,7 +5,7 @@ import { StageChip } from "@/components/board/StageChip";
 import { cardProvider, stageMeta } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import {
-  arrowPath, fmtDur, ganttBar, ganttTicks, ganttWindow, type GanttRange,
+  arrowPath, fmtDur, ganttBar, ganttTicks, ganttWindow, type GanttRange, type GanttWindow,
 } from "@/lib/gantt";
 import { cn } from "@/lib/utils";
 
@@ -59,7 +59,11 @@ export function TimelineView({ epics, projects, groupByProject, onOpenEpic }: {
           ));
         }
       }
-      setArrows(paths);
+      // Bail when the measured paths are unchanged. `w` is a fresh object every
+      // render and setArrows always builds a new array, so an unconditional update
+      // feeds a perpetual rAF-paced render→measure loop; returning `prev` on an
+      // equal result lets React skip the re-render and the effect settles.
+      setArrows((prev) => (prev.length === paths.length && prev.every((d, i) => d === paths[i]) ? prev : paths));
     };
     const raf = requestAnimationFrame(compute);
     window.addEventListener("resize", compute);
@@ -120,7 +124,7 @@ export function TimelineView({ epics, projects, groupByProject, onOpenEpic }: {
 }
 
 function TimelineRow({ epic, project, w, now, onOpen }: {
-  epic: EpicDTO; project?: ProjectDTO; w: { t0: number; t1: number }; now: number; onOpen(): void;
+  epic: EpicDTO; project?: ProjectDTO; w: GanttWindow; now: number; onOpen(): void;
 }) {
   const meta = stageMeta(epic.stage);
   const bar = ganttBar(epic, w, now);

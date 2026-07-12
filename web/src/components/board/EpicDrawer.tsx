@@ -11,7 +11,7 @@ import { useEpicActions } from "@/hooks/useEpicActions";
 import {
   boardSessionsKey, getProjectBoard, listServers, listSessions, projectBoardKey, serversKey,
 } from "@/lib/api-client";
-import { canApprove, isPlanGate, mergeMode, parseVerdict, stageMeta } from "@/lib/board";
+import { canApprove, findRunnerSession, isPlanGate, isTerminalStage, mergeMode, parseVerdict, stageMeta } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
@@ -26,7 +26,7 @@ export function EpicDrawer({ epic, project, onClose }: {
   const planGate = isPlanGate(epic.needs);
   const running = meta.column === "working";
   const waiting = meta.column === "needs";
-  const terminal = epic.stage === "merged" || epic.stage === "failed" || epic.stage === "canceled";
+  const terminal = isTerminalStage(epic.stage);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const [guidance, setGuidance] = React.useState("");
   const navigate = useNavigate();
@@ -42,9 +42,7 @@ export function EpicDrawer({ epic, project, onClose }: {
   // Open the runner session exactly as today's UI would (spec §8.3): desktop
   // grid tile via the pane store + home, mobile the /t terminal route.
   const openFullSession = React.useCallback(() => {
-    const session = sessionsQ.data?.find(
-      (s) => s.name === epic.session && (project.target === "" || s.target === project.target),
-    );
+    const session = findRunnerSession(sessionsQ.data, epic, project);
     const pane = session?.windows[0]?.panes[0];
     if (!session || !pane) {
       toast.error("Session ended — nothing to attach to.");

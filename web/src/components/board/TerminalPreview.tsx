@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { TerminalView } from "@/components/TerminalView";
 import { boardSessionsKey, listSessions } from "@/lib/api-client";
-import type { EpicDTO, ProjectDTO, Session } from "@/lib/contracts";
+import { findRunnerSession } from "@/lib/board";
+import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import { themeOf } from "@/lib/terminal-themes";
 import { usePrefs } from "@/store/prefs";
 
@@ -20,9 +21,7 @@ export function TerminalPreview({ project, epic, onOpenFull }: {
     queryKey: boardSessionsKey(project.server_id, project.target),
     queryFn: () => listSessions(project.server_id, project.target || undefined),
   });
-  const session: Session | undefined = q.data?.find(
-    (s) => s.name === epic.session && (project.target === "" || s.target === project.target),
-  );
+  const session = findRunnerSession(q.data, epic, project);
   const pane = session?.windows[0]?.panes[0];
 
   return (
@@ -36,7 +35,7 @@ export function TerminalPreview({ project, epic, onOpenFull }: {
         <div className="text-xs text-muted-foreground">Session ended — nothing to preview.</div>
       ) : (
         <div className="relative h-56 overflow-hidden rounded-md border border-border">
-          <TerminalView serverId={project.server_id} paneId={pane.id} target={session.target} active={false}
+          <TerminalView serverId={project.server_id} paneId={pane.id} target={session.target} active={false} readOnly
             fontSize={11} theme={themeOf(theme)} />
           <div className="absolute inset-0 z-10" aria-hidden onClick={onOpenFull} />
           <Button size="sm" className="absolute bottom-2 right-2 z-20" onClick={onOpenFull}>

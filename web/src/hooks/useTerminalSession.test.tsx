@@ -4,6 +4,8 @@ import { renderHook } from "@testing-library/react";
 // Capture the handlers passed to TerminalSocket so we can drive onState directly.
 let captured: { onState?: (f: { session: string; state: string }) => void } | null = null;
 const retryNowSpy = vi.fn();
+const sendSpy = vi.fn();
+const resizeSpy = vi.fn();
 vi.mock("@/lib/ws-terminal", async (orig) => {
   const mod = (await orig()) as object;
   return {
@@ -14,8 +16,8 @@ vi.mock("@/lib/ws-terminal", async (orig) => {
       }
       open() {}
       dispose() {}
-      send() {}
-      resize() {}
+      send(...a: unknown[]) { sendSpy(...a); }
+      resize(...a: unknown[]) { resizeSpy(...a); }
       retryNow = retryNowSpy;
     },
   };
@@ -51,6 +53,26 @@ describe("useTerminalSession onState gating (M11)", () => {
     useSessionState.getState().setFocusedKey(key);
     captured!.onState!({ session: "api", state: "blocked" });
     expect(useSessionState.getState().live.get(key)).toBe("blocked");
+  });
+});
+
+describe("useTerminalSession read-only (watch) mode", () => {
+  beforeEach(() => { captured = null; sendSpy.mockClear(); resizeSpy.mockClear(); });
+
+  it("forwards input and resize by default", () => {
+    const { result } = renderHook(() => useTerminalSession(target));
+    result.current.handleData("hi");
+    result.current.handleResize(80, 24);
+    expect(sendSpy).toHaveBeenCalled();
+    expect(resizeSpy).toHaveBeenCalledWith(80, 24);
+  });
+
+  it("suppresses input and resize when readOnly, so a preview never touches the live pane", () => {
+    const { result } = renderHook(() => useTerminalSession(target, { readOnly: true }));
+    result.current.handleData("hi");
+    result.current.handleResize(80, 24);
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(resizeSpy).not.toHaveBeenCalled();
   });
 });
 
