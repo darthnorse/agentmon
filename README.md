@@ -435,11 +435,45 @@ murky escalates to **Needs you** instead of guessing. The `pr-gate` label always
 
 ### Troubleshooting
 
-- **Board says "dormant"** → no `github.token`, or the hub wasn't restarted after adding it.
+- **Board says "dormant"** → no `github.token` in `deploy/data/config.yaml`, or the hub wasn't restarted
+  after adding it (`docker compose restart agentmon-hub`).
 - **A runner shows "session ended"** → the project's **Target** doesn't match where the session actually
   runs; re-check it and re-run doctor.
-- **The go-to preflight** is always `agentmon doctor` inside a monitored session on the host — it checks
-  auth, hooks, provider trust, and the workdir in one shot.
+
+#### The `agentmon doctor` host check
+
+Registration runs `agentmon doctor` on the host (you can also run it by hand, **from the project's workdir,
+inside a monitored tmux session**). It verifies every prerequisite; here's what each failure means and how
+to fix it. The checks for a provider you don't use show as `– … not detected` and can be ignored.
+
+| Failing check | Fix |
+|---|---|
+| `repo derivation (cwd is a clone)` | Run doctor from inside the project's cloned workdir (it reads `owner/repo` from the `origin` remote), or pass `--repo owner/repo`. |
+| `gh auth` | `gh auth login` as the user the sessions run as, on that host. |
+| `gh repo access (owner/repo)` | The signed-in `gh` account can't see that repo — check the login and that the repo name matches. |
+| `git fetch origin main` | The clone's `origin` can't fetch the base branch — fix its auth/remote, or the base-branch name. |
+| `reporter dry-run` | Run doctor **inside a monitored tmux session** (the probe needs a live pane), and confirm `/etc/agentmon/agent.toml` exists on the host. |
+| `provider binaries` | Only fails when **neither** `claude` nor `codex` is on PATH. Install one and make sure the **agent service's** PATH resolves it (e.g. add `/root/.local/bin` to the unit's `PATH`). |
+| `claude epic-pipeline skill` / `codex epic-pipeline prompt` | Run `agentmon install-skills` on that host. |
+| `codex sandbox config` | Edit `~/.codex/config.toml` — see below. |
+| `codex hooks trust` | Run `codex` once interactively on that host and **trust its hooks** — otherwise every runner session hangs at the trust prompt. |
+
+**Codex sandbox config** is the fiddly one. Codex runs in a *workspace-write* sandbox that, by default,
+keeps `.git` read-only and blocks loopback networking — so runners can't commit or run test gates. In
+`~/.codex/config.toml` **on that host** (it's per-host, so a config on one box doesn't help another):
+
+```toml
+# sandbox_mode defaults to workspace-write for interactive sessions -- only set it
+# if you've pinned it read-only elsewhere. (danger-full-access skips these checks.)
+[sandbox_workspace_write]
+network_access = true              # test + reporter processes bind 127.0.0.1
+writable_roots = [
+  "/path/to/your/clone/.git",      # the workdir you registered, plus /.git
+]
+```
+
+Codex keeps each writable root's *top-level* `.git` read-only, so listing the repo root isn't enough — the
+`.git` path itself must be in `writable_roots`. Re-run doctor after editing.
 
 ---
 
