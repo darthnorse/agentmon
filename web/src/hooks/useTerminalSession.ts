@@ -20,6 +20,7 @@ export interface TerminalController {
 export function useTerminalSession(target: TerminalTarget, opts?: { readOnly?: boolean }) {
   const xtermRef = React.useRef<XTermHandle>(null);
   const sockRef = React.useRef<TerminalSocket | null>(null);
+  const nudgeTimersRef = React.useRef<ReturnType<typeof setTimeout>[]>([]);
   const ctrlArmedRef = React.useRef(false);
   // Watch-only preview: suppress input, resize, and focus so viewing an epic can
   // never type into or reshape the live runner's tmux pane. Held in a ref so the
@@ -52,6 +53,21 @@ export function useTerminalSession(target: TerminalTarget, opts?: { readOnly?: b
   const retryNow = React.useCallback(() => sockRef.current?.retryNow(), []);
 
   React.useEffect(() => {
+    // Settle-repaint (once per pane, first connect only): a freshly-created
+    // session's TUI can paint before the tile/route is fully laid out, leaving it
+    // blank until a manual close+reopen. After layout settles we nudge the pane
+    // size — tmux no-ops a same-size resize, so we drop a row then restore it — to
+    // make the TUI do a full SIGWINCH repaint into the now-correct terminal.
+    // Skipped for read-only previews (never reshape a watched pane) and reconnects.
+    let settled = false;
+    const nudge = () => {
+      const s = xtermRef.current?.fit();
+      if (!s || readOnlyRef.current) return;
+      sockRef.current?.resize(s.cols, Math.max(1, s.rows - 1));
+      nudgeTimersRef.current.push(setTimeout(() => {
+        if (!readOnlyRef.current) sockRef.current?.resize(s.cols, s.rows);
+      }, 60));
+    };
     const sock = new TerminalSocket(target, {
       onData: (b) => xtermRef.current?.write(b),
       onOpen: () => {
@@ -61,6 +77,10 @@ export function useTerminalSession(target: TerminalTarget, opts?: { readOnly?: b
         const size = xtermRef.current?.fit();
         if (size && !readOnlyRef.current) sock.resize(size.cols, size.rows);
         if (!readOnlyRef.current) xtermRef.current?.focus();
+        if (!settled && !readOnlyRef.current) {
+          settled = true;
+          nudgeTimersRef.current.push(setTimeout(nudge, 500));
+        }
       },
       onClose: () => setConnected(false),
       // Live hub state delta for this pane. ONLY the focused pane consumes it (its
@@ -89,7 +109,13 @@ export function useTerminalSession(target: TerminalTarget, opts?: { readOnly?: b
       paneIdentity(target.serverId, target.target, target.paneId),
       () => sock.retryNow(),
     );
-    return () => { offKick(); sock.dispose(); sockRef.current = null; };
+    return () => {
+      offKick();
+      sock.dispose();
+      sockRef.current = null;
+      nudgeTimersRef.current.forEach(clearTimeout);
+      nudgeTimersRef.current = [];
+    };
     // re-create only when the pane target changes
   }, [target.serverId, target.paneId, target.target]);
 
