@@ -4,10 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { BoardView } from "@/components/board/BoardView";
 import { EpicDrawer } from "@/components/board/EpicDrawer";
+import { ProjectForm } from "@/components/board/ProjectForm";
 import { ProjectHeader } from "@/components/board/ProjectHeader";
 import { TimelineView } from "@/components/board/TimelineView";
 import { ProjectSwitcher } from "@/components/board/ProjectSwitcher";
-import { allBoardKey, getAllBoard } from "@/lib/api-client";
+import { allBoardKey, getAllBoard, listServers, serversKey } from "@/lib/api-client";
 import type { EpicDTO, SessionState } from "@/lib/contracts";
 import { effectiveSessionState } from "@/lib/state";
 import { needsByProject, useBoardAttention } from "@/store/board";
@@ -35,6 +36,7 @@ export function ProjectDetailRoute() {
 function ProjectsShell({ projectId }: { projectId: string | null }) {
   const navigate = useNavigate();
   const [editing, setEditing] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
   // Both routes share the search schema; read it loosely to avoid binding to
   // one route id.
   const search = useSearch({ strict: false }) as Partial<ProjectsSearch>;
@@ -42,6 +44,7 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
   const epicId = search.epic ?? "";
 
   const boardQ = useQuery({ queryKey: allBoardKey(), queryFn: getAllBoard });
+  const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
   const attention = useBoardAttention((s) => s.attention);
   const needs = React.useMemo(() => needsByProject(attention), [attention]);
   const snap = useStateSnapshot();
@@ -93,10 +96,24 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
         {project && data?.orchestrator_enabled && (
           <ProjectHeader project={project} epics={epics} onEdit={() => setEditing(true)} />
         )}
-        {/* Task 19 mounts the New-project button here for the All view. */}
+        {!projectId && data?.orchestrator_enabled && (
+          <Button size="sm" onClick={() => setCreating(true)}>New project</Button>
+        )}
       </header>
 
       {editing && null}
+
+      {creating && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4" onClick={() => setCreating(false)}>
+          <div className="mx-auto max-w-3xl rounded-lg border border-border bg-background p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold">New project</h2>
+              <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>✕</Button>
+            </div>
+            <ProjectForm mode="create" servers={serversQ.data ?? []} onDone={() => setCreating(false)} />
+          </div>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {boardQ.isLoading ? (
@@ -111,7 +128,7 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
         ) : projectId && !project ? (
           <div className="p-4 text-sm text-muted-foreground">Project not found — it may have been deleted.</div>
         ) : data.projects.length === 0 ? (
-          <ZeroProjects />
+          <ZeroProjects onNew={() => setCreating(true)} />
         ) : (
           <>
             <div className="mb-3 flex items-center gap-1 border-b border-border">

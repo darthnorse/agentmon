@@ -4566,7 +4566,7 @@ git commit -m "feat(web): project header controls (run pill, max-parallel, pause
 - Consumes: `createProject`/`allBoardKey` (Task 7), `listServers`/`serversKey`, `isValidSessionName`? no — reuse `github.IsValidRepo`? that's Go; use a small client repo regex; `openOrFocusSession` (Task 18) for doctor-verify, `sessionSlug` (Task 7), `useMediaQuery`, `useNavigate`, `queryClient`.
 - Produces: `ProjectForm {mode: "create"; servers: ServerSummary[]; onDone(project?: ProjectDTO): void}` (edit mode added in Task 20); `DoctorVerify {project: ProjectDTO}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `web/src/components/board/ProjectForm.test.tsx`:
 
@@ -4635,12 +4635,12 @@ describe("ProjectForm create", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/web && npx vitest run src/components/board/ProjectForm.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement `web/src/components/board/ProjectForm.tsx`**
+- [x] **Step 3: Implement `web/src/components/board/ProjectForm.tsx`**
 
 ```tsx
 import * as React from "react";
@@ -4823,7 +4823,7 @@ export function DoctorVerify({ project, onDone }: { project: ProjectDTO; onDone(
 }
 ```
 
-- [ ] **Step 4: Mount New-project in the route**
+- [x] **Step 4: Mount New-project in the route**
 
 In `web/src/routes/projects.tsx`: add `const [creating, setCreating] = React.useState(false);` and a `serversQ` (`useQuery({ queryKey: serversKey(), queryFn: listServers })`). At the All-view header mount point add a New-project button (shown when `!projectId && data?.orchestrator_enabled`):
 
@@ -4851,12 +4851,12 @@ Pass the create callback INTO `ZeroProjects` via its `onNew` prop — change the
 
 with imports for `ProjectForm`, `listServers`, `serversKey`.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd /root/agentmon/web && npx vitest run src/components/board/ProjectForm.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 6: Web gate + commit**
+- [x] **Step 6: Web gate + commit**
 
 ```bash
 cd /root/agentmon/web && npm run typecheck && npm run test:run
