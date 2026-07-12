@@ -16,6 +16,22 @@ status *is* navigation, and the thing you most need is "which agent needs me, an
 
 ---
 
+## Contents
+
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Quick start](#quick-start) — stand up the hub and enrol agents
+- [Configuration reference](#configuration-reference)
+- [Using AgentMon](#using-agentmon) — watch and drive live sessions
+- [Orchestration — running epics end to end](#orchestration--running-epics-end-to-end) — let it plan / implement / PR issues for you
+- [Updating](#updating)
+- [Security & network posture](#security--network-posture)
+- [Development](#development)
+- [License](#license)
+
+---
+
 ## Features
 
 - **One hub, many servers.** A single browser/PWA UI aggregates `tmux` sessions from any number of servers,
@@ -314,6 +330,111 @@ agentmon import-epics --dir docs/plan            # epic files → GitHub issues 
   PWA for push).
 - **Settings** (gear icon) — terminal theme + font size (desktop and mobile separately), and an optional
   "alert when a session finishes (done)" toggle.
+
+---
+
+## Orchestration — running epics end to end
+
+Beyond watching sessions, AgentMon can **run the work for you**: it turns GitHub issues into *epics* and
+drives each one through **plan → implement → review → PR → gate-merge** in a fresh `tmux` session on one of
+your hosts, pinging you only at the decision points. The orchestrator stays completely **dormant** until you
+give the hub a token *and* register a project — nothing below affects the interactive monitor above.
+
+Here is the whole thing, start to finish.
+
+### 1. Give the hub a GitHub token (once)
+
+Add a `github.token` to `config.yaml` and restart the hub. Use a PAT scoped to **only** the repos you'll
+orchestrate: *issues* read, *pull requests* + *contents* read/write, *checks* read.
+
+```yaml
+github:
+  token: "github_pat_..."
+  # webhook_secret: ""   # optional; polling already covers everything, a webhook just lowers latency
+```
+
+The **Projects** link appears in the header once the token is set.
+
+### 2. Prepare a runner host (once per host)
+
+A project runs on one of your agent hosts. That host needs:
+
+- The **agent installed** (see [Quick start](#quick-start)) and the coding-agent CLI on its `PATH`
+  (`claude` and/or `codex`).
+- **`gh auth login`** as the user the sessions run as (the runner uses `gh` for PRs), and for Codex a
+  one-time interactive **hook-trust** the first time you run it.
+- A **clone of the repo** in a working directory the agent user can write to.
+
+### 3. Register the project (in the UI)
+
+Open **Projects → New project** and fill in:
+
+| Field | What it is |
+|---|---|
+| **Repo** | `owner/name` on GitHub |
+| **Host** | which agent runs the sessions |
+| **Target** | the host's `tmux` socket — leave blank for the default |
+| **Workdir** | the repo clone from step 2 |
+| **Base branch** | usually `main` |
+| **Provider** | `claude` or `codex` (per-epic override below) |
+| **Required reviews** | e.g. `cross-model` — verdicts must include these before an auto-merge |
+| **Max parallel** | how many epics run at once (start at **1**) |
+
+The form's **doctor-verify** step spawns `agentmon doctor` in a real session on the host — green means the
+host is wired correctly (auth, hooks, provider, workdir). Fix anything red before continuing.
+
+### 4. Turn work into epics
+
+An issue becomes an epic when it carries the **`agentmon:run`** (run it now) or **`agentmon:epic`** label.
+Three ways to get there:
+
+- **Plan a PRD into epics** — click **Plan epics…** on the project header (or run the `/plan-epics` skill in
+  a session). It walks you from a PRD/phase down to per-epic markdown files, then:
+  ```bash
+  agentmon import-epics --dir <dir> --repo owner/name   # add --dry-run to preview
+  ```
+  creates the GitHub issues with their labels and `Blocked-by:` links.
+- **An existing issue** — just add the `agentmon:run` label to it.
+- **One-off from the board** — **Run issue…** on the project header, paste the issue number or URL.
+
+### 5. Watch the board, answer at the gates
+
+Epics move across the board columns — **Queued → Working → PR open → Needs you → Done** (the fine-grained
+stages *planning / implementing / reviewing* all live under **Working**). Open an epic to get its drawer:
+the committed **plan**, the review **verdict**, stage history, and a **live terminal** preview of its
+session. When an epic needs a human it lands in **Needs you** (and, if you've enabled Web-Push, notifies
+you with a deep link straight to the drawer). Your options there:
+
+- **Approve plan** — release a `plan-gate` epic to start implementing.
+- **Approve & merge** — merge a `pr-gate` epic once you're happy.
+- **Cancel** / **Retry** — stop an epic, or re-run it (a fresh attempt, or resume from where it stalled).
+- **Guidance** — type a note straight into the session to unblock the runner.
+
+### Label dials (per issue)
+
+Labels are the knobs — set them on the issue (the `/plan-epics` skill writes them into the epic frontmatter):
+
+| Label | Effect |
+|---|---|
+| `agentmon:run` / `agentmon:epic` | Enrol the issue as an epic (`:run` = start now) |
+| `plan-gate` | Pause after planning so you approve the plan before any code is written |
+| `pr-gate` | **You** merge the PR — no auto-merge |
+| `pipeline:light` | Skip the committed plan + checkpoints (small, low-risk fixes) |
+| `agent:claude` / `agent:codex` | Override the project's provider for this one epic |
+
+### When does it merge on its own?
+
+By default an epic **auto-merges** the moment CI is green **and** the review verdict is clean — no unresolved
+findings, tests passing, the runner didn't flag uncertainty, and every required review is present. Anything
+murky escalates to **Needs you** instead of guessing. The `pr-gate` label always hands you the final merge.
+
+### Troubleshooting
+
+- **Board says "dormant"** → no `github.token`, or the hub wasn't restarted after adding it.
+- **A runner shows "session ended"** → the project's **Target** doesn't match where the session actually
+  runs; re-check it and re-run doctor.
+- **The go-to preflight** is always `agentmon doctor` inside a monitored session on the host — it checks
+  auth, hooks, provider trust, and the workdir in one shot.
 
 ---
 
