@@ -14,6 +14,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useStateSnapshot } from "@/store/session-state";
 import { usePanes, paneKey } from "@/store/panes";
+import { useNeedsTotal } from "@/store/board";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
 import { nextBlocked } from "@/lib/focus-next";
@@ -27,6 +28,7 @@ export function ShellRoute() {
   const [showNew, setShowNew] = React.useState(false);
   const [newServerId, setNewServerId] = React.useState("");
   const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const needsTotal = useNeedsTotal();
 
   const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
   const servers = serversQ.data ?? [];
@@ -152,6 +154,14 @@ export function ShellRoute() {
       >
         <span className="font-semibold">AgentMon</span>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="relative" onClick={() => navigate({ to: "/projects", search: { tab: "board", epic: "" } })}>
+            Projects
+            {needsTotal > 0 && (
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                {needsTotal}
+              </span>
+            )}
+          </Button>
           {servers.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setShowNew((v) => !v)}>
               {showNew ? "Close" : "New session"}
