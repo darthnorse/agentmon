@@ -44,7 +44,14 @@ export default defineConfig({
     }),
   ],
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
-  build: { outDir: "dist" },
+  // minify with terser, NOT esbuild: esbuild's minifier miscompiles xterm 6.0.0's
+  // TypeScript local-enum pattern in InputHandler.requestMode — it drops the outer
+  // `let r` while leaving `r||={}` referencing it, so the production bundle throws
+  // "ReferenceError: r is not defined" the instant a TUI (Claude/Codex) sends a
+  // DECRQM mode-request escape, which kills xterm's write pipeline and freezes the
+  // terminal (input works, output stops painting until reopen). terser compiles it
+  // correctly. Keep this until esbuild fixes the bug or xterm ships un-enummed code.
+  build: { outDir: "dist", minify: "terser" },
   server: {
     proxy: {
       // ws:true so the terminal WS (/api/v1/.../io) upgrades through the dev proxy.
