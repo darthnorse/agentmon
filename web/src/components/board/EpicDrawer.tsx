@@ -1,14 +1,21 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { PlanPanel } from "@/components/board/PlanPanel";
 import { StageChip } from "@/components/board/StageChip";
+import { TerminalPreview } from "@/components/board/TerminalPreview";
 import { useEpicActions } from "@/hooks/useEpicActions";
-import { getProjectBoard, projectBoardKey } from "@/lib/api-client";
+import {
+  boardSessionsKey, getProjectBoard, listServers, listSessions, projectBoardKey, serversKey,
+} from "@/lib/api-client";
 import { canApprove, isPlanGate, mergeMode, parseVerdict, stageMeta } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
+import { paneKey, usePanes } from "@/store/panes";
 
 export function EpicDrawer({ epic, project, onClose }: {
   epic: EpicDTO; project: ProjectDTO; onClose(): void;
@@ -22,6 +29,47 @@ export function EpicDrawer({ epic, project, onClose }: {
   const terminal = epic.stage === "merged" || epic.stage === "failed" || epic.stage === "canceled";
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const [guidance, setGuidance] = React.useState("");
+  const navigate = useNavigate();
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
+  // Pass the project's TARGET (Finding: a non-default-target project's runner
+  // lives under that socket, not the agent default). Key by target too so two
+  // projects on the same host under different targets don't collide in cache;
+  // an empty target reuses the home screen's sessionsKey (same default list).
+  const sessKey = boardSessionsKey(project.server_id, project.target);
+  const sessionsQ = useQuery({ queryKey: sessKey, queryFn: () => listSessions(project.server_id, project.target || undefined) });
+
+  // Open the runner session exactly as today's UI would (spec §8.3): desktop
+  // grid tile via the pane store + home, mobile the /t terminal route.
+  const openFullSession = React.useCallback(() => {
+    const session = sessionsQ.data?.find(
+      (s) => s.name === epic.session && (project.target === "" || s.target === project.target),
+    );
+    const pane = session?.windows[0]?.panes[0];
+    if (!session || !pane) {
+      toast.error("Session ended — nothing to attach to.");
+      return;
+    }
+    if (isDesktop) {
+      const serverName = serversQ.data?.find((s) => s.id === project.server_id)?.name ?? project.server_id;
+      const res = usePanes.getState().openPane({
+        serverId: project.server_id, paneId: pane.id, target: session.target,
+        session: session.name, serverName, state: session.state,
+      });
+      if (!res.ok && res.reason === "cap") {
+        toast("Close a terminal tile first (6 open max).");
+        return;
+      }
+      usePanes.getState().focus(paneKey(project.server_id, session.target, session.name, pane.id));
+      void navigate({ to: "/" });
+    } else {
+      void navigate({
+        to: "/t/$serverId/$paneId",
+        params: { serverId: project.server_id, paneId: pane.id },
+        search: { target: session.target, session: session.name },
+      });
+    }
+  }, [sessionsQ.data, serversQ.data, isDesktop, epic.session, project, navigate]);
 
   // Lazy detail fetch: the per-project board carries each epic's last-20
   // events (spec §5.1 keeps them out of the all-board payload).
@@ -82,8 +130,9 @@ export function EpicDrawer({ epic, project, onClose }: {
 
           {planGate && <PlanPanel epic={epic} project={project} />}
 
-          {/* Task 17 mounts <TerminalPreview project={project} epic={epic} …/> here when running. */}
-          {running && null}
+          {running && epic.session && (
+            <TerminalPreview project={project} epic={epic} onOpenFull={openFullSession} />
+          )}
 
           {section("Actions", (
             <div className="flex flex-wrap gap-1.5">

@@ -15,6 +15,7 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 vi.mock("@/lib/query-client", () => ({ queryClient: { invalidateQueries: h.invalidateQueries } }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock("@/lib/use-media-query", () => ({ useMediaQuery: () => true }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 
 import { EpicDrawer } from "@/components/board/EpicDrawer";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
