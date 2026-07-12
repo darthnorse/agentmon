@@ -2,6 +2,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
+import { PlanPanel } from "@/components/board/PlanPanel";
 import { StageChip } from "@/components/board/StageChip";
 import { useEpicActions } from "@/hooks/useEpicActions";
 import { getProjectBoard, projectBoardKey } from "@/lib/api-client";
@@ -79,8 +80,7 @@ export function EpicDrawer({ epic, project, onClose }: {
             </div>
           )}
 
-          {/* Task 16 mounts <PlanPanel epic={epic} project={project}/> here when planGate. */}
-          {planGate && null}
+          {planGate && <PlanPanel epic={epic} project={project} />}
 
           {/* Task 17 mounts <TerminalPreview project={project} epic={epic} …/> here when running. */}
           {running && null}
