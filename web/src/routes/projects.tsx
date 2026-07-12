@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { BoardView } from "@/components/board/BoardView";
+import { EpicDrawer } from "@/components/board/EpicDrawer";
 import { TimelineView } from "@/components/board/TimelineView";
 import { ProjectSwitcher } from "@/components/board/ProjectSwitcher";
 import { allBoardKey, getAllBoard } from "@/lib/api-client";
@@ -135,8 +136,22 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
             ) : (
               <TimelineView epics={epics} projects={projects} groupByProject={!projectId} onOpenEpic={(id) => setSearch({ epic: id })} />
             )}
-            {/* Task 15 replaces this with <EpicDrawer …> resolution on epicId. */}
-            {epicId ? null : null}
+            {epicId && (() => {
+              const e = (data.epics ?? []).find((x) => x.id === epicId);
+              const p = e ? projects.get(e.project_id) : undefined;
+              if (!e || !p) {
+                return (
+                  <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
+                    <div className="absolute inset-0 bg-black/50" onClick={() => setSearch({ epic: "" })} />
+                    <div className="absolute right-4 top-4 rounded-lg border border-border bg-background p-4 text-sm">
+                      Epic not found — it may have aged out of the board.
+                      <Button variant="outline" size="sm" className="ml-3" onClick={() => setSearch({ epic: "" })}>Close</Button>
+                    </div>
+                  </div>
+                );
+              }
+              return <EpicDrawer epic={e} project={p} onClose={() => setSearch({ epic: "" })} />;
+            })()}
           </>
         )}
       </div>
