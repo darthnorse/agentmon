@@ -13,7 +13,7 @@ import { DesktopShell } from "@/components/DesktopShell";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useStateSnapshot } from "@/store/session-state";
-import { usePanes, paneKey } from "@/store/panes";
+import { openPaneTail, TILE_CAP_TOAST } from "@/components/board/open-session";
 import { useNeedsTotal } from "@/store/board";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
@@ -61,25 +61,14 @@ export function ShellRoute() {
     const pane = session.windows[0]?.panes[0];
     let opened = false;
     if (pane) {
-      if (isDesktop) {
-        const res = usePanes.getState().openPane({
-          serverId, paneId: pane.id, target: session.target,
-          session: session.name, serverName, state: session.state,
-        });
-        opened = res.ok;
-        if (!res.ok && res.reason === "cap") {
-          toast(`Session “${session.name}” created`, {
-            description: "Close a terminal tile to open it (6 open max).",
-          });
-        }
-      } else {
-        navigate({
-          to: "/t/$serverId/$paneId",
-          params: { serverId, paneId: pane.id },
-          search: { target: session.target, session: session.name },
-        });
-        opened = true;
+      const result = openPaneTail(
+        { serverId, serverName, target: session.target, session: session.name, paneId: pane.id, state: session.state },
+        isDesktop, navigate,
+      );
+      if (result === "cap") {
+        toast(`Session “${session.name}” created`, { description: TILE_CAP_TOAST });
       }
+      opened = result !== "cap";
     }
     // No pane to open (e.g. the post-create re-list hadn't observed it yet) — still
     // confirm the create so the action never silently no-ops; the list refresh shows it.
@@ -104,26 +93,13 @@ export function ShellRoute() {
   const goNextBlocked = React.useCallback(() => {
     const row = nextBlockedRow;
     if (!row) return;
-    if (isDesktop) {
-      const id = paneKey(row.server.id, row.session.target, row.session.name, row.pane.id);
-      const res = usePanes.getState().openPane({
-        serverId: row.server.id, paneId: row.pane.id, target: row.session.target,
-        session: row.session.name, serverName: row.server.name, state: row.session.state,
-      });
-      // At the tile cap, openPane is a no-op — don't focus a phantom pane; tell the user.
-      if (!res.ok && res.reason === "cap") {
-        toast(`“${row.session.name}” needs attention`, {
-          description: "Close a terminal tile to open it (6 open max).",
-        });
-        return;
-      }
-      usePanes.getState().focus(id);
-    } else {
-      navigate({
-        to: "/t/$serverId/$paneId",
-        params: { serverId: row.server.id, paneId: row.pane.id },
-        search: { target: row.session.target, session: row.session.name },
-      });
+    const result = openPaneTail(
+      { serverId: row.server.id, serverName: row.server.name, target: row.session.target,
+        session: row.session.name, paneId: row.pane.id, state: row.session.state },
+      isDesktop, navigate,
+    );
+    if (result === "cap") {
+      toast(`“${row.session.name}” needs attention`, { description: TILE_CAP_TOAST });
     }
   }, [nextBlockedRow, isDesktop, navigate]);
 

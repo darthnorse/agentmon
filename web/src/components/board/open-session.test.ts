@@ -10,7 +10,7 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
 vi.mock("@/lib/query-client", () => ({ queryClient: { setQueryData: h.setQueryData, invalidateQueries: h.invalidateQueries } }));
 vi.mock("sonner", () => ({ toast: h.toast }));
 
-import { openOrFocusSession } from "@/components/board/open-session";
+import { openOrFocusSession, openPaneTail, TILE_CAP_TOAST } from "@/components/board/open-session";
 import { ApiError } from "@/lib/api-client";
 import type { Session } from "@/lib/contracts";
 import { paneKey, usePanes } from "@/store/panes";
@@ -66,7 +66,7 @@ describe("openOrFocusSession", () => {
     });
     const navigate = vi.fn();
     await openOrFocusSession({ serverId: "h1", serverName: "host", target: "", name: session.name, session }, true, navigate);
-    expect(h.toast).toHaveBeenCalledWith("Close a terminal tile first (6 open max).");
+    expect(h.toast).toHaveBeenCalledWith(TILE_CAP_TOAST);
     expect(navigate).not.toHaveBeenCalled();
   });
 
@@ -76,5 +76,34 @@ describe("openOrFocusSession", () => {
     await openOrFocusSession({ serverId: "h1", serverName: "h1", target: "", name: "plan-school", command: "x" }, true, navigate);
     expect(h.toast.error).toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("openPaneTail", () => {
+  beforeEach(() => usePanes.setState({ panes: [], focusedId: null }));
+
+  it("mobile navigates to the terminal route and returns opened", () => {
+    const navigate = vi.fn();
+    const r = openPaneTail({ serverId: "h1", serverName: "host", target: "default", session: "s", paneId: "p1" }, false, navigate);
+    expect(r).toBe("opened");
+    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ to: "/t/$serverId/$paneId" }));
+  });
+
+  it("desktop opens and focuses the tile, returns opened", () => {
+    const navigate = vi.fn();
+    const r = openPaneTail({ serverId: "h1", serverName: "host", target: "default", session: "s", paneId: "p1" }, true, navigate);
+    expect(r).toBe("opened");
+    expect(usePanes.getState().focusedId).toBe(paneKey("h1", "default", "s", "p1"));
+  });
+
+  it("desktop returns cap (no focus) when the tile grid is full", () => {
+    usePanes.setState({
+      panes: Array.from({ length: 6 }, (_, i) => ({ id: `h1:default:s${i}:p${i}`, serverId: "h1", paneId: `p${i}`, target: "default", session: `s${i}`, serverName: "host" })),
+      focusedId: null,
+    });
+    const navigate = vi.fn();
+    const r = openPaneTail({ serverId: "h1", serverName: "host", target: "default", session: "new", paneId: "pN" }, true, navigate);
+    expect(r).toBe("cap");
+    expect(usePanes.getState().focusedId).toBeNull();
   });
 });

@@ -436,7 +436,24 @@ func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
 		if in.Workdir != nil {
 			pr.Workdir = *in.Workdir
 		}
-		if in.Target != nil {
+		if in.Target != nil && *in.Target != pr.Target {
+			// Target is the tmux socket identity the orchestrator drains, checks
+			// liveness on, and cancels/retires runner sessions against. Changing it
+			// while a runner is live would strand that session on the old socket —
+			// reports lost, control actions misrouted. Refuse while any non-terminal
+			// epic exists (repo/server_id are already immutable above). provider and
+			// base_branch stay mutable: they affect only future spawns, not a
+			// running session's socket, so they can't orphan a live runner.
+			active, err := d.DB.CountActiveEpics(r.Context(), id)
+			if err != nil {
+				log.Printf("api: count active epics: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if active > 0 {
+				writeJSONError(w, http.StatusBadRequest, "cannot change target while epics are running")
+				return
+			}
 			pr.Target = *in.Target
 		}
 		if in.BaseBranch != nil {
@@ -579,18 +596,28 @@ var (
 	planPathRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 )
 
+// planDirPrefix is the runner-skill plan convention (epic-pipeline.md commits and
+// reports docs/plans/epic-N.md). A note that names any other repo-relative path
+// falls back to the default so the proxy can only ever serve a plan doc.
+const planDirPrefix = "docs/plans/"
+
 // planDocPath resolves the plan document path from the escalation note
 // (runner-skill convention: "plan-gate: plan ready at <path>"), falling back
 // to the docs/plans convention. The note is runner-controlled text, so
 // sanitization failure falls back silently — never an error, never a 500.
 func planDocPath(needs string, issue int) string {
-	def := fmt.Sprintf("docs/plans/epic-%d.md", issue)
+	def := fmt.Sprintf("%sepic-%d.md", planDirPrefix, issue)
 	m := planNoteRe.FindStringSubmatch(needs)
 	if m == nil {
 		return def
 	}
 	p := m[1]
-	if len(p) > 512 || strings.HasPrefix(p, "/") || strings.Contains(p, "..") || !planPathRe.MatchString(p) {
+	// Constrain to the plan directory (defense-in-depth): even a traversal-safe
+	// path outside docs/plans/ falls back to the default rather than letting the
+	// proxy fetch an arbitrary repo file. The note is runner-controlled today,
+	// not user-settable — this bounds a future code path that might change that.
+	if len(p) > 512 || strings.HasPrefix(p, "/") || strings.Contains(p, "..") ||
+		!strings.HasPrefix(p, planDirPrefix) || !planPathRe.MatchString(p) {
 		return def
 	}
 	return p

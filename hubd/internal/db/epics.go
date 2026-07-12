@@ -133,6 +133,16 @@ func (d *DB) ListNonTerminalEpics(ctx context.Context) ([]Epic, error) {
 		`SELECT `+epicCols+` FROM epics WHERE stage NOT IN `+terminalStagesSQL+` ORDER BY issue_number`)
 }
 
+// CountActiveEpics returns the number of non-terminal epics for a project — the
+// same predicate DeleteProject guards on, exposed so a project PATCH can refuse
+// a target change while a runner is live on the current socket.
+func (d *DB) CountActiveEpics(ctx context.Context, projectID string) (int, error) {
+	var n int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM epics WHERE project_id = ? AND stage NOT IN `+terminalStagesSQL, projectID).Scan(&n)
+	return n, err
+}
+
 func (d *DB) listEpics(ctx context.Context, q string, args ...any) ([]Epic, error) {
 	rows, err := d.sql.QueryContext(ctx, q, args...)
 	if err != nil {

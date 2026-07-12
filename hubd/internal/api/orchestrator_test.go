@@ -181,6 +181,42 @@ func TestProjectPatch(t *testing.T) {
 	}
 }
 
+func TestProjectPatchTargetGuardedWhileActive(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Target: "old", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 1, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	sink := &captureSink{}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Audit: audit.NewRecorder(sink)}
+
+	// A non-terminal epic is live → changing target must be refused (it would
+	// strand the runner on the old socket: reports lost, control actions misrouted).
+	r, w := orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"target":"new"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "target while epics are running") {
+		t.Fatalf("active target change: want 400, got %d %s", w.Code, w.Body.String())
+	}
+	// A no-op target (unchanged value) is not a change → allowed even while active.
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"target":"old"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("no-op target while active: want 200, got %d %s", w.Code, w.Body.String())
+	}
+	// Once the epic is terminal, the target may change and is persisted.
+	database.TransitionEpic(ctx, e.ID, "queued", "canceled", "user:u1", "", "t2")
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"target":"new"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("target change after terminal: want 200, got %d %s", w.Code, w.Body.String())
+	}
+	if p, _ := database.GetProject(ctx, "p1"); p.Target != "new" {
+		t.Fatalf("target not persisted, got %q", p.Target)
+	}
+}
+
 func TestProjectPatchDuplicateName(t *testing.T) {
 	database := orchDB(t)
 	ctx := context.Background()
@@ -347,11 +383,13 @@ func (f *fakeContents) GetContents(_ context.Context, repo, path, ref string) ([
 func TestPlanDocPath(t *testing.T) {
 	for needs, want := range map[string]string{
 		"": "docs/plans/epic-7.md",
-		"plan-gate: plan ready at docs/plans/epic-7.md": "docs/plans/epic-7.md",
-		"plan-gate: plan ready at docs/x/plan.md":       "docs/x/plan.md",
-		"plan-gate: plan ready at ../../etc/passwd":     "docs/plans/epic-7.md",
-		"plan-gate: plan ready at /abs/path.md":         "docs/plans/epic-7.md",
-		"something else entirely":                       "docs/plans/epic-7.md",
+		"plan-gate: plan ready at docs/plans/epic-7.md":  "docs/plans/epic-7.md",
+		"plan-gate: plan ready at docs/plans/sub/p.md":   "docs/plans/sub/p.md", // nested under docs/plans/ is fine
+		"plan-gate: plan ready at docs/x/plan.md":        "docs/plans/epic-7.md", // outside docs/plans/ → fall back
+		"plan-gate: plan ready at README.md":             "docs/plans/epic-7.md", // arbitrary repo file → fall back
+		"plan-gate: plan ready at ../../etc/passwd":      "docs/plans/epic-7.md",
+		"plan-gate: plan ready at /abs/path.md":          "docs/plans/epic-7.md",
+		"something else entirely":                        "docs/plans/epic-7.md",
 	} {
 		if got := planDocPath(needs, 7); got != want {
 			t.Fatalf("planDocPath(%q) = %q, want %q", needs, got, want)

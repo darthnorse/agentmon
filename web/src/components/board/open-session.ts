@@ -17,6 +17,37 @@ interface OpenOpts {
   session?: Session;
 }
 
+// One canonical "tile grid is full" message, shared by every open-pane caller so
+// the wording can't drift between the board flow and the home screen.
+export const TILE_CAP_TOAST = "Close a terminal tile to open it (6 open max).";
+
+// The shared "open this session's pane" tail used by the board drawer/switcher
+// AND the home screen (create + focus-next-blocked). Desktop opens+focuses a grid
+// tile and returns "cap" when the grid is full (each caller words its own toast);
+// mobile navigates to the terminal route. Returns "opened" once a pane is
+// opened/focused (desktop) or navigated to (mobile).
+export function openPaneTail(
+  args: { serverId: string; serverName: string; target: string; session: string; paneId: string; state?: Session["state"] },
+  isDesktop: boolean,
+  navigate: Navigate,
+): "opened" | "cap" {
+  if (!isDesktop) {
+    void navigate({
+      to: "/t/$serverId/$paneId",
+      params: { serverId: args.serverId, paneId: args.paneId },
+      search: { target: args.target, session: args.session },
+    });
+    return "opened";
+  }
+  const res = usePanes.getState().openPane({
+    serverId: args.serverId, paneId: args.paneId, target: args.target,
+    session: args.session, serverName: args.serverName, state: args.state,
+  });
+  if (!res.ok && res.reason === "cap") return "cap";
+  usePanes.getState().focus(paneKey(args.serverId, args.target, args.session, args.paneId));
+  return "opened";
+}
+
 // Create a session with an optional kickoff command, or attach to an existing
 // board runner session, then open its interactive terminal the way today's UI
 // does. An existing-name 409 is treated as "already there": re-list and open it.
@@ -56,22 +87,16 @@ export async function openOrFocusSession(opts: OpenOpts, isDesktop: boolean, nav
     void navigate({ to: "/" });
     return;
   }
-  if (isDesktop) {
-    const res = usePanes.getState().openPane({
-      serverId: opts.serverId, paneId: pane.id, target: session.target,
-      session: session.name, serverName: opts.serverName, state: session.state,
-    });
-    if (!res.ok && res.reason === "cap") {
-      toast("Close a terminal tile first (6 open max).");
-      return;
-    }
-    usePanes.getState().focus(paneKey(opts.serverId, session.target, session.name, pane.id));
-    void navigate({ to: "/" });
-  } else {
-    void navigate({
-      to: "/t/$serverId/$paneId",
-      params: { serverId: opts.serverId, paneId: pane.id },
-      search: { target: session.target, session: session.name },
-    });
+  const result = openPaneTail(
+    { serverId: opts.serverId, serverName: opts.serverName, target: session.target,
+      session: session.name, paneId: pane.id, state: session.state },
+    isDesktop, navigate,
+  );
+  if (result === "cap") {
+    toast(TILE_CAP_TOAST);
+    return;
   }
+  // Desktop opened a tile in place — leave the board route so the grid shows it
+  // (mobile already navigated to the terminal route inside openPaneTail).
+  if (isDesktop) void navigate({ to: "/" });
 }
