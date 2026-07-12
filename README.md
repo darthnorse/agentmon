@@ -376,7 +376,7 @@ Open **Projects → New project** and fill in:
 
 | Field | What it is |
 |---|---|
-| **Repo** | `owner/name` on GitHub |
+| **Repo** | The GitHub `owner/repo` — just those two path segments, e.g. `octocat/hello-world`. **Not** a URL and **not** just the owner (so from `https://github.com/octocat/hello-world.git` you'd enter `octocat/hello-world`). |
 | **Host** | which agent runs the sessions |
 | **Target** | the host's `tmux` socket — leave blank for the default |
 | **Workdir** | the repo clone from step 2 |
@@ -396,7 +396,7 @@ Three ways to get there:
 - **Plan a PRD into epics** — click **Plan epics…** on the project header (or run the `/plan-epics` skill in
   a session). It walks you from a PRD/phase down to per-epic markdown files, then:
   ```bash
-  agentmon import-epics --dir <dir> --repo owner/name   # add --dry-run to preview
+  agentmon import-epics --dir <dir> --repo owner/repo   # add --dry-run to preview
   ```
   creates the GitHub issues with their labels and `Blocked-by:` links.
 - **An existing issue** — just add the `agentmon:run` label to it.

@@ -84,8 +84,8 @@ export function ProjectForm(props: Mode) {
         {props.mode === "create"
           ? field("pf-repo", "Repo",
               <>
-                <Input id="pf-repo" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/name" spellCheck={false} />
-                {repo && !repoOk && <p className="text-xs text-destructive">Must be owner/name.</p>}
+                <Input id="pf-repo" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/repo, e.g. octocat/hello-world" spellCheck={false} />
+                {repo && !repoOk && <p className="text-xs text-destructive">Use owner/repo (e.g. octocat/hello-world) — not a full URL or just the owner.</p>}
               </>)
           : field("pf-repo", "Repo (immutable)", <Input id="pf-repo" value={repo} disabled />)}
         {props.mode === "create"
