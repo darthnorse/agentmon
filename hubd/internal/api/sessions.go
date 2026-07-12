@@ -55,7 +55,12 @@ func (d Deps) ServerSessionsHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "unknown server")
 			return
 		}
-		sessions, err := d.Agent.Sessions(r.Context(), srv, "")
+		// Forward the RAW target (empty → the agent resolves its first target).
+		// The board lists a project bound to a non-default tmux target via
+		// ?target=; without threading it here a multi-target host would always
+		// return the default socket and show the live runner as "session ended".
+		target := r.URL.Query().Get("target")
+		sessions, err := d.Agent.Sessions(r.Context(), srv, target)
 		if err != nil {
 			log.Printf("sessions: agent %s: %v", id, err)
 			writeJSONError(w, http.StatusBadGateway, "agent unavailable")

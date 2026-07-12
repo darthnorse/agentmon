@@ -9,7 +9,7 @@ vi.mock("@/components/board/open-session", () => ({ openOrFocusSession: h.openOr
 vi.mock("@/lib/use-media-query", () => ({ useMediaQuery: () => true }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => h.navigate }));
 
-import { ProjectHeader } from "@/components/board/ProjectHeader";
+import { ProjectHeader, parseIssue } from "@/components/board/ProjectHeader";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 
 const project: ProjectDTO = {
@@ -60,5 +60,37 @@ describe("ProjectHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));
     fireEvent.change(screen.getByPlaceholderText(/issue number or URL/i), { target: { value: "99999999999999999999" } });
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  });
+
+  it("rejects an issue URL from a different repository", () => {
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));
+    // project.repo is "o/r"; a foreign repo's issue URL must NOT dispatch its
+    // number into the current project — Run stays disabled and no action fires.
+    fireEvent.change(screen.getByPlaceholderText(/issue number or URL/i), { target: { value: "https://github.com/other/repo/issues/9" } });
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(h.epicAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseIssue", () => {
+  it("accepts bare numbers and #N regardless of repo", () => {
+    expect(parseIssue("47", "o/r")).toBe(47);
+    expect(parseIssue("#47", "o/r")).toBe(47);
+    expect(parseIssue("  12  ", "o/r")).toBe(12);
+  });
+  it("accepts issue/PR URLs for THIS repo (case-insensitive)", () => {
+    expect(parseIssue("https://github.com/o/r/issues/47", "o/r")).toBe(47);
+    expect(parseIssue("https://github.com/o/r/pull/12", "o/r")).toBe(12);
+    expect(parseIssue("https://github.com/O/R/issues/5", "o/r")).toBe(5);
+  });
+  it("rejects URLs whose owner/repo is not this project's repo", () => {
+    expect(parseIssue("https://github.com/other/repo/issues/9", "o/r")).toBe(0);
+    expect(parseIssue("https://github.com/o/other/issues/9", "o/r")).toBe(0);
+  });
+  it("rejects non-positive and non-safe integers", () => {
+    expect(parseIssue("0", "o/r")).toBe(0);
+    expect(parseIssue("99999999999999999999", "o/r")).toBe(0);
+    expect(parseIssue("abc", "o/r")).toBe(0);
   });
 });

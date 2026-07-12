@@ -10,12 +10,22 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
 // Parse "47", "#47", or a GitHub issue/PR URL → issue number (0 = invalid).
-function parseIssue(input: string): number {
+// A URL/path form must name THIS project's repo (owner/repo right before
+// issues|pull); pasting another repo's issue URL must NOT silently dispatch that
+// number into the current project. Bare numbers are accepted as-is.
+export function parseIssue(input: string, repo: string): number {
   const t = input.trim();
-  const m = t.match(/(?:issues|pull)\/(\d+)/) ?? t.match(/^#?(\d+)$/);
-  if (!m) return 0;
-  const n = Number(m[1]);
-  return Number.isSafeInteger(n) && n > 0 ? n : 0;
+  const bare = t.match(/^#?(\d+)$/);
+  if (bare) {
+    const n = Number(bare[1]);
+    return Number.isSafeInteger(n) && n > 0 ? n : 0;
+  }
+  const url = t.match(/([^/\s]+\/[^/\s]+)\/(?:issues|pull)\/(\d+)/);
+  if (url && url[1].toLowerCase() === repo.toLowerCase()) {
+    const n = Number(url[2]);
+    return Number.isSafeInteger(n) && n > 0 ? n : 0;
+  }
+  return 0;
 }
 
 export function ProjectHeader({ project, epics, onEdit }: {
@@ -84,9 +94,9 @@ export function ProjectHeader({ project, epics, onEdit }: {
             placeholder="issue number or URL (e.g. 47 or …/issues/47)"
             className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-sm"
           />
-          <Button size="sm" disabled={busy !== null || parseIssue(issue) === 0}
+          <Button size="sm" disabled={busy !== null || parseIssue(issue, project.repo) === 0}
             onClick={() => {
-              const n = parseIssue(issue);
+              const n = parseIssue(issue, project.repo);
               if (n === 0) return;
               void act({ action: "run_issue", issue: n }, `Dispatched #${n}`).then((ok) => { if (ok) { setIssue(""); setShowRun(false); } });
             }}>

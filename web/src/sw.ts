@@ -80,9 +80,11 @@ sw.addEventListener("notificationclick", (event) => {
         if ("focus" in c) {
           // Focused client is already running the SPA — hand it the route so we
           // don't spawn a second tab. The page bridges this into the router.
-          void (c as WindowClient).focus();
+          // Return focus()'s promise so waitUntil keeps the worker alive until the
+          // window is actually foregrounded — a bare `void focus()` lets waitUntil
+          // resolve immediately and the browser may kill the SW mid-focus.
           if (url !== "/") (c as WindowClient).postMessage({ kind: "navigate", url });
-          return;
+          return (c as WindowClient).focus();
         }
       }
       return sw.clients.openWindow(url);

@@ -213,11 +213,9 @@ function DormantNotice() {
   );
 }
 
-// onNew is optional so Task 12 can render this before the create flow exists;
-// Task 19 passes `onNew={() => setCreating(true)}` from ProjectsShell (setCreating
-// lives in that scope — it must be passed IN as a prop, never referenced inside
-// this standalone component).
-function ZeroProjects({ onNew }: { onNew?: () => void }) {
+// onNew is passed IN as a prop (setCreating lives in ProjectsShell's scope and
+// must never be referenced inside this standalone component).
+function ZeroProjects({ onNew }: { onNew: () => void }) {
   return (
     <div className="mx-auto max-w-lg rounded-lg border border-border bg-card p-4 text-sm">
       <div className="font-semibold">No projects yet</div>
@@ -225,11 +223,7 @@ function ZeroProjects({ onNew }: { onNew?: () => void }) {
         A project binds a GitHub repo to a host: the orchestrator turns issues into epics, runs them in tmux
         sessions on the host, and opens PRs — summoning you only at decision points.
       </p>
-      {onNew ? (
-        <Button size="sm" className="mt-3" onClick={onNew}>New project</Button>
-      ) : (
-        <p className="mt-2 text-muted-foreground">Registration UI lands later in this branch (Task 19).</p>
-      )}
+      <Button size="sm" className="mt-3" onClick={onNew}>New project</Button>
     </div>
   );
 }
