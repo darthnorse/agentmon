@@ -5034,7 +5034,7 @@ git commit -m "feat(web): edit-project sheet + guarded delete with type-the-name
 
 **Why a pure module:** `sw.ts` can't be unit-tested (worker globals), so the payload→notification and payload→URL logic lives in `push-payload.ts` (plain functions) and `sw.ts` just calls them. This mirrors how `sw.ts` already delegates to `blockedTitle`/`stateKey`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `web/src/lib/push-payload.test.ts`:
 
@@ -5064,12 +5064,12 @@ describe("push-payload", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/web && npx vitest run src/lib/push-payload.test.ts`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement `web/src/lib/push-payload.ts`**
+- [x] **Step 3: Implement `web/src/lib/push-payload.ts`**
 
 ```ts
 // Board push payload (hubd/internal/orchestrator/push.go dispatchBoardPush) and
@@ -5107,7 +5107,7 @@ export function epicUrl(p: EpicPush): string {
 }
 ```
 
-- [ ] **Step 4: Update `web/src/sw.ts`**
+- [x] **Step 4: Update `web/src/sw.ts`**
 
 Add the import and widen the push/click handlers. The `PushPayload` interface stays for the blocked path; branch on epic first.
 
@@ -5153,7 +5153,7 @@ sw.addEventListener("notificationclick", (event) => {
 
 (`PushPayload.type` is `string`, so the existing blocked branch still compiles. Keep the `data.type !== "blocked"` generic fallback AFTER the epic branch.)
 
-- [ ] **Step 5: Implement the page-side bridge `web/src/lib/sw-navigate.ts`**
+- [x] **Step 5: Implement the page-side bridge `web/src/lib/sw-navigate.ts`**
 
 ```ts
 import { router } from "@/router";
@@ -5194,12 +5194,12 @@ In `web/src/main.tsx`, after `registerSW({ immediate: true })` (inside the same 
 
 with `import { registerSwNavigation } from "@/lib/sw-navigate";`. (Guard: `registerSwNavigation` no-ops when `navigator.serviceWorker` is absent, so it's safe in every environment.)
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `cd /root/agentmon/web && npx vitest run src/lib/push-payload.test.ts`
 Expected: PASS.
 
-- [ ] **Step 7: Web gate + commit**
+- [x] **Step 7: Web gate + commit**
 
 The gate includes `npm run build` for the SW path (the worker is only bundled at build time — typecheck alone won't catch a sw.ts break):
 

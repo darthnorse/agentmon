@@ -8,6 +8,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 import { router } from "./router";
 import { queryClient } from "@/lib/query-client";
+import { registerSwNavigation } from "@/lib/sw-navigate";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -28,4 +29,5 @@ if (import.meta.env.PROD) {
   void import("virtual:pwa-register").then(({ registerSW }) => {
     registerSW({ immediate: true });
   });
+  registerSwNavigation();
 }
