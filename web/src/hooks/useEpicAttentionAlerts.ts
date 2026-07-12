@@ -2,15 +2,15 @@ import * as React from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
 import { raiseAttentionCue } from "@/lib/attention-cue";
+import { epicTag, epicTitle } from "@/lib/push-payload";
+import type { Navigate } from "@/components/board/open-session";
 import type { BoardDeltaFrame } from "@/lib/contracts";
-
-type Navigate = (opts: any) => unknown;
 
 export function useEpicAttentionAlerts(): (f: BoardDeltaFrame) => void {
   const navigate = useNavigate() as Navigate;
   return React.useCallback(
     (f) => {
-      const title = `Epic #${f.issue} needs you`;
+      const title = epicTitle(f.issue);
       try {
         toast(title, {
           description: f.needs || f.title,
@@ -25,7 +25,7 @@ export function useEpicAttentionAlerts(): (f: BoardDeltaFrame) => void {
           },
         });
       } catch { /* toast failure must not break sound/notification */ }
-      raiseAttentionCue(title, { body: f.title, tag: `epic:${f.epic_id}` });
+      raiseAttentionCue(title, { body: f.title, tag: epicTag(f.epic_id) });
     },
     [navigate],
   );

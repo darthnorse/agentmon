@@ -9,7 +9,7 @@ import { paneKey, usePanes } from "@/store/panes";
 // is NOT assignable to `(opts: unknown) => …` (a fn taking a narrow arg
 // can't stand in for one called with `unknown`). `any` disables that check so
 // board callers can pass `useNavigate()`'s result verbatim.
-type Navigate = (opts: any) => unknown;
+export type Navigate = (opts: any) => unknown;
 
 interface OpenOpts {
   serverId: string; serverName: string; target: string; name: string; cwd?: string; command?: string;

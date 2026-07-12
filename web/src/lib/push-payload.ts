@@ -21,12 +21,19 @@ export function isEpicPush(d: unknown): d is EpicPush {
     typeof p.needs === "string" && typeof p.stage === "string";
 }
 
+// The "needs you" title and the coalescing tag, shared by the SW push path
+// (epicNotification) and the in-app attention hook (useEpicAttentionAlerts) so
+// the two notification surfaces can't drift — an earlier key mismatch already
+// shipped once and made web-push inert.
+export const epicTitle = (issue: number) => `Epic #${issue} needs you`;
+export const epicTag = (epicId: string) => `epic:${epicId}`;
+
 export function epicNotification(p: EpicPush): { title: string; options: NotificationOptions } {
   return {
-    title: `Epic #${p.issue} needs you`,
+    title: epicTitle(p.issue),
     options: {
       body: p.needs ? `${p.title} — ${p.needs}` : p.title,
-      tag: `epic:${p.epic_id}`,
+      tag: epicTag(p.epic_id),
       data: p,
     },
   };
