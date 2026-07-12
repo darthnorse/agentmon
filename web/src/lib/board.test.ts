@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EpicDTO, EpicStage } from "@/lib/contracts";
 import {
-  boardStats, cardProvider, fmtElapsed, groupByColumn, isPlanGate,
+  boardStats, canApprove, cardProvider, fmtElapsed, groupByColumn, isPlanGate,
   mergeMode, parseVerdict, sessionSlug, stageMeta, STAGE_META,
 } from "@/lib/board";
 
@@ -22,6 +22,16 @@ describe("stage → column mapping", () => {
     const m = stageMeta("deploying");
     expect(m.column).toBe("working");
     expect(m.label).toBe("deploying");
+  });
+});
+
+describe("canApprove (mirrors hub Approve preconditions)", () => {
+  it("is true only for an escalated epic that already has a PR", () => {
+    expect(canApprove(epic({ stage: "escalated", pr: 58 }))).toBe(true);
+    // pre-PR escalation (blocked/DISCUSS) → hub returns "no PR to merge"
+    expect(canApprove(epic({ stage: "escalated", pr: 0 }))).toBe(false);
+    // stalled → hub returns "epic is not escalated"
+    expect(canApprove(epic({ stage: "stalled", pr: 58 }))).toBe(false);
   });
 });
 

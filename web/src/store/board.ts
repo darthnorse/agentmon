@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import type { BoardDeltaFrame, EpicDTO } from "@/lib/contracts";
 
-const needsAttention = (stage: string) => stage === "escalated" || stage === "stalled";
+// The single "which stages need a human" rule — reused by useBoardStream so the
+// attention badge/count and the toast/sound/notification can never diverge.
+export const needsAttention = (stage: string) => stage === "escalated" || stage === "stalled";
 
 interface BoardAttentionStore {
   attention: Map<string, string>; // epicId → projectId, for escalated/stalled epics

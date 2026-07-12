@@ -2,7 +2,7 @@ import * as React from "react";
 import { BoardStream, type BoardStreamDeps } from "@/lib/board-stream";
 import type { BoardDeltaFrame } from "@/lib/contracts";
 import { queryClient } from "@/lib/query-client";
-import { useBoardAttention } from "@/store/board";
+import { needsAttention, useBoardAttention } from "@/store/board";
 
 const INVALIDATE_DEBOUNCE_MS = 300;
 
@@ -32,7 +32,7 @@ export function useBoardStream(deps?: BoardStreamDeps, onAttention?: (f: BoardDe
         onDelta: (f) => {
           useBoardAttention.getState().applyDelta(f);
           invalidateSoon();
-          if (f.stage === "escalated" || f.stage === "stalled") onAttentionRef.current?.(f);
+          if (needsAttention(f.stage)) onAttentionRef.current?.(f);
         },
         onOpen: () => useBoardAttention.getState().setConnected(true),
         onError: () => useBoardAttention.getState().setConnected(false),

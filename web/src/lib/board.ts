@@ -71,14 +71,20 @@ export function boardStats(epics: EpicDTO[]): BoardStats {
 
 export const isPlanGate = (needs: string): boolean => needs.startsWith(PLAN_GATE_PREFIX);
 
+// The hub's Approve accepts ONLY an escalated epic that already has a PR
+// (orchestrator.go Approve: "epic is not escalated" / "no PR to merge"). Every
+// other needs-column state — stalled, or a pre-PR (blocked/DISCUSS) escalation —
+// would 409, so the card must not offer Approve for them.
+export const canApprove = (e: EpicDTO): boolean => e.stage === "escalated" && e.pr > 0;
+
 export interface VerdictSummary {
   unresolved: string[]; found: number; resolved: number; unresolvedCount: number;
   passed: number; failed: number; uncertain: boolean;
 }
 
 // The hub stores json.Marshal of the Go Verdict struct, which has yaml tags
-// only — so the JSON keys are the CAPITALIZED Go field names
-// (hubd/internal/orchestrator/orchestrator.go:616 + verdict.go).
+// only — so the JSON keys are the CAPITALIZED Go field names (see the verdict
+// marshaling in orchestrator.go + the struct in verdict.go).
 export function parseVerdict(raw?: string): VerdictSummary | null {
   if (!raw) return null;
   try {

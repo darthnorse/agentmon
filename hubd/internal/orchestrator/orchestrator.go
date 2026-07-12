@@ -406,7 +406,10 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		log.Printf("orchestrator[%s]: dropped invalid report transition %s→%s", p.Name, e.Stage, r.Stage)
 		return false
 	}
-	if r.Branch != "" && e.Branch == "" && strings.HasPrefix(r.Branch, fmt.Sprintf("epic/%d-", r.Epic)) {
+	// Branch persistence is plan-gate-escalation ONLY: record the runner's branch
+	// pre-PR (so the plan proxy can serve it) exactly once, and never let a
+	// non-escalated report claim the epic's branch slot.
+	if r.Branch != "" && e.Branch == "" && r.Stage == shared.EpicEscalated && strings.HasPrefix(r.Branch, fmt.Sprintf("epic/%d-", r.Epic)) {
 		ok, err := o.d.DB.SetEpicBranch(ctx, e.ID, r.Branch)
 		if err != nil {
 			if len(o.pending) < maxPendingReports {

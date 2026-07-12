@@ -4,7 +4,7 @@ import { ProviderTag } from "@/components/ProviderTag";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { useEpicActions } from "@/hooks/useEpicActions";
 import {
-  cardProvider, fmtElapsed, isPlanGate, mergeMode, parseVerdict, stageMeta,
+  canApprove, cardProvider, fmtElapsed, isPlanGate, mergeMode, parseVerdict, stageMeta,
 } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import type { SessionState } from "@/lib/contracts";
@@ -34,7 +34,7 @@ export function EpicCard({ epic, project, showProject = false, liveState, onOpen
       role="button"
       tabIndex={0}
       onClick={onOpen}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
+      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onOpen(); } }}
       className={cn(
         "flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left hover:border-muted-foreground/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         col === "needs" && "border-red-500/50",
@@ -81,15 +81,15 @@ export function EpicCard({ epic, project, showProject = false, liveState, onOpen
           <div className="mt-2 flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
             {planGate ? (
               <Button size="sm" onClick={onOpen}>Review plan</Button>
-            ) : (
+            ) : canApprove(epic) ? (
               <ConfirmButton
-                label={epic.pr > 0 ? "Approve & merge" : "Approve"}
-                confirmLabel={epic.pr > 0 ? "Merge?" : "Approve?"}
+                label="Approve & merge"
+                confirmLabel="Merge?"
                 variant="default"
                 disabled={busy !== null}
                 onConfirm={() => void act({ action: "approve", epic_id: epic.id }, `Approving #${epic.issue}`)}
               />
-            )}
+            ) : null}
             <ConfirmButton
               label="Retry"
               confirmLabel="Retry?"

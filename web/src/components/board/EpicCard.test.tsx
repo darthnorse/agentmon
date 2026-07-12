@@ -53,6 +53,33 @@ describe("EpicCard", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("hides Approve for states the hub rejects (stalled, pre-PR escalation) but keeps Retry", () => {
+    const { unmount } = render(
+      <EpicCard epic={epic({ stage: "stalled", needs: "session died" })} project={project} onOpen={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: /Approve/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    unmount();
+    render(
+      <EpicCard epic={epic({ id: "e9", stage: "escalated", pr: 0, needs: "blocked: needs a decision" })} project={project} onOpen={() => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: /Approve/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("Enter on a nested action does not also open the drawer", () => {
+    const onOpen = vi.fn();
+    render(
+      <EpicCard epic={epic({ stage: "escalated", pr: 58, needs: "2 findings need a decision" })} project={project} onOpen={onOpen} />,
+    );
+    // Keydown originating on a nested control must not bubble into drawer-open.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Retry" }), { key: "Enter" });
+    expect(onOpen).not.toHaveBeenCalled();
+    // The card itself still opens on Enter.
+    fireEvent.keyDown(screen.getByRole("button", { name: /#15/ }), { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("plan-gate card swaps the primary action to Review plan (opens drawer)", () => {
     const onOpen = vi.fn();
     render(
