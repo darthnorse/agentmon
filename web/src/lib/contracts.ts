@@ -25,7 +25,7 @@ export interface StateEventFrame { server: string; target: string; session: stri
 // POST /api/v1/seen body (mirrors hubd api.seenRequest).
 export interface SeenRequest { serverId: string; target: string; sessionName: string; }
 // POST /api/v1/servers/{id}/sessions body (mirrors shared.CreateSessionRequest).
-// Custom commands are rejected in v1; `command` is reserved. The response is a full Session.
+// Custom commands are accepted end-to-end. The response is a full Session.
 export interface CreateSessionRequest { name: string; cwd?: string; command?: string; }
 // POST /api/v1/servers/{id}/sessions/rename body (mirrors shared.RenameSessionRequest).
 // `to` is validated by the same name rule as create. The response is the renamed Session.

@@ -6,12 +6,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   epicAction: vi.fn(),
   getProjectBoard: vi.fn(),
+  listServers: vi.fn(),
+  listSessions: vi.fn(),
+  openOrFocusSession: vi.fn(),
   invalidateQueries: vi.fn(),
 }));
 vi.mock("@/lib/api-client", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api-client")>();
-  return { ...mod, epicAction: h.epicAction, getProjectBoard: h.getProjectBoard };
+  return {
+    ...mod, epicAction: h.epicAction, getProjectBoard: h.getProjectBoard,
+    listServers: h.listServers, listSessions: h.listSessions,
+  };
 });
+vi.mock("@/components/board/open-session", () => ({ openOrFocusSession: h.openOrFocusSession }));
 vi.mock("@/lib/query-client", () => ({ queryClient: { invalidateQueries: h.invalidateQueries } }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock("@/lib/use-media-query", () => ({ useMediaQuery: () => true }));
@@ -43,6 +50,11 @@ describe("EpicDrawer", () => {
   beforeEach(() => {
     qc.clear();
     h.epicAction.mockReset().mockResolvedValue({ ok: true });
+    h.openOrFocusSession.mockReset().mockResolvedValue(undefined);
+    h.listServers.mockReset().mockResolvedValue([{ id: "h1", name: "host-one" }]);
+    h.listSessions.mockReset().mockResolvedValue([
+      { name: "epic-15-x", server: "h1", target: "default", cwd: "/w", command: "claude", windows: [{ id: "w1", index: "0", name: "", panes: [{ id: "pane1", command: "claude", cwd: "/w" }] }] },
+    ]);
     h.getProjectBoard.mockReset().mockResolvedValue({
       project, epics: [],
       events: { e1: [{ from: "planning", to: "implementing", source: "report", note: "", ts: "2026-07-11T08:30:00Z" }] },
@@ -72,6 +84,15 @@ describe("EpicDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send guidance" }));
     await waitFor(() =>
       expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "guidance", epic_id: "e1", text: "focus on RLS" }));
+  });
+
+  it("delegates opening the existing runner session to the shared helper", async () => {
+    render(<EpicDrawer epic={epic({ stage: "implementing" })} project={project} onClose={() => {}} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: "Open full session" }));
+    expect(h.openOrFocusSession).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "h1", serverName: "host-one", name: "epic-15-x", session: expect.objectContaining({ name: "epic-15-x" }) }),
+      true, expect.any(Function),
+    );
   });
 
   it("escape closes", () => {

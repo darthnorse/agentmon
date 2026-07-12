@@ -4236,9 +4236,9 @@ Timeline + drawer complete (both tabs, plan review, preview, all epic actions). 
 - Consumes: Task 9 (`useEpicActions`, `ConfirmButton`), Task 7 (`boardStats`, `sessionSlug`), `createSession`/`sessionsKey`/`listSessions`, `usePanes`/`paneKey`, `useMediaQuery`, `useNavigate`, `queryClient`.
 - Produces: `openOrFocusSession(opts, isDesktop, navigate): Promise<void>` — creates-or-opens a session and navigates to it; `ProjectHeader {project: ProjectDTO; epics: EpicDTO[]; onEdit(): void}`.
 
-**Design note:** Task 17 hand-rolled "open an EXISTING runner session" inside the drawer. This task adds `openOrFocusSession`, which is the *create-a-new* session path (for Plan epics… and doctor-verify), keeping the two concerns separate: the drawer attaches to a session the runner already made; the header/onboarding creates one.
+**Owner override:** `openOrFocusSession` is the single board helper for both attaching to an EXISTING runner session and creating a NEW session (Plan epics… and doctor-verify). Its options accept an already-found `Session`; that path skips creation while sharing the same cap handling, canonical focus key, and desktop/mobile navigation.
 
-- [ ] **Step 1: Write the failing open-session test**
+- [x] **Step 1: Write the failing open-session test**
 
 Create `web/src/components/board/open-session.test.ts`:
 
@@ -4287,7 +4287,7 @@ describe("openOrFocusSession", () => {
 });
 ```
 
-- [ ] **Step 2: Implement `web/src/components/board/open-session.ts`**
+- [x] **Step 2: Implement `web/src/components/board/open-session.ts`**
 
 ```ts
 import { ApiError, createSession, listSessions, sessionsKey } from "@/lib/api-client";
@@ -4355,7 +4355,7 @@ export async function openOrFocusSession(opts: OpenOpts, isDesktop: boolean, nav
 }
 ```
 
-- [ ] **Step 3: Write the failing ProjectHeader test**
+- [x] **Step 3: Write the failing ProjectHeader test**
 
 Create `web/src/components/board/ProjectHeader.test.tsx`:
 
@@ -4419,12 +4419,12 @@ describe("ProjectHeader", () => {
 });
 ```
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 Run: `cd /root/agentmon/web && npx vitest run src/components/board/open-session.test.ts src/components/board/ProjectHeader.test.tsx`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 5: Implement `web/src/components/board/ProjectHeader.tsx`**
+- [x] **Step 5: Implement `web/src/components/board/ProjectHeader.tsx`**
 
 ```tsx
 import * as React from "react";
@@ -4528,7 +4528,7 @@ export function ProjectHeader({ project, epics, onEdit }: {
 }
 ```
 
-- [ ] **Step 6: Mount in the route**
+- [x] **Step 6: Mount in the route**
 
 In `web/src/routes/projects.tsx`, at the header mount point comment (`{/* Task 18 mounts <ProjectHeader … */}`), add:
 
@@ -4540,12 +4540,12 @@ In `web/src/routes/projects.tsx`, at the header mount point comment (`{/* Task 1
 
 Add `const [editing, setEditing] = React.useState(false);` to the shell and `import { ProjectHeader } from "@/components/board/ProjectHeader";`. (The `editing` state drives the edit sheet mounted in Task 20 — for now it's set but unread; Task 20 consumes it. To avoid an unused-var lint error in this task, also render nothing-yet: `{editing && null}`.)
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [x] **Step 7: Run tests to verify they pass**
 
 Run: `cd /root/agentmon/web && npx vitest run src/components/board/open-session.test.ts src/components/board/ProjectHeader.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 8: Web gate + commit**
+- [x] **Step 8: Web gate + commit**
 
 ```bash
 cd /root/agentmon/web && npm run typecheck && npm run test:run

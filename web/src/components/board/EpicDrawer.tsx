@@ -7,6 +7,7 @@ import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { PlanPanel } from "@/components/board/PlanPanel";
 import { StageChip } from "@/components/board/StageChip";
 import { TerminalPreview } from "@/components/board/TerminalPreview";
+import { openOrFocusSession } from "@/components/board/open-session";
 import { useEpicActions } from "@/hooks/useEpicActions";
 import {
   boardSessionsKey, getProjectBoard, listServers, listSessions, projectBoardKey, serversKey,
@@ -15,7 +16,6 @@ import { canApprove, findRunnerSession, isPlanGate, isTerminalStage, mergeMode, 
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
-import { paneKey, usePanes } from "@/store/panes";
 
 export function EpicDrawer({ epic, project, onClose }: {
   epic: EpicDTO; project: ProjectDTO; onClose(): void;
@@ -43,30 +43,14 @@ export function EpicDrawer({ epic, project, onClose }: {
   // grid tile via the pane store + home, mobile the /t terminal route.
   const openFullSession = React.useCallback(() => {
     const session = findRunnerSession(sessionsQ.data, epic, project);
-    const pane = session?.windows[0]?.panes[0];
-    if (!session || !pane) {
+    if (!session) {
       toast.error("Session ended — nothing to attach to.");
       return;
     }
-    if (isDesktop) {
-      const serverName = serversQ.data?.find((s) => s.id === project.server_id)?.name ?? project.server_id;
-      const res = usePanes.getState().openPane({
-        serverId: project.server_id, paneId: pane.id, target: session.target,
-        session: session.name, serverName, state: session.state,
-      });
-      if (!res.ok && res.reason === "cap") {
-        toast("Close a terminal tile first (6 open max).");
-        return;
-      }
-      usePanes.getState().focus(paneKey(project.server_id, session.target, session.name, pane.id));
-      void navigate({ to: "/" });
-    } else {
-      void navigate({
-        to: "/t/$serverId/$paneId",
-        params: { serverId: project.server_id, paneId: pane.id },
-        search: { target: session.target, session: session.name },
-      });
-    }
+    const serverName = serversQ.data?.find((s) => s.id === project.server_id)?.name ?? project.server_id;
+    void openOrFocusSession({
+      serverId: project.server_id, serverName, target: project.target, name: session.name, session,
+    }, isDesktop, navigate);
   }, [sessionsQ.data, serversQ.data, isDesktop, epic.session, project, navigate]);
 
   // Lazy detail fetch: the per-project board carries each epic's last-20

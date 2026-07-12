@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { BoardView } from "@/components/board/BoardView";
 import { EpicDrawer } from "@/components/board/EpicDrawer";
+import { ProjectHeader } from "@/components/board/ProjectHeader";
 import { TimelineView } from "@/components/board/TimelineView";
 import { ProjectSwitcher } from "@/components/board/ProjectSwitcher";
 import { allBoardKey, getAllBoard } from "@/lib/api-client";
@@ -33,6 +34,7 @@ export function ProjectDetailRoute() {
 
 function ProjectsShell({ projectId }: { projectId: string | null }) {
   const navigate = useNavigate();
+  const [editing, setEditing] = React.useState(false);
   // Both routes share the search schema; read it loosely to avoid binding to
   // one route id.
   const search = useSearch({ strict: false }) as Partial<ProjectsSearch>;
@@ -88,9 +90,13 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
           <ProjectSwitcher projects={data.projects} needs={needs} current={projectId ?? undefined} onSelect={openProject} />
         )}
         <span className="ml-auto" />
-        {/* Task 18 mounts <ProjectHeader project={project} …/> here for the narrowed view. */}
+        {project && data?.orchestrator_enabled && (
+          <ProjectHeader project={project} epics={epics} onEdit={() => setEditing(true)} />
+        )}
         {/* Task 19 mounts the New-project button here for the All view. */}
       </header>
+
+      {editing && null}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {boardQ.isLoading ? (
