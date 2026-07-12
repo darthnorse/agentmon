@@ -5219,7 +5219,7 @@ git commit -m "feat(web): epic web-push notifications that deep-link into the es
 
 **Prerequisite context:** the toy stack lives at `/root/agentmon-toy` with a 5-epic history (`docs/superpowers/toy-repo-acceptance.md` has the restart commands, the systemd-run BindPaths for the second agent, and the `cj.txt`/`csrf.txt` session cookies). The hub there must be rebuilt from this branch's `feat/board-ui` to serve the new endpoints + SPA. This is a manual, observation-driven pass — no automated harness.
 
-- [ ] **Step 1: Build the branch's hub + web and point the toy hub at it**
+- [x] **Step 1: Build the branch's hub + web and point the toy hub at it**
 
 Follow `docs/superpowers/toy-repo-acceptance.md` "environment" section to (re)start the local toy hub built from `feat/board-ui`:
 - `cd /root/agentmon/web && npm run build` (emits the SPA the hub serves).
@@ -5266,7 +5266,7 @@ Confirm the additions didn't disturb the existing app:
 - Today's home, sessions, grid, mobile tabs, terminals all behave as before (the board is a separate route).
 - Full gates green on the branch tip: Go gate + `cd web && npm run typecheck && npm run test:run && npm run build`.
 
-- [ ] **Step 8: Write the acceptance note**
+- [x] **Step 8: Write the acceptance note**
 
 Append a sub-3 section to `docs/superpowers/toy-repo-acceptance.md` (or a new `docs/superpowers/board-ui-acceptance.md`): what was exercised, screenshots/notes, any deferred follow-ups, and the branch SHA validated. Commit:
 
@@ -5275,7 +5275,7 @@ git add docs/superpowers/*.md
 git commit -m "docs: sub-3 board UI toy-stack acceptance results"
 ```
 
-- [ ] **Step 9: CHECKPOINT 4 (final) — STOP**
+- [x] **Step 9: CHECKPOINT 4 (final) — STOP**
 
 Report the full acceptance result + branch state. This is the merge-decision gate: the owner runs the final whole-branch cross-model review (per the sub-2 pattern) before merging `feat/board-ui`. Do NOT merge without explicit instruction.
 
