@@ -42,7 +42,7 @@ describe("ProjectHeader", () => {
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "pause" });
     fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
-      expect.objectContaining({ serverId: "h1", command: 'claude "/plan-epics"', cwd: "/w" }),
+      expect.objectContaining({ serverId: "h1", command: 'IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"', cwd: "/w" }),
       true, h.navigate,
     );
   });

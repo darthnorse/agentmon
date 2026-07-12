@@ -63,7 +63,8 @@ export function ProjectHeader({ project, epics, onEdit }: {
       <Button variant="outline" size="sm"
         onClick={() => void openOrFocusSession(
           { serverId: project.server_id, serverName: project.name, target: project.target,
-            name: sessionSlug("plan", project.name), cwd: project.workdir, command: 'claude "/plan-epics"' },
+            name: sessionSlug("plan", project.name), cwd: project.workdir,
+            command: 'IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"' },
           isDesktop, navigate,
         )}>
         Plan epics…
