@@ -47,6 +47,15 @@ describe("ProjectHeader", () => {
     );
   });
 
+  it("Run doctor re-runs the host check in a session", () => {
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run doctor…" }));
+    expect(h.openOrFocusSession).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "h1", command: "agentmon doctor", cwd: "/w" }),
+      true, h.navigate,
+    );
+  });
+
   it("Run issue parses a number or a GitHub URL", async () => {
     render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));

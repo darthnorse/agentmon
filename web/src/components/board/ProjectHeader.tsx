@@ -68,6 +68,15 @@ export function ProjectHeader({ project, epics, onEdit }: {
         )}>
         Plan epics…
       </Button>
+      <Button variant="outline" size="sm"
+        title="Re-run the host prerequisite check (gh auth, clone, hooks, Codex sandbox) in a session"
+        onClick={() => void openOrFocusSession(
+          { serverId: project.server_id, serverName: project.name, target: project.target,
+            name: sessionSlug("doctor", project.name), cwd: project.workdir, command: "agentmon doctor" },
+          isDesktop, navigate,
+        )}>
+        Run doctor…
+      </Button>
       {/* require-CI is action-backed (set_require_ci), not a PATCH field —
           spec §9 wants pause/max-parallel/require-CI presented together. */}
       <Button variant="outline" size="sm" disabled={busy !== null}
