@@ -132,7 +132,7 @@ enroll_rate_limit: { max_attempts: 30, window: "1m" }
 
 # Optional. The epic orchestrator stays completely DORMANT until github.token is
 # set (and does nothing until a project is registered). Fine-grained PAT scoped
-# to ONLY the orchestrated repos: issues read, PRs + contents read/write, checks read.
+# to ONLY the orchestrated repos: contents + issues + pull requests read/write (metadata auto).
 # github:
 #   token: "github_pat_..."
 #   webhook_secret: ""   # optional; polling covers everything, a webhook only lowers latency
@@ -344,16 +344,21 @@ Here is the whole thing, start to finish.
 
 ### 1. Give the hub a GitHub token (once)
 
-Add a `github.token` to `config.yaml` and restart the hub. Use a PAT scoped to **only** the repos you'll
-orchestrate: *issues* read, *pull requests* + *contents* read/write, *checks* read.
+Add a `github.token` to the hub's config file — **`deploy/data/config.yaml`** on the hub host (the file you
+created in [Quick start](#quick-start), bind-mounted to `/data` inside the container). Use a PAT scoped to
+**only** the repos you'll orchestrate — **Contents**, **Issues**, and **Pull requests** = *read & write*
+(**Metadata** read is added automatically). There's no "Checks" permission to grant — that's a GitHub App
+permission; the hub reads CI check status with the repo read those grants already include.
 
 ```yaml
+# in deploy/data/config.yaml
 github:
   token: "github_pat_..."
   # webhook_secret: ""   # optional; polling already covers everything, a webhook just lowers latency
 ```
 
-The **Projects** link appears in the header once the token is set.
+The config is read at startup, so apply it with `docker compose restart agentmon-hub`. The **Projects** link
+appears in the header once the token is set.
 
 ### 2. Prepare a runner host (once per host)
 

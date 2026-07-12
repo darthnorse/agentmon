@@ -1,32 +1,58 @@
-# Bind address (the compose uses host networking, so this is the real host bind).
-# Direct LAN (no proxy): bind your chosen port on all/the LAN interface.
-# Behind Caddy: bind loopback (127.0.0.1:8080) and let Caddy terminate TLS.
-listen: "0.0.0.0:8378"
-# The URL agents + browsers use to reach the hub (baked into the served install.sh).
-# Direct LAN: http://<this-host-lan-ip>:8378   Behind Caddy: https://agentmon.example.lan
-external_origin: "http://192.168.1.50:8378"
-# true ONLY behind a trusted TLS proxy (Caddy) that sets X-Forwarded-Proto/For;
-# then `listen` above MUST be loopback/firewalled. false for direct LAN.
-trust_forwarded_proto: false
-data_dir: "/data"
-session_cookie: { name: "agentmon_session", ttl: "168h" }
-login_rate_limit: { max_attempts: 5, window: "15m" }
-enroll_rate_limit: { max_attempts: 30, window: "1m" }
-# Servers are no longer listed here — they self-register via
-# `curl <external_origin>/install.sh | sudo bash` and are admitted with
-# `agentmon-hubd server approve <hostname>`.
+# AgentMon hub configuration
+#
+# Copy this file to deploy/data/config.yaml, then edit. The hub reads it at
+# startup, so apply changes with:  docker compose restart agentmon-hub
 
-# ── Orchestrator (optional) ──────────────────────────────────────────────
-# The epic orchestrator stays completely DORMANT until `github.token` is set.
-# Use a fine-grained PAT scoped to ONLY the repos you register as projects
-# (issues: read; pull requests + contents: read/write; checks: read).
-# Config is read at startup — `docker compose restart agentmon-hub` to apply.
+# --- Network -----------------------------------------------------------------
+
+# Bind address (compose uses host networking, so this is the real host bind).
+#   Direct LAN (no proxy): bind your chosen port on the LAN interface.
+#   Behind Caddy:          bind loopback (127.0.0.1:8080) and let Caddy do TLS.
+listen: "0.0.0.0:8378"
+
+# The URL agents + browsers use to reach the hub (baked into the served install.sh).
+#   Direct LAN:   http://<this-host-lan-ip>:8378
+#   Behind Caddy: https://agentmon.example.lan
+external_origin: "http://192.168.1.50:8378"
+
+# true ONLY behind a trusted TLS proxy (Caddy) that sets X-Forwarded-Proto/For;
+# then "listen" above MUST be loopback/firewalled. false for direct LAN.
+trust_forwarded_proto: false
+
+# Where config.yaml + the SQLite DB live inside the container (bind-mounted).
+data_dir: "/data"
+
+# --- Sessions & rate limits --------------------------------------------------
+
+session_cookie:    { name: "agentmon_session", ttl: "168h" }
+login_rate_limit:  { max_attempts: 5,  window: "15m" }
+enroll_rate_limit: { max_attempts: 30, window: "1m" }
+
+# Servers are not listed here -- they self-register via
+#   curl <external_origin>/install.sh | sudo bash
+# and are admitted with
+#   agentmon-hubd server approve <hostname>
+
+# --- Orchestrator (optional) -------------------------------------------------
+
+# The epic orchestrator stays completely DORMANT until github.token is set.
+# Use a fine-grained PAT scoped to ONLY the repos you register as projects.
+# Repository permissions:
+#   Contents ....... Read and write   (merge PRs, read plan docs)
+#   Issues ......... Read and write   (read labeled epics, add labels, comment)
+#   Pull requests .. Read and write   (read PR state, merge)
+#   Metadata ....... Read             (added automatically)
+# CI check status for the merge gate needs no extra permission -- "Checks" is a
+# GitHub App permission, not a PAT one; the repo read above already covers it.
+# (A classic token works too: a single "repo" scope covers all of the above.)
+#
 # github:
 #   token: "github_pat_..."
-#   webhook_secret: ""    # optional; polling covers everything, a webhook only lowers latency
-# orchestrator:           # optional tuning; defaults shown
-#   tick: 15s             # poll/scheduling cadence
-#   planning_timeout: 2h  # stage timeouts before an epic is marked stalled
+#   webhook_secret: ""         # optional; polling covers everything, a webhook only lowers latency
+#
+# orchestrator:                # optional tuning; defaults shown
+#   tick: 15s                  # poll / scheduling cadence
+#   planning_timeout: 2h       # stage timeouts before an epic is marked stalled
 #   implementing_timeout: 8h
 #   reviewing_timeout: 2h
-#   max_attempts: 2       # spawn attempts per epic before it is marked failed
+#   max_attempts: 2            # spawn attempts per epic before it is marked failed
