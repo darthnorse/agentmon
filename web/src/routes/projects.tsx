@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { BoardView } from "@/components/board/BoardView";
+import { TimelineView } from "@/components/board/TimelineView";
 import { ProjectSwitcher } from "@/components/board/ProjectSwitcher";
 import { allBoardKey, getAllBoard } from "@/lib/api-client";
 import type { EpicDTO, SessionState } from "@/lib/contracts";
@@ -132,7 +133,7 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
                 onOpenEpic={(id) => setSearch({ epic: id })}
               />
             ) : (
-              <div className="p-4 text-sm text-muted-foreground">Timeline coming in this branch — Task 14.</div>
+              <TimelineView epics={epics} projects={projects} groupByProject={!projectId} onOpenEpic={(id) => setSearch({ epic: id })} />
             )}
             {/* Task 15 replaces this with <EpicDrawer …> resolution on epicId. */}
             {epicId ? null : null}
