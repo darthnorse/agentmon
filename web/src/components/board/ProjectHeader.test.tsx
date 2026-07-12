@@ -56,6 +56,15 @@ describe("ProjectHeader", () => {
     );
   });
 
+  it("Plan epics uses codex -a never for a codex project", () => {
+    render(<ProjectHeader project={{ ...project, provider: "codex" }} epics={[]} onEdit={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
+    expect(h.openOrFocusSession).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'codex -a never "/plan-epics"' }),
+      true, h.navigate,
+    );
+  });
+
   it("Run issue parses a number or a GitHub URL", async () => {
     render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));

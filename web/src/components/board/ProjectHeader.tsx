@@ -37,6 +37,11 @@ export function ProjectHeader({ project, epics, onEdit }: {
   const [showRun, setShowRun] = React.useState(false);
   const [issue, setIssue] = React.useState("");
   const working = boardStats(epics).working;
+  // Launch /plan-epics with the project's provider, no-prompt flags (mirrors the
+  // runner's KickoffCommand): Claude skips permissions, Codex uses -a never.
+  const planCommand = project.provider === "codex"
+    ? 'codex -a never "/plan-epics"'
+    : 'IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"';
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -63,8 +68,7 @@ export function ProjectHeader({ project, epics, onEdit }: {
       <Button variant="outline" size="sm"
         onClick={() => void openOrFocusSession(
           { serverId: project.server_id, serverName: project.name, target: project.target,
-            name: sessionSlug("plan", project.name), cwd: project.workdir,
-            command: 'IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"' },
+            name: sessionSlug("plan", project.name), cwd: project.workdir, command: planCommand },
           isDesktop, navigate,
         )}>
         Plan epics…

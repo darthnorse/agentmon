@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestInstallSkillsWritesAllThree(t *testing.T) {
+func TestInstallSkillsWritesAllFour(t *testing.T) {
 	home := t.TempDir()
 	written, err := InstallSkills(home)
 	if err != nil {
@@ -16,6 +16,7 @@ func TestInstallSkillsWritesAllThree(t *testing.T) {
 		filepath.Join(home, ".claude", "commands", "epic-pipeline.md"),
 		filepath.Join(home, ".claude", "commands", "plan-epics.md"),
 		filepath.Join(home, ".codex", "prompts", "epic-pipeline.md"),
+		filepath.Join(home, ".codex", "prompts", "plan-epics.md"),
 	}
 	if len(written) != len(want) {
 		t.Fatalf("written = %v", written)

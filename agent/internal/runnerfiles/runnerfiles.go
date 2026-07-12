@@ -15,7 +15,7 @@ import (
 	"agentmon/agent/internal/fsatomic"
 )
 
-//go:embed files/claude/epic-pipeline.md files/claude/plan-epics.md files/codex/epic-pipeline.md
+//go:embed files/claude/epic-pipeline.md files/claude/plan-epics.md files/codex/epic-pipeline.md files/codex/plan-epics.md
 var fsys embed.FS
 
 // installs maps each embedded skill to its destination under $HOME; the file
@@ -24,6 +24,7 @@ var installs = []struct{ src, dstDir string }{
 	{"files/claude/epic-pipeline.md", filepath.Join(".claude", "commands")},
 	{"files/claude/plan-epics.md", filepath.Join(".claude", "commands")},
 	{"files/codex/epic-pipeline.md", filepath.Join(".codex", "prompts")},
+	{"files/codex/plan-epics.md", filepath.Join(".codex", "prompts")},
 }
 
 // InstallSkills writes every embedded skill under home (0755 dirs, 0644 files
