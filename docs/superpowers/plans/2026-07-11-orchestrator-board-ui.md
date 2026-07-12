@@ -4878,7 +4878,7 @@ git commit -m "feat(web): project registration form with host checklist and doct
 - Consumes: `deleteProject`/`allBoardKey`, `useNavigate`, `ApiError`, `queryClient`.
 - Produces: `DeleteProject {project: ProjectDTO; onDeleted(): void; onCancel(): void}` — type-the-name confirm.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `web/src/components/board/DeleteProject.test.tsx`:
 
@@ -4925,12 +4925,12 @@ describe("DeleteProject", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /root/agentmon/web && npx vitest run src/components/board/DeleteProject.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement `web/src/components/board/DeleteProject.tsx`**
+- [x] **Step 3: Implement `web/src/components/board/DeleteProject.tsx`**
 
 ```tsx
 import * as React from "react";
@@ -4981,7 +4981,7 @@ export function DeleteProject({ project, onDeleted, onCancel }: {
 }
 ```
 
-- [ ] **Step 4: Wire edit + delete into the route**
+- [x] **Step 4: Wire edit + delete into the route**
 
 In `web/src/routes/projects.tsx`, replace the Task-18 `{editing && null}` with an edit sheet that hosts `ProjectForm mode="edit"` + `DeleteProject`:
 
@@ -5004,12 +5004,12 @@ In `web/src/routes/projects.tsx`, replace the Task-18 `{editing && null}` with a
 
 with `import { DeleteProject } from "@/components/board/DeleteProject";`.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cd /root/agentmon/web && npx vitest run src/components/board/DeleteProject.test.tsx src/components/board/ProjectForm.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 6: Web gate + commit**
+- [x] **Step 6: Web gate + commit**
 
 ```bash
 cd /root/agentmon/web && npm run typecheck && npm run test:run

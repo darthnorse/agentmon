@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { BoardView } from "@/components/board/BoardView";
+import { DeleteProject } from "@/components/board/DeleteProject";
 import { EpicDrawer } from "@/components/board/EpicDrawer";
 import { ProjectForm } from "@/components/board/ProjectForm";
 import { ProjectHeader } from "@/components/board/ProjectHeader";
@@ -101,7 +102,20 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
         )}
       </header>
 
-      {editing && null}
+      {editing && project && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4" onClick={() => setEditing(false)}>
+          <div className="mx-auto max-w-3xl rounded-lg border border-border bg-background p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold">Edit {project.name}</h2>
+              <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>✕</Button>
+            </div>
+            <ProjectForm mode="edit" project={project} onDone={() => setEditing(false)} />
+            <DeleteProject project={project}
+              onDeleted={() => { setEditing(false); void navigate({ to: "/projects", search: { tab: "board", epic: "" } }); }}
+              onCancel={() => setEditing(false)} />
+          </div>
+        </div>
+      )}
 
       {creating && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4" onClick={() => setCreating(false)}>
