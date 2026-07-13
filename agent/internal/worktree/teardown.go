@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"agentmon/agent/internal/tmux"
 )
 
 // Runner runs `git -C <dir> <args...>` (arg-array; no shell). Injectable for tests.
@@ -26,13 +28,21 @@ var ExecRunner Runner = func(ctx context.Context, dir string, args ...string) ([
 // Teardown removes the worktree checked out at `branch` under `workdir`'s repo,
 // then safe-deletes `branch`. Idempotent: a missing worktree or branch is not an
 // error. A non-forced `worktree remove` on a DIRTY worktree fails — surfaced so
-// the caller logs + swallows, never destroying uncommitted work.
-func Teardown(ctx context.Context, run Runner, workdir, branch string) error {
+// the caller logs + swallows, never destroying uncommitted work. allowedRoots is
+// the same session_dirs allow-list the workdir was validated against: a worktree
+// path resolved OUTSIDE it is skipped, never removed (a leaked worktree is benign;
+// deleting outside the configured boundary is not).
+func Teardown(ctx context.Context, run Runner, workdir, branch string, allowedRoots []string) error {
 	path, err := worktreePathForBranch(ctx, run, workdir, branch)
 	if err != nil {
 		return err
 	}
 	if path != "" {
+		// The path comes from `git worktree list`, which can point anywhere on the
+		// host; re-authorise it against the roots before removing anything.
+		if _, err := tmux.ValidateCwd(path, allowedRoots); err != nil {
+			return fmt.Errorf("worktree %q for branch %q is outside the allowed roots; skipping: %w", path, branch, err)
+		}
 		if out, err := run(ctx, workdir, "worktree", "remove", path); err != nil {
 			return fmt.Errorf("worktree remove %q: %w: %s", path, err, bytes.TrimSpace(out))
 		}

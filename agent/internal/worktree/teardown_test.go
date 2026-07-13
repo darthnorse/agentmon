@@ -46,7 +46,7 @@ func TestTeardownRemovesMergedWorktreeAndBranch(t *testing.T) {
 	// Merged-branch scenario: branch points at a commit already on main (no new commits).
 	gitCmd(t, main, "worktree", "add", wt, "-b", "epic/1-x", "main")
 
-	if err := Teardown(context.Background(), ExecRunner, main, "epic/1-x"); err != nil {
+	if err := Teardown(context.Background(), ExecRunner, main, "epic/1-x", []string{filepath.Dir(main)}); err != nil {
 		t.Fatalf("Teardown: %v", err)
 	}
 	if _, err := os.Stat(wt); !os.IsNotExist(err) {
@@ -61,7 +61,7 @@ func TestTeardownRemovesMergedWorktreeAndBranch(t *testing.T) {
 func TestTeardownIdempotentWhenNothingToRemove(t *testing.T) {
 	requireGit(t)
 	main := newMainClone(t)
-	if err := Teardown(context.Background(), ExecRunner, main, "epic/does-not-exist"); err != nil {
+	if err := Teardown(context.Background(), ExecRunner, main, "epic/does-not-exist", []string{filepath.Dir(main)}); err != nil {
 		t.Fatalf("Teardown on missing branch should be nil, got %v", err)
 	}
 }
@@ -76,10 +76,26 @@ func TestTeardownKeepsDirtyWorktree(t *testing.T) {
 	}
 	// Non-forced remove refuses a dirty worktree; Teardown surfaces that as an error
 	// (caller logs + swallows) and the worktree survives so no work is lost.
-	if err := Teardown(context.Background(), ExecRunner, main, "epic/2-x"); err == nil {
+	if err := Teardown(context.Background(), ExecRunner, main, "epic/2-x", []string{filepath.Dir(main)}); err == nil {
 		t.Fatal("expected error for dirty worktree, got nil")
 	}
 	if _, err := os.Stat(wt); err != nil {
 		t.Fatalf("dirty worktree should survive: %v", err)
+	}
+}
+
+func TestTeardownSkipsWorktreeOutsideRoots(t *testing.T) {
+	requireGit(t)
+	main := newMainClone(t)
+	wt := main + "-epic-3"
+	gitCmd(t, main, "worktree", "add", wt, "-b", "epic/3-x", "main")
+	// Roots that do NOT contain the worktree path → teardown must refuse to remove
+	// it (deleting outside the configured boundary is not allowed) and leave it.
+	otherRoot := t.TempDir()
+	if err := Teardown(context.Background(), ExecRunner, main, "epic/3-x", []string{otherRoot}); err == nil {
+		t.Fatal("expected teardown to refuse a worktree outside the allowed roots")
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("out-of-roots worktree must survive: %v", err)
 	}
 }

@@ -85,7 +85,7 @@ func main() {
 		return tmux.KillSession(ctx, tmux.ExecRunner, socket, name)
 	}
 	teardownWorktree := func(ctx context.Context, workdir, branch string) error {
-		return worktree.Teardown(ctx, worktree.ExecRunner, workdir, branch)
+		return worktree.Teardown(ctx, worktree.ExecRunner, workdir, branch, cfg.AllowedDirs())
 	}
 
 	machine := state.New(nil)
