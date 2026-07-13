@@ -3,9 +3,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { openOrFocusSession } from "@/components/board/open-session";
+import { PlanEpicsModal } from "@/components/board/PlanEpicsModal";
 import { useEpicActions } from "@/hooks/useEpicActions";
 import { boardStats, MAX_PARALLEL_CEILING, sessionSlug } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
+import { planCommand } from "@/lib/shell-quote";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
 
@@ -35,13 +37,9 @@ export function ProjectHeader({ project, epics, onEdit }: {
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const { act, busy } = useEpicActions(project.id);
   const [showRun, setShowRun] = React.useState(false);
+  const [showPlan, setShowPlan] = React.useState(false);
   const [issue, setIssue] = React.useState("");
   const working = boardStats(epics).working;
-  // Launch /plan-epics with the project's provider, no-prompt flags (mirrors the
-  // runner's KickoffCommand): Claude skips permissions, Codex uses -a never.
-  const planCommand = project.provider === "codex"
-    ? 'codex -a never "/plan-epics"'
-    : 'IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"';
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -65,12 +63,7 @@ export function ProjectHeader({ project, epics, onEdit }: {
       </span>
 
       <Button variant="outline" size="sm" onClick={() => setShowRun((v) => !v)}>Run issue…</Button>
-      <Button variant="outline" size="sm"
-        onClick={() => void openOrFocusSession(
-          { serverId: project.server_id, serverName: project.name, target: project.target,
-            name: sessionSlug("plan", project.name), cwd: project.workdir, command: planCommand },
-          isDesktop, navigate,
-        )}>
+      <Button variant="outline" size="sm" onClick={() => setShowPlan(true)}>
         Plan epics…
       </Button>
       <Button variant="outline" size="sm"
@@ -85,10 +78,10 @@ export function ProjectHeader({ project, epics, onEdit }: {
       {/* require-CI is action-backed (set_require_ci), not a PATCH field —
           spec §9 wants pause/max-parallel/require-CI presented together. */}
       <Button variant="outline" size="sm" disabled={busy !== null}
-        title="Require CI green before the merge gate lets an epic through"
+        title="Wait for CI checks before the merge gate lets an epic through (no effect on repos without CI; failing checks always block)."
         onClick={() => void act({ action: "set_require_ci", on: !project.require_ci },
-          project.require_ci ? "CI gate off" : "CI gate on")}>
-        CI gate: {project.require_ci ? "on" : "off"}
+          project.require_ci ? "Require CI off" : "Require CI on")}>
+        Require CI: {project.require_ci ? "on" : "off"}
       </Button>
       <Button variant="outline" size="sm" disabled={busy !== null}
         title={project.pinned ? "Unpin from the home header" : "Pin to the home header"}
@@ -102,6 +95,22 @@ export function ProjectHeader({ project, epics, onEdit }: {
       ) : (
         <ConfirmButton label="Pause project" confirmLabel="Pause?" disabled={busy !== null}
           onConfirm={() => void act({ action: "pause" }, "Project paused — running epics finish")} />
+      )}
+
+      {showPlan && (
+        <PlanEpicsModal
+          project={project.name}
+          onClose={() => setShowPlan(false)}
+          onSubmit={(vibe) => {
+            setShowPlan(false);
+            void openOrFocusSession(
+              { serverId: project.server_id, serverName: project.name, target: project.target,
+                name: sessionSlug("plan", project.name), cwd: project.workdir,
+                command: planCommand(project.provider === "codex" ? "codex" : "claude", vibe) },
+              isDesktop, navigate,
+            );
+          }}
+        />
       )}
 
       {showRun && (

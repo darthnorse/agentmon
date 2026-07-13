@@ -31,7 +31,7 @@ describe("ProjectHeader", () => {
 
   it("toggles require-CI via set_require_ci", () => {
     render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: /CI gate/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Require CI/ }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_require_ci", on: false });
   });
 
@@ -42,14 +42,27 @@ describe("ProjectHeader", () => {
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_pinned", on: true });
   });
 
-  it("pause confirms, and Plan epics spawns an interactive session", async () => {
+  it("pause confirms, and Plan epics (empty vibe) spawns the bare interactive session", async () => {
     render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Pause project" }));
     fireEvent.click(screen.getByRole("button", { name: "Pause?" }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "pause" });
+    // Plan epics… now opens a modal; launching with an empty vibe keeps today's bare command.
     fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
       expect.objectContaining({ serverId: "h1", command: 'IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"', cwd: "/w" }),
+      true, h.navigate,
+    );
+  });
+
+  it("Plan epics seeds a typed vibe into the launch command (shell-safe)", () => {
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "add dark mode" } });
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    expect(h.openOrFocusSession).toHaveBeenCalledWith(
+      expect.objectContaining({ command: `IS_SANDBOX=1 claude --dangerously-skip-permissions '/plan-epics add dark mode'` }),
       true, h.navigate,
     );
   });
@@ -66,6 +79,7 @@ describe("ProjectHeader", () => {
   it("Plan epics uses codex -a never for a codex project", () => {
     render(<ProjectHeader project={{ ...project, provider: "codex" }} epics={[]} onEdit={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'codex -a never "/plan-epics"' }),
       true, h.navigate,
