@@ -90,6 +90,11 @@ export function ProjectHeader({ project, epics, onEdit }: {
           project.require_ci ? "CI gate off" : "CI gate on")}>
         CI gate: {project.require_ci ? "on" : "off"}
       </Button>
+      <Button variant="outline" size="sm" disabled={busy !== null}
+        title={project.pinned ? "Unpin from the home header" : "Pin to the home header"}
+        onClick={() => void act({ action: "set_pinned", on: !project.pinned }, project.pinned ? "Unpinned" : "Pinned")}>
+        {project.pinned ? "★ Pinned" : "☆ Pin"}
+      </Button>
       <Button variant="outline" size="sm" onClick={onEdit}>Edit…</Button>
       {project.paused ? (
         <Button variant="outline" size="sm" disabled={busy !== null}

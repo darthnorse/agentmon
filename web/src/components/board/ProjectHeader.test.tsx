@@ -35,6 +35,13 @@ describe("ProjectHeader", () => {
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_require_ci", on: false });
   });
 
+  it("toggles pin via set_pinned", () => {
+    // fixture project.pinned is false → clicking pins it (on: true)
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /Pin/ }));
+    expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_pinned", on: true });
+  });
+
   it("pause confirms, and Plan epics spawns an interactive session", async () => {
     render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Pause project" }));
