@@ -2,7 +2,7 @@ import * as React from "react";
 import { toast } from "sonner";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { listServers, listSessions, serversKey, sessionsKey } from "@/lib/api-client";
+import { allBoardKey, getAllBoard, listServers, listSessions, serversKey, sessionsKey } from "@/lib/api-client";
 import { useAuth } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { SessionList, flattenSessions, type SessionRow } from "@/components/SessionList";
@@ -10,11 +10,12 @@ import { NewSessionForm } from "@/components/NewSessionForm";
 import { PendingAgents } from "@/components/PendingAgents";
 import { DefaultPasswordBanner } from "@/components/DefaultPasswordBanner";
 import { DesktopShell } from "@/components/DesktopShell";
+import { PinnedProjects } from "@/components/board/PinnedProjects";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useStateSnapshot } from "@/store/session-state";
 import { openPaneTail, TILE_CAP_TOAST } from "@/components/board/open-session";
-import { useNeedsTotal } from "@/store/board";
+import { needsByProject, useBoardAttention, useNeedsTotal } from "@/store/board";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
 import { nextBlocked } from "@/lib/focus-next";
@@ -32,6 +33,13 @@ export function ShellRoute() {
 
   const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
   const servers = serversQ.data ?? [];
+
+  // Pinned-project chips: the board query (shared ["board"] cache key) supplies
+  // the project list + pin flags; per-project needs come from the app-wide
+  // board-attention store (same source as the "Projects" total badge).
+  const boardQ = useQuery({ queryKey: allBoardKey(), queryFn: getAllBoard });
+  const attention = useBoardAttention((s) => s.attention);
+  const pinnedNeeds = React.useMemo(() => needsByProject(attention), [attention]);
 
   const sessionQs = useQueries({
     queries: servers.map((s) => ({
@@ -128,7 +136,14 @@ export function ShellRoute() {
         // the content flows under the status bar/notch — inset the top so the bar shows.
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
-        <span className="font-semibold">AgentMon</span>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="shrink-0 font-semibold">AgentMon</span>
+          <PinnedProjects
+            projects={boardQ.data?.projects ?? []}
+            needs={pinnedNeeds}
+            onOpen={(id) => navigate({ to: "/projects/$projectId", params: { projectId: id }, search: { tab: "board", epic: "" } })}
+          />
+        </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="relative" onClick={() => navigate({ to: "/projects", search: { tab: "board", epic: "" } })}>
             Projects
