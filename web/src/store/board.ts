@@ -1,3 +1,4 @@
+import * as React from "react";
 import { create } from "zustand";
 import type { BoardDeltaFrame, EpicDTO } from "@/lib/contracts";
 
@@ -43,3 +44,11 @@ export function needsByProject(attention: Map<string, string>): Map<string, numb
   for (const pid of attention.values()) out.set(pid, (out.get(pid) ?? 0) + 1);
   return out;
 }
+
+// Reactive per-project needs counts, derived from the attention store. Shared by
+// the home header (pinned chips) and the projects route so the derivation lives
+// in one place rather than being copy-pasted into each route.
+export const useNeedsByProject = (): Map<string, number> => {
+  const attention = useBoardAttention((s) => s.attention);
+  return React.useMemo(() => needsByProject(attention), [attention]);
+};

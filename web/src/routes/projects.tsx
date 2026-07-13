@@ -12,7 +12,7 @@ import { ProjectSwitcher } from "@/components/board/ProjectSwitcher";
 import { allBoardKey, getAllBoard, listServers, serversKey } from "@/lib/api-client";
 import type { EpicDTO, SessionState } from "@/lib/contracts";
 import { effectiveSessionState } from "@/lib/state";
-import { needsByProject, useBoardAttention } from "@/store/board";
+import { useNeedsByProject } from "@/store/board";
 import { useStateSnapshot } from "@/store/session-state";
 
 export interface ProjectsSearch { tab: "board" | "timeline"; epic: string; }
@@ -50,8 +50,7 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
 
   const boardQ = useQuery({ queryKey: allBoardKey(), queryFn: getAllBoard });
   const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
-  const attention = useBoardAttention((s) => s.attention);
-  const needs = React.useMemo(() => needsByProject(attention), [attention]);
+  const needs = useNeedsByProject();
   const snap = useStateSnapshot();
 
   const data = boardQ.data;

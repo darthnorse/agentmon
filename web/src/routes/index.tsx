@@ -11,11 +11,12 @@ import { PendingAgents } from "@/components/PendingAgents";
 import { DefaultPasswordBanner } from "@/components/DefaultPasswordBanner";
 import { DesktopShell } from "@/components/DesktopShell";
 import { PinnedProjects } from "@/components/board/PinnedProjects";
+import { NeedsBadge } from "@/components/board/NeedsBadge";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useStateSnapshot } from "@/store/session-state";
 import { openPaneTail, TILE_CAP_TOAST } from "@/components/board/open-session";
-import { needsByProject, useBoardAttention, useNeedsTotal } from "@/store/board";
+import { useNeedsByProject, useNeedsTotal } from "@/store/board";
 import { queryClient } from "@/lib/query-client";
 import { effectiveSessionState } from "@/lib/state";
 import { nextBlocked } from "@/lib/focus-next";
@@ -38,8 +39,7 @@ export function ShellRoute() {
   // the project list + pin flags; per-project needs come from the app-wide
   // board-attention store (same source as the "Projects" total badge).
   const boardQ = useQuery({ queryKey: allBoardKey(), queryFn: getAllBoard });
-  const attention = useBoardAttention((s) => s.attention);
-  const pinnedNeeds = React.useMemo(() => needsByProject(attention), [attention]);
+  const pinnedNeeds = useNeedsByProject();
 
   const sessionQs = useQueries({
     queries: servers.map((s) => ({
@@ -147,11 +147,7 @@ export function ShellRoute() {
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="relative" onClick={() => navigate({ to: "/projects", search: { tab: "board", epic: "" } })}>
             Projects
-            {needsTotal > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
-                {needsTotal}
-              </span>
-            )}
+            <NeedsBadge count={needsTotal} className="absolute -right-1.5 -top-1.5" />
           </Button>
           {servers.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setShowNew((v) => !v)}>

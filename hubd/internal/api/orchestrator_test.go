@@ -17,6 +17,7 @@ import (
 	"agentmon/hubd/internal/authz"
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/github"
+	"agentmon/hubd/internal/orchestrator"
 	"agentmon/hubd/internal/registry"
 )
 
@@ -143,6 +144,40 @@ func TestSetPinnedAction(t *testing.T) {
 	d.OrchestratorActionsHandler()(w, r)
 	if w.Code != 404 {
 		t.Fatalf("set_pinned unknown project = %d", w.Code)
+	}
+}
+
+// C1: flipping a pin must fan a project-level board change so OTHER connected
+// clients refresh their home-header chips (the initiator refreshes locally).
+func TestSetPinnedBroadcasts(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	bcast := orchestrator.NewBoardBroadcaster()
+	d := Deps{DB: database, Orch: &fakeOrch{}, Audit: audit.NewRecorder(&captureSink{}), BoardBcast: bcast}
+
+	// Publish is synchronous, so the change is queued by the time the handler
+	// returns — a non-blocking read must find it.
+	_, ch, cancel := bcast.Subscribe()
+	defer cancel()
+
+	r, w := orchReq("POST", "/api/v1/orchestrator/projects/p1/actions", `{"action":"set_pinned","on":true}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorActionsHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("set_pinned = %d %s", w.Code, w.Body.String())
+	}
+	select {
+	case c := <-ch:
+		if c.ProjectID != "p1" {
+			t.Fatalf("board change project = %q, want p1", c.ProjectID)
+		}
+		// An empty stage is what keeps the web-push dispatcher from firing on a pin.
+		if c.Stage != "" {
+			t.Fatalf("pin change must carry no stage, got %q", c.Stage)
+		}
+	default:
+		t.Fatal("set_pinned did not publish a board change")
 	}
 }
 

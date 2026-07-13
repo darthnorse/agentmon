@@ -1,4 +1,5 @@
 import type { ProjectDTO } from "@/lib/contracts";
+import { NeedsBadge } from "@/components/board/NeedsBadge";
 
 // Quick-jump chips for pinned projects, shown in the home header. Pure and
 // presentational (styled after ProjectSwitcher): the parent supplies the live
@@ -20,11 +21,7 @@ export function PinnedProjects({ projects, needs, onOpen }: {
             className="inline-flex shrink-0 items-center rounded-full border border-border bg-card px-3 py-1 text-xs font-medium hover:bg-accent"
           >
             {p.name}
-            {n > 0 && (
-              <span className="ml-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
-                {n}
-              </span>
-            )}
+            <NeedsBadge count={n} className="ml-1.5" />
           </button>
         );
       })}

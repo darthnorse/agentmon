@@ -322,6 +322,13 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 				writeJSONError(w, http.StatusNotFound, "not found")
 				return
 			}
+			// Fan a project-level board change so OTHER connected clients refresh
+			// their pinned-chip row (the initiator already invalidates locally via
+			// useEpicActions). Empty Stage → the web-push dispatcher skips it
+			// (push.go only fires on escalated/stalled), so no spurious push.
+			if err == nil && d.BoardBcast != nil {
+				d.BoardBcast.Publish(orchestrator.BoardChange{ProjectID: id})
+			}
 		case "run_issue":
 			if in.Issue < 1 {
 				writeJSONError(w, http.StatusBadRequest, "issue must be a positive number")
