@@ -17,6 +17,7 @@ import (
 	"agentmon/agent/internal/report"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
+	"agentmon/agent/internal/worktree"
 )
 
 var version = "dev"
@@ -83,6 +84,9 @@ func main() {
 	killSession := func(ctx context.Context, socket, name string) error {
 		return tmux.KillSession(ctx, tmux.ExecRunner, socket, name)
 	}
+	teardownWorktree := func(ctx context.Context, workdir, branch string) error {
+		return worktree.Teardown(ctx, worktree.ExecRunner, workdir, branch)
+	}
 
 	machine := state.New(nil)
 	reportStore := report.NewStore(report.NewInstanceID(), report.DefaultCap)
@@ -97,6 +101,7 @@ func main() {
 	mux.Handle("POST /sessions", api.RequireBearer(cfg.HubToken, api.CreateSessionHandler(cfg, createSession)))
 	mux.Handle("POST /sessions/rename", api.RequireBearer(cfg.HubToken, api.RenameSessionHandler(cfg, renameSession)))
 	mux.Handle("POST /sessions/kill", api.RequireBearer(cfg.HubToken, api.KillSessionHandler(cfg, killSession)))
+	mux.Handle("POST /worktrees/teardown", api.RequireBearer(cfg.HubToken, api.WorktreeTeardownHandler(cfg, teardownWorktree)))
 	mux.Handle("GET /state", api.RequireBearer(cfg.HubToken, api.StateHandler(cfg, machine)))
 	mux.Handle("GET /orchestrator/reports", api.RequireBearer(cfg.HubToken, report.DrainHandler(cfg, reportStore)))
 

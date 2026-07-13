@@ -96,6 +96,14 @@ type KillSessionRequest struct {
 	Name string `json:"name"`
 }
 
+// WorktreeTeardownRequest is the body of POST /worktrees/teardown (agent) and
+// the hub's teardown call. Workdir is the project's main clone; Branch is the
+// epic's branch whose worktree to remove.
+type WorktreeTeardownRequest struct {
+	Workdir string `json:"workdir"`
+	Branch  string `json:"branch"`
+}
+
 // sessionNameRe is the single name rule enforced at both the hub (browser
 // boundary) and the agent (exec boundary): 1–64 chars, must start with an
 // alphanumeric, then only A–Z a–z 0–9 _ -. This excludes '.' and ':' (tmux
