@@ -73,3 +73,21 @@ func TestWorktreeTeardownHandlerEmptyWorkdir400(t *testing.T) {
 		t.Fatal("teardown must not run for an empty workdir")
 	}
 }
+
+func TestWorktreeTeardownHandlerRejectsUnsafeBranch(t *testing.T) {
+	cfg := config.Config{SessionDirs: []string{t.TempDir()}}
+	// Values git could misparse as an option / revision expression, or that carry
+	// whitespace/control — all must 400 before any git runs.
+	for _, br := range []string{"-rf", "--force", "@{-1}", "epic 1", "epic/\tx"} {
+		called := false
+		h := WorktreeTeardownHandler(cfg, func(context.Context, string, string) error { called = true; return nil })
+		rr := httptest.NewRecorder()
+		h(rr, teardownReq(t, shared.WorktreeTeardownRequest{Workdir: t.TempDir(), Branch: br}))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("branch %q: code = %d", br, rr.Code)
+		}
+		if called {
+			t.Fatalf("branch %q: teardown must not run", br)
+		}
+	}
+}

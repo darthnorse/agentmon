@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -133,13 +132,7 @@ func CreateSessionHandler(cfg config.Config, create SessionCreator) http.Handler
 			writeJSONError(w, http.StatusNotFound, "unknown target")
 			return
 		}
-		allowed := cfg.SessionDirs
-		if len(allowed) == 0 {
-			if home, err := os.UserHomeDir(); err == nil && home != "" {
-				allowed = []string{home}
-			}
-		}
-		cwd, err := tmux.ValidateCwd(req.Cwd, allowed)
+		cwd, err := tmux.ValidateCwd(req.Cwd, cfg.AllowedDirs())
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return

@@ -9,12 +9,10 @@ export function shSingleQuote(s: string): string {
 // (unchanged behavior); a vibe is seeded as $ARGUMENTS, shell-safe quoted.
 export function planCommand(provider: "claude" | "codex", vibe: string): string {
   const v = vibe.trim();
-  if (provider === "codex") {
-    return v
-      ? `codex -a never ${shSingleQuote(`/plan-epics ${v}`)}`
-      : `codex -a never "/plan-epics"`;
-  }
-  return v
-    ? `IS_SANDBOX=1 claude --dangerously-skip-permissions ${shSingleQuote(`/plan-epics ${v}`)}`
-    : `IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"`;
+  const prefix = provider === "codex"
+    ? "codex -a never"
+    : "IS_SANDBOX=1 claude --dangerously-skip-permissions";
+  // Empty vibe keeps today's bare double-quoted form; a vibe is single-quoted.
+  const arg = v ? shSingleQuote(`/plan-epics ${v}`) : `"/plan-epics"`;
+  return `${prefix} ${arg}`;
 }

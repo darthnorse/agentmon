@@ -105,6 +105,20 @@ describe("openPaneTail", () => {
     expect(usePanes.getState().focusedId).toBeNull();
   });
 
+  it("desktop expand=false collapses to grid even when the pane is already open", () => {
+    // Pane s/p1 is already open; a DIFFERENT tile is currently expanded (focused).
+    usePanes.setState({
+      panes: [{ id: paneKey("h1", "default", "s", "p1"), serverId: "h1", paneId: "p1", target: "default", session: "s", serverName: "host" }],
+      focusedId: paneKey("h1", "default", "other", "pX"),
+    });
+    const navigate = vi.fn();
+    const r = openPaneTail({ serverId: "h1", serverName: "host", target: "default", session: "s", paneId: "p1" }, true, navigate, false);
+    expect(r).toBe("opened");
+    // Re-launching an already-open session must reveal it (collapse to grid), not
+    // leave it hidden behind the other expanded tile.
+    expect(usePanes.getState().focusedId).toBeNull();
+  });
+
   it("desktop returns cap (no focus) when the tile grid is full", () => {
     usePanes.setState({
       panes: Array.from({ length: 6 }, (_, i) => ({ id: `h1:default:s${i}:p${i}`, serverId: "h1", paneId: `p${i}`, target: "default", session: `s${i}`, serverName: "host" })),

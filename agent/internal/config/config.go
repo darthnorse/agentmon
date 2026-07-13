@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/BurntSushi/toml"
 
@@ -70,4 +71,19 @@ func (c Config) ResolveTarget(label string) (Target, bool) {
 		}
 	}
 	return Target{}, false
+}
+
+// AllowedDirs is the allow-list of roots against which a caller-supplied path
+// (session cwd, worktree workdir) is authorised before any tmux/git runs. It is
+// SessionDirs, defaulting to the agent user's home when none are configured.
+// Single source of truth so the fallback can't drift between the handlers that
+// gate on it.
+func (c Config) AllowedDirs() []string {
+	if len(c.SessionDirs) > 0 {
+		return c.SessionDirs
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return []string{home}
+	}
+	return nil
 }

@@ -50,9 +50,12 @@ export function openPaneTail(
   });
   if (!res.ok && res.reason === "cap") return "cap";
   // Glance (drawer/switcher, jump-to-blocked) expands the opened tile; a launch
-  // (expand=false) leaves the grid view — openPane already collapsed any prior
-  // expansion, so the new working tile is visible without maximizing it.
+  // (expand=false) collapses to the grid so the tile is visible without
+  // maximizing it. Collapse EXPLICITLY: openPane only clears focus when it ADDS a
+  // pane, so re-launching an already-open session while another tile is expanded
+  // would otherwise leave the launched tile hidden behind it.
   if (expand) usePanes.getState().focus(paneKey(args.serverId, args.target, args.session, args.paneId));
+  else usePanes.getState().collapse();
   return "opened";
 }
 
