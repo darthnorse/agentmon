@@ -49,7 +49,9 @@ export const usePanes = create<PanesState>((set, get) => ({
       return { ok: true }; // do NOT change focusedId
     }
     if (get().panes.length >= GRID_TILE_CAP) return { ok: false, reason: "cap" };
-    set((s) => ({ panes: [...s.panes, { ...p, id }] })); // grid-first: leave focusedId as-is
+    // A new pane must be visible immediately. If a tile is currently expanded, the
+    // new one would be display:none behind it — collapse to the grid instead.
+    set((s) => ({ panes: [...s.panes, { ...p, id }], focusedId: null }));
     return { ok: true };
   },
   closePane(id) {

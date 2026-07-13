@@ -52,7 +52,9 @@ describe("openOrFocusSession", () => {
     const navigate = vi.fn();
     await openOrFocusSession({ serverId: "h1", serverName: "host", target: "", name: session.name, session }, true, navigate);
     expect(h.createSession).not.toHaveBeenCalled();
-    expect(usePanes.getState().focusedId).toBe(paneKey("h1", "default", session.name, "pane1"));
+    // Grid-first: the pane is OPEN in the grid, not force-focused (no focus-trap).
+    expect(usePanes.getState().panes.map((p) => p.id)).toContain(paneKey("h1", "default", session.name, "pane1"));
+    expect(usePanes.getState().focusedId).toBeNull();
     expect(navigate).toHaveBeenCalledWith({ to: "/" });
   });
 
@@ -89,11 +91,13 @@ describe("openPaneTail", () => {
     expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ to: "/t/$serverId/$paneId" }));
   });
 
-  it("desktop opens and focuses the tile, returns opened", () => {
+  it("desktop opens the tile in the grid (no forced focus), returns opened", () => {
     const navigate = vi.fn();
     const r = openPaneTail({ serverId: "h1", serverName: "host", target: "default", session: "s", paneId: "p1" }, true, navigate);
     expect(r).toBe("opened");
-    expect(usePanes.getState().focusedId).toBe(paneKey("h1", "default", "s", "p1"));
+    // Grid-first: the pane is open but NOT focused — opening a session mustn't trap focus.
+    expect(usePanes.getState().panes.map((p) => p.id)).toContain(paneKey("h1", "default", "s", "p1"));
+    expect(usePanes.getState().focusedId).toBeNull();
   });
 
   it("desktop returns cap (no focus) when the tile grid is full", () => {

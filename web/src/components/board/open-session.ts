@@ -2,7 +2,7 @@ import { toast } from "sonner";
 import { ApiError, createSession, listSessions, sessionsKey } from "@/lib/api-client";
 import type { Session } from "@/lib/contracts";
 import { queryClient } from "@/lib/query-client";
-import { paneKey, usePanes } from "@/store/panes";
+import { usePanes } from "@/store/panes";
 
 // `any` in PARAM position (not the return) is deliberate: under strict
 // function types, TanStack's real navigate — `(opts: SpecificShape) => …` —
@@ -22,10 +22,11 @@ interface OpenOpts {
 export const TILE_CAP_TOAST = "Close a terminal tile to open it (6 open max).";
 
 // The shared "open this session's pane" tail used by the board drawer/switcher
-// AND the home screen (create + focus-next-blocked). Desktop opens+focuses a grid
-// tile and returns "cap" when the grid is full (each caller words its own toast);
-// mobile navigates to the terminal route. Returns "opened" once a pane is
-// opened/focused (desktop) or navigated to (mobile).
+// AND the home screen (create + focus-next-blocked). Desktop opens a grid tile
+// (grid-first — no forced expand/focus, so the button never traps focus) and
+// returns "cap" when the grid is full (each caller words its own toast); mobile
+// navigates to the terminal route. Returns "opened" once a pane is opened
+// (desktop) or navigated to (mobile).
 export function openPaneTail(
   args: { serverId: string; serverName: string; target: string; session: string; paneId: string; state?: Session["state"] },
   isDesktop: boolean,
@@ -44,8 +45,7 @@ export function openPaneTail(
     session: args.session, serverName: args.serverName, state: args.state,
   });
   if (!res.ok && res.reason === "cap") return "cap";
-  usePanes.getState().focus(paneKey(args.serverId, args.target, args.session, args.paneId));
-  return "opened";
+  return "opened"; // grid-first: the pane shows in the grid; no forced expand/focus-trap
 }
 
 // Create a session with an optional kickoff command, or attach to an existing

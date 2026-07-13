@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { usePanes, GRID_TILE_CAP } from "@/store/panes";
+import { usePanes, GRID_TILE_CAP, paneKey } from "@/store/panes";
 import { onReconnectKick } from "@/lib/reconnect-kick";
 import { paneIdentity } from "@/lib/pane-identity";
 
@@ -98,5 +98,24 @@ describe("panes store", () => {
     usePanes.getState().openPane(mk(0));
     expect(kicked).not.toHaveBeenCalled();
     off();
+  });
+});
+
+describe("openPane while a tile is expanded", () => {
+  beforeEach(() => usePanes.setState({ panes: [], focusedId: null }));
+
+  it("collapses to grid when a NEW pane is opened while a tile is expanded", () => {
+    usePanes.getState().openPane(mk(0));
+    usePanes.getState().focus(paneKey("s", "default", "sess0", "%0")); // expand tile 0
+    usePanes.getState().openPane(mk(1));                               // open a NEW pane
+    expect(usePanes.getState().focusedId).toBeNull();                  // collapsed → new tile visible
+    expect(usePanes.getState().panes).toHaveLength(2);
+  });
+
+  it("re-opening an already-open pane does NOT collapse", () => {
+    usePanes.getState().openPane(mk(0));
+    usePanes.getState().focus(paneKey("s", "default", "sess0", "%0"));
+    usePanes.getState().openPane(mk(0));                               // same pane again → dedupe
+    expect(usePanes.getState().focusedId).toBe(paneKey("s", "default", "sess0", "%0"));
   });
 });
