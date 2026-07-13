@@ -343,6 +343,7 @@ ensure_provider_path() {
   # this even while a long-lived tmux server keeps sessions alive.)
   run_path=""
   if command -v bash >/dev/null 2>&1; then
+    # shellcheck disable=SC2016 # $PATH is meant to expand in the invoked login shell, not here
     run_path="$(timeout 15 runuser -u "$RUN_USER" -- bash -ilc 'printf "\n__AGENTMON_PATH__%s\n" "$PATH"' </dev/null 2>/dev/null \
       | sed -n 's/^__AGENTMON_PATH__//p' | tail -n1 || true)"
   fi
