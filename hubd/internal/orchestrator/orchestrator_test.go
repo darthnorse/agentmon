@@ -75,6 +75,8 @@ type fakeAgents struct {
 	sessions        []string // live tmux session names the agent would list
 	sessionsErr     error
 	sessionsTargets []string // target arg of every Sessions call, in order
+	tornDown        []shared.WorktreeTeardownRequest // worktree teardowns requested, in order
+	teardownErr     error
 }
 
 func (f *fakeAgents) Sessions(_ context.Context, _ db.Server, target string) ([]shared.Session, error) {
@@ -106,6 +108,11 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) error {
 	f.killed = append(f.killed, name)
 	return f.killErr
+}
+
+func (f *fakeAgents) TeardownWorktree(_ context.Context, _ db.Server, _, workdir, branch string) error {
+	f.tornDown = append(f.tornDown, shared.WorktreeTeardownRequest{Workdir: workdir, Branch: branch})
+	return f.teardownErr
 }
 
 type fakeReg struct{}

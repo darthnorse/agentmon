@@ -35,6 +35,7 @@ type AgentAPI interface {
 	CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error)
 	DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)
 	KillSession(ctx context.Context, srv db.Server, target, name string) error
+	TeardownWorktree(ctx context.Context, srv db.Server, target, workdir, branch string) error
 	Sessions(ctx context.Context, srv db.Server, target string) ([]shared.Session, error)
 }
 

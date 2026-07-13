@@ -214,6 +214,37 @@ func (c *Client) KillSession(ctx context.Context, srv db.Server, target, name st
 	}
 }
 
+// TeardownWorktree removes the epic's worktree+branch on the agent. A 404 means
+// the agent predates the endpoint (mixed fleet) — swallowed as success so the
+// merge flow is never blocked; full teardown lands once agents update.
+func (c *Client) TeardownWorktree(ctx context.Context, srv db.Server, target, workdir, branch string) error {
+	u := srv.URL + "/worktrees/teardown"
+	if target != "" {
+		u += "?target=" + url.QueryEscape(target)
+	}
+	body, err := json.Marshal(shared.WorktreeTeardownRequest{Workdir: workdir, Branch: branch})
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+srv.Bearer)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("dial agent %s: %w", srv.ID, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent, http.StatusNotFound:
+		return nil
+	default:
+		return fmt.Errorf("agent %s worktree-teardown returned %d", srv.ID, resp.StatusCode)
+	}
+}
+
 func (c *Client) State(ctx context.Context, srv db.Server, target string) (shared.AgentState, error) {
 	u := srv.URL + "/state"
 	if target != "" {

@@ -43,6 +43,33 @@ func TestClientSessionsStampsServerID(t *testing.T) {
 	}
 }
 
+func TestClientTeardownWorktreePostsAndSwallows404(t *testing.T) {
+	var gotPath, gotBranch, gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		var req shared.WorktreeTeardownRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		gotBranch = req.Branch
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	if err := c.TeardownWorktree(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "b"}, "default", "/w", "epic/1-x"); err != nil {
+		t.Fatalf("TeardownWorktree: %v", err)
+	}
+	if gotPath != "/worktrees/teardown" || gotBranch != "epic/1-x" || gotAuth != "Bearer b" {
+		t.Fatalf("path=%q branch=%q auth=%q", gotPath, gotBranch, gotAuth)
+	}
+
+	// A 404 (agent predates the endpoint) must be swallowed as success.
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+	defer old.Close()
+	if err := c.TeardownWorktree(context.Background(), db.Server{ID: "s2", URL: old.URL}, "", "/w", "epic/1-x"); err != nil {
+		t.Fatalf("404 must be swallowed, got %v", err)
+	}
+}
+
 func TestClientSessionsBadTokenErrors(t *testing.T) {
 	ts := fakeAgent(t, "tok-a")
 	defer ts.Close()
