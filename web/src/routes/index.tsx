@@ -137,7 +137,10 @@ export function ShellRoute() {
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <span className="shrink-0 font-semibold">AgentMon</span>
+          {/* On desktop, size the wordmark to the sidebar width (w-72) so the
+              pinned-project chips begin at the terminal-grid column, not over
+              the sidebar. Mobile (no sidebar) keeps the wordmark inline. */}
+          <span className="shrink-0 font-semibold lg:w-72">AgentMon</span>
           <PinnedProjects
             projects={boardQ.data?.projects ?? []}
             needs={pinnedNeeds}
