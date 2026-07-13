@@ -79,6 +79,36 @@ func TestProjectRequireCIRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProjectSetPinned(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	enrollTestServer(t, d, "aigallery")
+	if err := d.CreateProject(ctx, testProject("aigallery")); err != nil {
+		t.Fatal(err)
+	}
+	// New projects default to unpinned.
+	got, _ := d.GetProject(ctx, "p1")
+	if got.Pinned {
+		t.Fatalf("new project must default unpinned: %+v", got)
+	}
+	// Pin it; the new value must survive GetProject and ListProjects.
+	if ok, err := d.SetProjectPinned(ctx, "p1", true); err != nil || !ok {
+		t.Fatalf("pin: ok=%v err=%v", ok, err)
+	}
+	got, _ = d.GetProject(ctx, "p1")
+	if !got.Pinned {
+		t.Fatalf("pinned must round-trip via GetProject: %+v", got)
+	}
+	list, _ := d.ListProjects(ctx)
+	if len(list) != 1 || !list[0].Pinned {
+		t.Fatalf("pinned must round-trip via ListProjects: %+v", list)
+	}
+	// Unknown id reports found=false, no error.
+	if ok, _ := d.SetProjectPinned(ctx, "nope", true); ok {
+		t.Fatal("pin on missing id should report false")
+	}
+}
+
 func TestGetProjectByRepoIsCaseInsensitive(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
