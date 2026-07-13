@@ -284,6 +284,43 @@ func TestProjectPatchTargetGuardedWhileActive(t *testing.T) {
 	}
 }
 
+func TestProjectPatchWorkdirGuardedWhileActive(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Target: "old", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 1, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	sink := &captureSink{}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Audit: audit.NewRecorder(sink)}
+
+	// A non-terminal epic is live → changing workdir must be refused: the merge
+	// reap resolves the worktree relative to workdir, so a change would target the
+	// wrong clone.
+	r, w := orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"workdir":"/w2"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "workdir while epics are running") {
+		t.Fatalf("active workdir change: want 400, got %d %s", w.Code, w.Body.String())
+	}
+	// A no-op workdir (unchanged value) is not a change → allowed even while active.
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"workdir":"/w"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("no-op workdir while active: want 200, got %d %s", w.Code, w.Body.String())
+	}
+	// Once the epic is terminal, workdir may change and is persisted.
+	database.TransitionEpic(ctx, e.ID, "queued", "canceled", "user:u1", "", "t2")
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/p1", `{"workdir":"/w2"}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("workdir change after terminal: want 200, got %d %s", w.Code, w.Body.String())
+	}
+	if p, _ := database.GetProject(ctx, "p1"); p.Workdir != "/w2" {
+		t.Fatalf("workdir not persisted, got %q", p.Workdir)
+	}
+}
+
 func TestProjectPatchDuplicateName(t *testing.T) {
 	database := orchDB(t)
 	ctx := context.Background()

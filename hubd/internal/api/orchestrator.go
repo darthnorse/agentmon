@@ -450,7 +450,22 @@ func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
 		if in.Name != nil {
 			pr.Name = *in.Name
 		}
-		if in.Workdir != nil {
+		if in.Workdir != nil && *in.Workdir != pr.Workdir {
+			// Workdir is where the runner's git worktree lives; the merge-time reap
+			// resolves the worktree relative to it. Changing it while a runner is live
+			// would point teardown at the wrong clone — deleting an unrelated same-named
+			// branch there and leaking the real worktree. Refuse while any non-terminal
+			// epic exists, the same rule as target below.
+			active, err := d.DB.CountActiveEpics(r.Context(), id)
+			if err != nil {
+				log.Printf("api: count active epics: %v", err)
+				writeJSONError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if active > 0 {
+				writeJSONError(w, http.StatusBadRequest, "cannot change workdir while epics are running")
+				return
+			}
 			pr.Workdir = *in.Workdir
 		}
 		if in.Target != nil && *in.Target != pr.Target {
