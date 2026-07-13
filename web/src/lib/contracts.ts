@@ -49,7 +49,7 @@ export interface ProjectDTO {
   id: string; name: string; repo: string; server_id: string; target: string;
   workdir: string; base_branch: string; provider: string;
   required_reviews: string[] | null; max_parallel: number; paused: boolean;
-  require_ci: boolean; counts?: Record<string, number>;
+  require_ci: boolean; pinned: boolean; counts?: Record<string, number>;
 }
 
 export interface EpicDTO {

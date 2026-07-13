@@ -15,7 +15,7 @@ import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 const project: ProjectDTO = {
   id: "p1", name: "school", repo: "o/r", server_id: "h1", target: "", workdir: "/w",
   base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 2,
-  paused: false, require_ci: true,
+  paused: false, require_ci: true, pinned: false,
 };
 
 describe("ProjectHeader", () => {

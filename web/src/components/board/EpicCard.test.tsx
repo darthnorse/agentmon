@@ -15,7 +15,7 @@ import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 const project: ProjectDTO = {
   id: "p1", name: "school", repo: "o/r", server_id: "h1", target: "", workdir: "/w",
   base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1,
-  paused: false, require_ci: true,
+  paused: false, require_ci: true, pinned: false,
 };
 const epic = (over: Partial<EpicDTO>): EpicDTO => ({
   id: "e1", project_id: "p1", issue: 15, title: "GDPR consent", labels: [], blocked_by: [],
