@@ -72,11 +72,12 @@ type projectDTO struct {
 	MaxParallel     int            `json:"max_parallel"`
 	Paused          bool           `json:"paused"`
 	RequireCI       bool           `json:"require_ci"`
+	Pinned          bool           `json:"pinned"`
 	Counts          map[string]int `json:"counts,omitempty"`
 }
 
 func projectOut(p db.Project, counts map[string]int) projectDTO {
-	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, counts}
+	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, p.Pinned, counts}
 }
 
 type eventDTO struct {
@@ -311,6 +312,15 @@ func (d Deps) OrchestratorActionsHandler() http.HandlerFunc {
 			}
 			if err == nil {
 				d.Orch.Wake()
+			}
+		case "set_pinned":
+			// Pin state is presentational (home-header chips) and never feeds
+			// the scheduler, so — unlike the other setters — no d.Orch.Wake().
+			var found bool
+			found, err = d.DB.SetProjectPinned(r.Context(), id, in.On)
+			if err == nil && !found {
+				writeJSONError(w, http.StatusNotFound, "not found")
+				return
 			}
 		case "run_issue":
 			if in.Issue < 1 {

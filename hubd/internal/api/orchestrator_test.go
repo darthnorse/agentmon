@@ -114,6 +114,38 @@ func TestActionsDispatch(t *testing.T) {
 	}
 }
 
+func TestSetPinnedAction(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	d := Deps{DB: database, Orch: &fakeOrch{}, Audit: audit.NewRecorder(&captureSink{})}
+
+	r, w := orchReq("POST", "/api/v1/orchestrator/projects/p1/actions", `{"action":"set_pinned","on":true}`)
+	r.SetPathValue("id", "p1")
+	d.OrchestratorActionsHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("set_pinned = %d %s", w.Code, w.Body.String())
+	}
+	if p, _ := database.GetProject(ctx, "p1"); !p.Pinned {
+		t.Fatalf("pinned must be set: %+v", p)
+	}
+
+	// The board payload must expose the flag so the home screen can render chips.
+	r, w = orchReq("GET", "/api/v1/orchestrator/board", "")
+	d.OrchestratorAllBoardHandler()(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"pinned":true`) {
+		t.Fatalf("board must expose pinned: %d %s", w.Code, w.Body.String())
+	}
+
+	// Unknown project id → 404.
+	r, w = orchReq("POST", "/api/v1/orchestrator/projects/nope/actions", `{"action":"set_pinned","on":true}`)
+	r.SetPathValue("id", "nope")
+	d.OrchestratorActionsHandler()(w, r)
+	if w.Code != 404 {
+		t.Fatalf("set_pinned unknown project = %d", w.Code)
+	}
+}
+
 func TestActionsDisabledOrchestrator(t *testing.T) {
 	database := orchDB(t)
 	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})} // Orch nil = disabled
