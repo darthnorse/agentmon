@@ -182,6 +182,7 @@ func (o *Orchestrator) Tick(ctx context.Context) {
 	for _, p := range projects {
 		o.tickProject(ctx, p)
 	}
+	o.reapMergedEpics(ctx)
 }
 
 // retryRetire re-attempts runner-session kills that failed. An unkilled
@@ -727,20 +728,10 @@ func (o *Orchestrator) finishMerged(ctx context.Context, p db.Project, e db.Epic
 		log.Printf("orchestrator[%s]: label merged: %v", p.Name, err)
 	}
 	o.comment(ctx, p, e.IssueNumber, fmt.Sprintf("✅ merged PR #%d", e.PRNumber))
-	// Reap the finished runner: kill its now-idle session, then tear down its
-	// worktree + branch. Runner sessions do NOT self-exit after pr_open (they stay
-	// interactive), so this is the happy-path cleanup that keeps merged epics from
-	// leaving dormant sessions + leaked worktrees behind. Best-effort: killEpicSession
-	// swallows an unreachable agent, and a teardown failure (or an agent that predates
-	// the endpoint → 404) is logged, never blocking the already-committed merge.
-	o.killEpicSession(ctx, e, "merged")
-	if e.Branch != "" {
-		if srv, ok := o.server(ctx, p, "merged-teardown"); ok {
-			if err := o.d.Agents.TeardownWorktree(ctx, srv, p.Target, p.Workdir, e.Branch); err != nil {
-				log.Printf("orchestrator[%s]: merged worktree teardown (branch %q): %v", p.Name, e.Branch, err)
-			}
-		}
-	}
+	// The runner session + worktree are NOT reaped inline: runner sessions stay
+	// interactive after pr_open, so cleanup is deferred to reapMergedEpics, which
+	// runs every tick (resuming across a hub restart via the persisted reaped_at)
+	// and orders teardown AFTER the session is confirmed gone.
 }
 
 func (o *Orchestrator) comment(ctx context.Context, p db.Project, issue int, body string) {
@@ -853,20 +844,24 @@ func (o *Orchestrator) Approve(ctx context.Context, epicID, source string) error
 // D12: Cancel, Retry, and a clean merge retire it; a mere stall never kills —
 // the human decides, and Retry IS that decision). ErrNoSession is success: the
 // session was already gone (a prior reap, a host reboot, or Retry replacing it).
-// Any other failure is logged and swallowed — the state transition already
-// happened and must not be blocked by an unreachable agent.
-func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase string) {
+// Any other failure is logged and the kill queued for per-tick retry — the state
+// transition already happened and must not be blocked by an unreachable agent.
+//
+// Returns true when the session is CONFIRMED gone (killed, or already absent, or
+// nothing to kill). reapMergedEpics gates worktree teardown on this so it never
+// removes a worktree out from under a runner whose kill has not yet landed.
+func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase string) bool {
 	if e.SessionName == "" {
-		return
+		return true
 	}
 	p, err := o.d.DB.GetProject(ctx, e.ProjectID)
 	if err != nil {
 		log.Printf("orchestrator: %s kill: project %s: %v", phase, e.ProjectID, err)
-		return
+		return false
 	}
 	srv, ok := o.server(ctx, p, phase+"-kill")
 	if !ok {
-		return
+		return false
 	}
 	if err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName); err != nil && !errors.Is(err, registry.ErrNoSession) {
 		// The runner may still be alive, sharing the epic's attempt-agnostic
@@ -874,6 +869,55 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 		// retry before the next spawn overwrites e.SessionName.
 		o.queueRetire(srv.ID, p.Target, e.SessionName)
 		log.Printf("orchestrator[%s]: %s kill session %q failed (queued for retry): %v", p.Name, phase, e.SessionName, err)
+		return false
+	}
+	return true
+}
+
+// reapMergedEpics drives the deferred cleanup of merged epics whose runner
+// session + worktree have not yet been reaped (reaped_at = ''). It runs every
+// tick, so it both cleans up a just-merged epic and RESUMES a reap left
+// incomplete by a hub restart — reaped_at is persisted, so the durability does
+// not depend on in-memory state. Ordering: the worktree is torn down only after
+// the session is CONFIRMED gone, so a still-live runner never has its worktree
+// pulled out from under it; a failed kill defers teardown to the next tick.
+// Marking reaped waits on the agent being REACHABLE (a dial error retries next
+// tick); a git-level teardown refusal is already logged+swallowed agent-side
+// (best-effort worktree — never force-removes uncommitted work).
+func (o *Orchestrator) reapMergedEpics(ctx context.Context) {
+	epics, err := o.d.DB.ListMergedUnreaped(ctx)
+	if err != nil {
+		log.Printf("orchestrator: list merged-unreaped: %v", err)
+		return
+	}
+	for _, e := range epics {
+		p, err := o.d.DB.GetProject(ctx, e.ProjectID)
+		if err != nil {
+			log.Printf("orchestrator: reap: project %s: %v", e.ProjectID, err)
+			continue
+		}
+		srv, ok := o.server(ctx, p, "reap")
+		if !ok {
+			continue // agent unresolved → retry next tick
+		}
+		if e.SessionName != "" {
+			live := o.liveSessions(ctx, p)
+			if live == nil {
+				continue // liveness unknown (agent unreachable) → retry next tick
+			}
+			if live[e.SessionName] && !o.killEpicSession(ctx, e, "reap") {
+				continue // kill failed + queued — teardown waits for it to land
+			}
+		}
+		if e.Branch != "" {
+			if err := o.d.Agents.TeardownWorktree(ctx, srv, p.Target, p.Workdir, e.Branch); err != nil {
+				log.Printf("orchestrator[%s]: reap worktree #%d (branch %q): %v", p.Name, e.IssueNumber, e.Branch, err)
+				continue // agent unreachable → retry next tick
+			}
+		}
+		if err := o.d.DB.MarkEpicReaped(ctx, e.ID); err != nil {
+			log.Printf("orchestrator[%s]: mark reaped #%d: %v", p.Name, e.IssueNumber, err)
+		}
 	}
 }
 

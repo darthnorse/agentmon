@@ -381,6 +381,60 @@ func TestFinishMergedProceedsWhenTeardownFails(t *testing.T) {
 	}
 }
 
+func mergeVerdict16() string {
+	return "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
+		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
+		"uncertain: false\nlearnings_updated: true\n```"
+}
+
+func newMergeableGH() *fakeGH {
+	return &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: mergeVerdict16(), HeadSHA: "s", HeadRef: "epic/16-x"}},
+		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
+	}
+}
+
+func TestReapWaitsForConfirmedKillBeforeTeardown(t *testing.T) {
+	// A merged epic whose session kill FAILS must NOT have its worktree torn down,
+	// and must stay unreaped so a later tick retries — never remove a worktree out
+	// from under a runner whose kill has not landed.
+	ag := &fakeAgents{sessions: []string{sessionName(16)}, killErr: errors.New("kill boom")}
+	o, d := newTestOrch(t, newMergeableGH(), ag)
+	ctx := context.Background()
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx) // merge + reap: kill fails → teardown must be skipped
+	if len(ag.tornDown) != 0 {
+		t.Fatalf("worktree torn down despite a failed kill: %+v", ag.tornDown)
+	}
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "merged" || e.ReapedAt != "" {
+		t.Fatalf("epic = stage %q reaped_at %q (want merged + unreaped)", e.Stage, e.ReapedAt)
+	}
+}
+
+func TestReapRetriesUntilComplete(t *testing.T) {
+	// A transient teardown failure leaves the epic unreaped; a later tick retries
+	// and completes — the durable, persisted reap loop, not a one-shot.
+	ag := &fakeAgents{sessions: []string{sessionName(16)}, teardownErr: errors.New("agent down")}
+	o, d := newTestOrch(t, newMergeableGH(), ag)
+	ctx := context.Background()
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx) // merge + reap attempt → teardown fails → unreaped
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.ReapedAt != "" {
+		t.Fatalf("must stay unreaped while teardown fails; reaped_at = %q", e.ReapedAt)
+	}
+	ag.teardownErr = nil
+	o.Tick(ctx) // reap resumes and completes
+	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
+	if e.ReapedAt == "" {
+		t.Fatal("reap did not resume after the agent recovered")
+	}
+}
+
 func TestGateEscalatesOnUnresolvedAndApproveRecovers(t *testing.T) {
 	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
 		"findings: {found: 3, resolved: 1, unresolved: 2}\ntests: {passed: 5, failed: 0}\n" +

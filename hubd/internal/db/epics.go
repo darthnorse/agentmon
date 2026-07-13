@@ -33,6 +33,7 @@ type Epic struct {
 	StartedAt      string
 	StageUpdatedAt string
 	MergedAt       string
+	ReapedAt       string // set when the merged epic's session+worktree are reaped; "" = still needs reaping
 }
 
 type EpicEvent struct {
@@ -47,7 +48,7 @@ type EpicEvent struct {
 
 const epicCols = `id, project_id, issue_number, title, labels, blocked_by, stage, attempt,
  session_name, branch, pr_number, verdict, needs, issue_state,
- queued_at, started_at, stage_updated_at, merged_at, approved_sha`
+ queued_at, started_at, stage_updated_at, merged_at, approved_sha, reaped_at`
 
 // SQL fragments are built from the shared stage constants so the db layer
 // cannot silently drift when a stage is added or renamed. Values are trusted
@@ -72,7 +73,7 @@ func scanEpic(row interface{ Scan(...any) error }) (Epic, error) {
 	var labels, blocked string
 	if err := row.Scan(&e.ID, &e.ProjectID, &e.IssueNumber, &e.Title, &labels, &blocked,
 		&e.Stage, &e.Attempt, &e.SessionName, &e.Branch, &e.PRNumber, &e.Verdict, &e.Needs,
-		&e.IssueState, &e.QueuedAt, &e.StartedAt, &e.StageUpdatedAt, &e.MergedAt, &e.ApprovedSHA); err != nil {
+		&e.IssueState, &e.QueuedAt, &e.StartedAt, &e.StageUpdatedAt, &e.MergedAt, &e.ApprovedSHA, &e.ReapedAt); err != nil {
 		return Epic{}, err
 	}
 	e.Labels = unmarshalStrings(labels)
@@ -131,6 +132,24 @@ func (d *DB) ListBoardEpics(ctx context.Context, projectID string) ([]Epic, erro
 func (d *DB) ListNonTerminalEpics(ctx context.Context) ([]Epic, error) {
 	return d.listEpics(ctx,
 		`SELECT `+epicCols+` FROM epics WHERE stage NOT IN `+terminalStagesSQL+` ORDER BY issue_number`)
+}
+
+// ListMergedUnreaped returns merged epics whose runner session + worktree have
+// not yet been reaped (reaped_at = ''). The per-tick reap loop drives each to
+// completion; the set is transient (it drains as reaps finish) and, being
+// persisted, a hub restart resumes any reap left incomplete.
+func (d *DB) ListMergedUnreaped(ctx context.Context) ([]Epic, error) {
+	return d.listEpics(ctx,
+		`SELECT `+epicCols+` FROM epics WHERE stage = ? AND reaped_at = '' ORDER BY issue_number`,
+		string(shared.EpicMerged))
+}
+
+// MarkEpicReaped stamps reaped_at, removing the epic from ListMergedUnreaped so
+// the reap loop stops revisiting it.
+func (d *DB) MarkEpicReaped(ctx context.Context, id string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE epics SET reaped_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, id)
+	return err
 }
 
 // CountActiveEpics returns the number of non-terminal epics for a project — the
