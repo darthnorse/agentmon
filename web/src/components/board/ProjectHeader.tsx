@@ -71,7 +71,7 @@ export function ProjectHeader({ project, epics, onEdit }: {
         onClick={() => void openOrFocusSession(
           { serverId: project.server_id, serverName: project.name, target: project.target,
             name: sessionSlug("doctor", project.name), cwd: project.workdir, command: "agentmon doctor" },
-          isDesktop, navigate,
+          isDesktop, navigate, false, // launch → grid tile, not an expanded glance
         )}>
         Run doctor…
       </Button>
@@ -107,7 +107,7 @@ export function ProjectHeader({ project, epics, onEdit }: {
               { serverId: project.server_id, serverName: project.name, target: project.target,
                 name: sessionSlug("plan", project.name), cwd: project.workdir,
                 command: planCommand(project.provider === "codex" ? "codex" : "claude", vibe) },
-              isDesktop, navigate,
+              isDesktop, navigate, false, // launch → grid tile, not an expanded glance
             );
           }}
         />

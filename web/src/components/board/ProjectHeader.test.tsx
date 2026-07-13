@@ -52,7 +52,7 @@ describe("ProjectHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
       expect.objectContaining({ serverId: "h1", command: 'IS_SANDBOX=1 claude --dangerously-skip-permissions "/plan-epics"', cwd: "/w" }),
-      true, h.navigate,
+      true, h.navigate, false,
     );
   });
 
@@ -63,7 +63,7 @@ describe("ProjectHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
       expect.objectContaining({ command: `IS_SANDBOX=1 claude --dangerously-skip-permissions '/plan-epics add dark mode'` }),
-      true, h.navigate,
+      true, h.navigate, false,
     );
   });
 
@@ -72,7 +72,7 @@ describe("ProjectHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run doctor…" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
       expect.objectContaining({ serverId: "h1", command: "agentmon doctor", cwd: "/w" }),
-      true, h.navigate,
+      true, h.navigate, false,
     );
   });
 
@@ -82,7 +82,7 @@ describe("ProjectHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'codex -a never "/plan-epics"' }),
-      true, h.navigate,
+      true, h.navigate, false,
     );
   });
 
