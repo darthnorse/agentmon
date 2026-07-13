@@ -333,6 +333,54 @@ func TestReportsAdvanceAndGateMerges(t *testing.T) {
 	}
 }
 
+func TestFinishMergedReapsSessionAndWorktree(t *testing.T) {
+	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
+		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
+		"uncertain: false\nlearnings_updated: true\n```"
+	gh := &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s", HeadRef: "epic/16-x"}},
+		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
+	}
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
+	ctx := context.Background()
+	o.Tick(ctx) // spawn → starting (sets SessionName)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx) // drain → pr_open → gate merges → reap
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("epic stage = %q", e.Stage)
+	}
+	if len(ag.killed) != 1 || ag.killed[0] != sessionName(16) {
+		t.Fatalf("session not reaped on merge: killed=%v", ag.killed)
+	}
+	if len(ag.tornDown) != 1 || ag.tornDown[0].Branch != "epic/16-x" || ag.tornDown[0].Workdir == "" {
+		t.Fatalf("worktree not torn down on merge: %+v", ag.tornDown)
+	}
+}
+
+func TestFinishMergedProceedsWhenTeardownFails(t *testing.T) {
+	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
+		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
+		"uncertain: false\nlearnings_updated: true\n```"
+	gh := &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s", HeadRef: "epic/16-x"}},
+		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
+	}
+	ag := &fakeAgents{sessions: []string{sessionName(16)}, teardownErr: errors.New("boom")}
+	o, d := newTestOrch(t, gh, ag)
+	ctx := context.Background()
+	o.Tick(ctx)
+	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
+	o.Tick(ctx)
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("a teardown error must not block the merge; stage = %q", e.Stage)
+	}
+}
+
 func TestGateEscalatesOnUnresolvedAndApproveRecovers(t *testing.T) {
 	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
 		"findings: {found: 3, resolved: 1, unresolved: 2}\ntests: {passed: 5, failed: 0}\n" +

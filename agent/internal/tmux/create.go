@@ -20,9 +20,11 @@ var ErrSessionExists = errors.New("session already exists")
 // name, cwd, and command are positional args, never interpolated; §13.6).
 //
 // A non-empty command becomes the session's shell-command argument: tmux runs
-// it via `sh -c`, and the session ENDS when it exits — which is exactly the
-// runner contract's normal exit (report pr_open, then quit; design doc §5).
-// Empty command → the user's default shell, byte-for-byte today's behavior.
+// it via `sh -c`, and the session ENDS when that command's process exits. NOTE:
+// an autonomous runner (claude/codex) stays INTERACTIVE after it reports pr_open,
+// so its session does NOT self-exit — the hub reaps it on merge (and on
+// Cancel/Retry), see orchestrator.finishMerged/killEpicSession. Empty command →
+// the user's default shell, byte-for-byte today's behavior.
 //
 // The caller MUST have already validated name (shared.ValidateSessionName) and
 // cwd (ValidateCwd); CreateSession is the exec boundary, not the policy boundary.

@@ -727,6 +727,20 @@ func (o *Orchestrator) finishMerged(ctx context.Context, p db.Project, e db.Epic
 		log.Printf("orchestrator[%s]: label merged: %v", p.Name, err)
 	}
 	o.comment(ctx, p, e.IssueNumber, fmt.Sprintf("✅ merged PR #%d", e.PRNumber))
+	// Reap the finished runner: kill its now-idle session, then tear down its
+	// worktree + branch. Runner sessions do NOT self-exit after pr_open (they stay
+	// interactive), so this is the happy-path cleanup that keeps merged epics from
+	// leaving dormant sessions + leaked worktrees behind. Best-effort: killEpicSession
+	// swallows an unreachable agent, and a teardown failure (or an agent that predates
+	// the endpoint → 404) is logged, never blocking the already-committed merge.
+	o.killEpicSession(ctx, e, "merged")
+	if e.Branch != "" {
+		if srv, ok := o.server(ctx, p, "merged-teardown"); ok {
+			if err := o.d.Agents.TeardownWorktree(ctx, srv, p.Target, p.Workdir, e.Branch); err != nil {
+				log.Printf("orchestrator[%s]: merged worktree teardown (branch %q): %v", p.Name, e.Branch, err)
+			}
+		}
+	}
 }
 
 func (o *Orchestrator) comment(ctx context.Context, p db.Project, issue int, body string) {
@@ -836,11 +850,11 @@ func (o *Orchestrator) Approve(ctx context.Context, epicID, source string) error
 }
 
 // killEpicSession best-effort retires an epic's runner session (design doc
-// D12: Cancel and Retry retire; a mere stall never kills — the human decides,
-// and Retry IS that decision). ErrNoSession is success: the session already
-// ended, e.g. the normal exit-after-pr_open path. Any other failure is logged
-// and swallowed — the state transition already happened and must not be
-// blocked by an unreachable agent.
+// D12: Cancel, Retry, and a clean merge retire it; a mere stall never kills —
+// the human decides, and Retry IS that decision). ErrNoSession is success: the
+// session was already gone (a prior reap, a host reboot, or Retry replacing it).
+// Any other failure is logged and swallowed — the state transition already
+// happened and must not be blocked by an unreachable agent.
 func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase string) {
 	if e.SessionName == "" {
 		return
