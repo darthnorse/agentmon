@@ -644,7 +644,7 @@ func (o *Orchestrator) evaluateGates(ctx context.Context, p db.Project) {
 			pending = true
 		}
 		res := Decide(GateInput{Verdict: v, VerdictErr: verr, Epic: e.IssueNumber, Labels: e.Labels,
-			RequiredReviews: p.RequiredReviews, ChecksGreen: green, ChecksPending: pending})
+			RequiredReviews: p.RequiredReviews, Requirements: p.Requirements, ChecksGreen: green, ChecksPending: pending})
 		switch {
 		case res.Wait:
 		case res.Merge:

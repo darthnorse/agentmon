@@ -69,3 +69,56 @@ func TestParseVerdictRejectsNegativeCounts(t *testing.T) {
 		t.Fatal("negative counts must fail closed")
 	}
 }
+
+func TestParseVerdictRequirements(t *testing.T) {
+	body := "```yaml\n" +
+		"agentmon-verdict: v1\nepic: 1\n" +
+		"requirements:\n" +
+		"  - { id: always-use-rls, status: met, via: cmd }\n" +
+		"  - { id: wcag, status: uncertain, via: review }\n" +
+		"tests: { passed: 1, failed: 0 }\n```"
+	v, err := ParseVerdict(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Requirements) != 2 ||
+		v.Requirements[0] != (VerdictRequirement{ID: "always-use-rls", Status: "met", Via: "cmd"}) ||
+		v.Requirements[1] != (VerdictRequirement{ID: "wcag", Status: "uncertain", Via: "review"}) {
+		t.Fatalf("requirements = %+v", v.Requirements)
+	}
+}
+
+func TestParseVerdictRejectsBadRequirements(t *testing.T) {
+	base := "```yaml\nagentmon-verdict: v1\nepic: 1\ntests: { passed: 1, failed: 0 }\nrequirements:\n"
+	cases := map[string]string{
+		"invalid status": "  - { id: rls, status: done, via: cmd }\n",
+		"invalid via":    "  - { id: rls, status: met, via: magic }\n",
+		"empty id":       "  - { id: \"\", status: met, via: cmd }\n",
+		"duplicate id":   "  - { id: rls, status: met, via: cmd }\n  - { id: rls, status: unmet, via: review }\n",
+	}
+	for name, reqs := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseVerdict(base + reqs + "```"); err == nil {
+				t.Fatalf("%s must fail closed", name)
+			}
+		})
+	}
+}
+
+func TestParseVerdictRejectsMultiDocument(t *testing.T) {
+	// yaml decodes only the FIRST document in a block; a second document after a
+	// `---` separator must not smuggle contradictory requirement data past
+	// validation (met for an id in doc 1, unmet for the same id in doc 2). A
+	// verdict is exactly one document — a multi-document block is malformed and
+	// must fail closed, like a duplicate id.
+	body := "```yaml\n" +
+		"agentmon-verdict: v1\nepic: 1\n" +
+		"requirements:\n  - { id: rls, status: met, via: cmd }\n" +
+		"tests: { passed: 1, failed: 0 }\n" +
+		"---\n" +
+		"requirements:\n  - { id: rls, status: unmet, via: review }\n" +
+		"```"
+	if _, err := ParseVerdict(body); err == nil {
+		t.Fatal("multi-document verdict block must fail closed")
+	}
+}

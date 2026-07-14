@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"strings"
 	"testing"
+
+	"agentmon/hubd/internal/db"
 )
 
 func cleanVerdict() *Verdict {
@@ -52,5 +54,50 @@ func TestDecideBindsVerdictToEpic(t *testing.T) {
 	}
 	if got := Decide(GateInput{Verdict: v, Epic: 15, ChecksGreen: true}); !got.Merge {
 		t.Fatalf("matching epic must still merge, got %+v", got)
+	}
+}
+
+func TestDecideRequirements(t *testing.T) {
+	reqs := []db.Requirement{{ID: "always-use-rls", Text: "Always use RLS"}, {ID: "wcag", Text: "WCAG 2.2 AA"}}
+	withReqs := func(rs ...VerdictRequirement) *Verdict {
+		v := cleanVerdict()
+		v.Requirements = rs
+		return v
+	}
+	allMet := []VerdictRequirement{
+		{ID: "always-use-rls", Status: "met", Via: "cmd"},
+		{ID: "wcag", Status: "met", Via: "review"},
+	}
+	cases := []struct {
+		name   string
+		in     GateInput
+		merge  bool
+		wait   bool
+		reason string
+	}{
+		{"all met merges", GateInput{Verdict: withReqs(allMet...), Requirements: reqs, ChecksGreen: true}, true, false, ""},
+		{"no platform reqs unchanged", GateInput{Verdict: cleanVerdict(), Requirements: nil, ChecksGreen: true}, true, false, ""},
+		{"one unmet escalates", GateInput{Verdict: withReqs(
+			VerdictRequirement{ID: "always-use-rls", Status: "met", Via: "cmd"},
+			VerdictRequirement{ID: "wcag", Status: "unmet", Via: "review"}),
+			Requirements: reqs, ChecksGreen: true}, false, false, "wcag (unmet)"},
+		{"uncertain escalates", GateInput{Verdict: withReqs(
+			VerdictRequirement{ID: "always-use-rls", Status: "uncertain", Via: "cmd"},
+			VerdictRequirement{ID: "wcag", Status: "met", Via: "review"}),
+			Requirements: reqs, ChecksGreen: true}, false, false, "always-use-rls (uncertain)"},
+		{"absent from verdict escalates", GateInput{Verdict: withReqs(
+			VerdictRequirement{ID: "always-use-rls", Status: "met", Via: "cmd"}),
+			Requirements: reqs, ChecksGreen: true}, false, false, "wcag (missing)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Decide(c.in)
+			if got.Merge != c.merge || got.Wait != c.wait {
+				t.Fatalf("merge/wait = %v/%v, got %+v", c.merge, c.wait, got)
+			}
+			if c.reason != "" && !strings.Contains(got.Reason, c.reason) {
+				t.Fatalf("reason %q missing %q", got.Reason, c.reason)
+			}
+		})
 	}
 }

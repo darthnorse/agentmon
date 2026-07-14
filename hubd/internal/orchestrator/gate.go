@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"agentmon/hubd/internal/db"
 )
 
 // PROVENANCE CONTRACT: the Verdict is the assigned runner's self-report,
@@ -20,6 +22,7 @@ type GateInput struct {
 	Epic            int // expected issue number; 0 skips the binding check
 	Labels          []string
 	RequiredReviews []string
+	Requirements    []db.Requirement // project platform requirements; each must be reported `met`
 	ChecksGreen     bool
 	ChecksPending   bool
 }
@@ -62,6 +65,9 @@ func Decide(in GateInput) GateResult {
 	if missing := missingReviews(in.RequiredReviews, v.Reviews); len(missing) > 0 {
 		return GateResult{Reason: "missing required reviews: " + strings.Join(missing, ", ")}
 	}
+	if unmet := unmetRequirements(in.Requirements, v.Requirements); len(unmet) > 0 {
+		return GateResult{Reason: "platform requirements not met: " + strings.Join(unmet, ", ")}
+	}
 	return GateResult{Merge: true}
 }
 
@@ -81,4 +87,29 @@ func missingReviews(required, got []string) []string {
 		}
 	}
 	return missing
+}
+
+// unmetRequirements mirrors missingReviews for platform requirements: given the
+// project's platform requirement set and the verdict's self-reported results, it
+// returns one "id (category)" token for every requirement not present-and-`met`.
+// A requirement the runner never reported (e.g. added to the project after its
+// epics were imported) surfaces as "(missing)" — failing closed, the safe drift
+// direction. Via is not consulted: a `met` is trusted regardless of how it was
+// certified (v1 trust model). Inputs are pre-validated by ParseVerdict, so a
+// present-not-met status is always "unmet" or "uncertain", surfaced verbatim.
+func unmetRequirements(required []db.Requirement, reported []VerdictRequirement) []string {
+	status := make(map[string]string, len(reported))
+	for _, r := range reported {
+		status[r.ID] = r.Status
+	}
+	var unmet []string
+	for _, req := range required {
+		switch s, ok := status[req.ID]; {
+		case !ok:
+			unmet = append(unmet, req.ID+" (missing)")
+		case s != "met":
+			unmet = append(unmet, req.ID+" ("+s+")")
+		}
+	}
+	return unmet
 }

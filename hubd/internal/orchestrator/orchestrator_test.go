@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"agentmon/hubd/internal/config"
@@ -813,5 +814,53 @@ func TestRequireCIHoldsMergeUntilChecksRegister(t *testing.T) {
 	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
 	if e.Stage != "merged" {
 		t.Fatalf("must merge once checks exist and pass, got %+v", e)
+	}
+}
+
+func TestTickGateEnforcesPlatformRequirements(t *testing.T) {
+	// A verdict that never reports a project platform requirement must fail the
+	// gate closed. This exercises the run-loop plumbing (Requirements:
+	// p.Requirements) that the direct Decide unit tests cannot see.
+	verdictNoReqs := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
+		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
+		"uncertain: false\nlearnings_updated: true\n```"
+	gh := &fakeGH{
+		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
+		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictNoReqs, HeadSHA: "s", HeadRef: "epic/16-x"}},
+		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
+	}
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	o, d := newTestOrch(t, gh, ag)
+	ctx := context.Background()
+
+	// Attach a platform requirement to the default project before any tick.
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Requirements = []db.Requirement{{ID: "always-use-rls", Text: "Always use RLS"}}
+	if ok, err := d.UpdateProject(ctx, p); err != nil || !ok {
+		t.Fatalf("attach requirement: ok=%v err=%v", ok, err)
+	}
+
+	o.Tick(ctx) // sync + spawn → starting
+	ag.reports = []shared.OrchestratorReport{
+		{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"},
+	}
+	o.Tick(ctx) // drain → pr_open → gate
+
+	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
+	if e.Stage != "escalated" {
+		t.Fatalf("unreported platform requirement must escalate, stage = %q", e.Stage)
+	}
+	if len(gh.merged) != 0 {
+		t.Fatalf("gate must not merge with an unmet requirement: merged = %v", gh.merged)
+	}
+	// Pin the escalation reason: the fixture is deliberately built so the
+	// requirements check is the SOLE escalation source (verdict reviews match
+	// RequiredReviews, epic binds, checks green, no uncertainty/unresolved/failed
+	// tests), so a plumbing regression can't hide behind an unrelated escalation.
+	if !strings.Contains(strings.Join(gh.comments, "\n"), "platform requirements not met: always-use-rls (missing)") {
+		t.Fatalf("escalation must name the missing requirement, comments = %v", gh.comments)
 	}
 }
