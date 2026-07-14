@@ -45,11 +45,17 @@ export type EpicStage =
   | "queued" | "starting" | "planning" | "implementing" | "reviewing"
   | "pr_open" | "merging" | "merged" | "escalated" | "stalled" | "failed" | "canceled";
 
+// One platform-invariant requirement (mirrors Go db.Requirement). `id` is a
+// stable kebab slug the epic-02 gate matches on; `text` doubles as the review
+// lens; `check_cmd` optionally certifies it via a shell exit code.
+export interface Requirement { id: string; text: string; check_cmd?: string; }
+
 export interface ProjectDTO {
   id: string; name: string; repo: string; server_id: string; target: string;
   workdir: string; base_branch: string; provider: string;
   required_reviews: string[] | null; max_parallel: number; paused: boolean;
-  require_ci: boolean; pinned: boolean; counts?: Record<string, number>;
+  require_ci: boolean; pinned: boolean; requirements: Requirement[];
+  counts?: Record<string, number>;
 }
 
 export interface EpicDTO {
@@ -74,11 +80,11 @@ export interface BoardDeltaFrame {
 export interface ProjectCreateRequest {
   name: string; repo: string; server_id: string; target?: string; workdir: string;
   base_branch?: string; provider?: string; required_reviews?: string[];
-  max_parallel?: number; require_ci?: boolean;
+  requirements?: Requirement[]; max_parallel?: number; require_ci?: boolean;
 }
 export interface ProjectPatchRequest {
   name?: string; workdir?: string; target?: string; base_branch?: string;
-  provider?: string; required_reviews?: string[];
+  provider?: string; required_reviews?: string[]; requirements?: Requirement[];
 }
 export interface EpicActionRequest {
   action: string; epic_id?: string; issue?: number; value?: number; on?: boolean; text?: string;

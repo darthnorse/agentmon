@@ -5,7 +5,7 @@ import type { ProjectDTO } from "@/lib/contracts";
 
 const p = (id: string, name: string, pinned: boolean): ProjectDTO => ({
   id, name, repo: "o/r", server_id: "h1", target: "", workdir: "/w", base_branch: "main",
-  provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: false, pinned,
+  provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: false, pinned, requirements: [],
 });
 
 describe("PinnedProjects", () => {
