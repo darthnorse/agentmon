@@ -68,6 +68,10 @@ describe("ProjectHeader", () => {
   });
 
   it("each Plan epics launch gets a fresh, unique session name (never re-attaches, so the vibe is never dropped)", () => {
+    // Stub RNG so "distinct per launch" is deterministic, not a ~36^4 coin flip:
+    // each call returns a different value, so the two launches' uniq tokens differ.
+    let n = 0;
+    const rnd = vi.spyOn(Math, "random").mockImplementation(() => { n += 1; return n / 100; });
     render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
     // launch #1
     fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
@@ -86,6 +90,7 @@ describe("ProjectHeader", () => {
     // distinct per launch → createSession never 409s onto an existing plan
     // session, so the vibe always runs (and epics can be planned in parallel).
     expect(name1).not.toBe(name2);
+    rnd.mockRestore();
   });
 
   it("Run doctor re-runs the host check in a session", () => {

@@ -143,10 +143,17 @@ export function sessionSlug(prefix: string, name: string): string {
 // the new vibe AND forbidding two epics being planned at once. `uniq` (a short
 // caller-supplied token) guarantees a fresh session per launch; a readable hint
 // from the vibe's first words keeps concurrent plan sessions tellable apart on
-// the board. `uniq` is placed BEFORE the hint so a long hint truncated at 64
-// chars can never eat the uniqueness. Empty vibe → `plan-<project>-<uniq>`.
+// the board. The base is capped to reserve room for `-<uniq>`, and `uniq` is
+// placed before the hint, so neither a long PROJECT NAME nor a long hint can let
+// the final 64-char truncation eat the uniqueness — only the cosmetic hint spills
+// over. Empty vibe → `plan-<project>-<uniq>`.
 export function planSessionName(project: string, vibe: string, uniq: string): string {
-  const base = sessionSlug("plan", project);
+  // Reserve `-<uniq>` at the end of the 64-char budget: base(≤ 64-1-uniq) + "-" +
+  // uniq ≤ 64, so uniq always survives even when `plan-<project>` alone fills the
+  // cap. Without this, a long project name truncates uniq away and every relaunch
+  // collides → openOrFocusSession attaches to the existing session and drops the
+  // vibe again (the exact regression this helper prevents).
+  const base = sessionSlug("plan", project).slice(0, Math.max(0, 63 - uniq.length)).replace(/-+$/, "");
   const hint = vibe.trim().split(/\s+/).slice(0, 4).join(" ").toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
   return [base, uniq, hint].filter(Boolean).join("-").slice(0, 64);

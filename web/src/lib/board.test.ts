@@ -111,6 +111,21 @@ describe("small helpers", () => {
     expect(long.length).toBeLessThanOrEqual(64);
     expect(long.startsWith(`plan-${"x".repeat(50)}-u9`)).toBe(true);
   });
+  it("keeps uniq intact for a long PROJECT NAME, not just a long hint (regression: relaunch collision)", () => {
+    // sessionSlug("plan", project) alone can fill the whole 64-char budget, so a
+    // long PROJECT name — not just a long hint — could truncate `uniq` off the end
+    // via the final slice. Two launches would then collapse to the same name, hit
+    // openOrFocusSession's 409 attach-existing path, and silently drop the vibe
+    // again — the exact bug this helper exists to prevent.
+    const longProject = "x".repeat(80);
+    const n1 = planSessionName(longProject, "add dark mode", "aaa111");
+    const n2 = planSessionName(longProject, "add dark mode", "bbb222");
+    expect(n1.length).toBeLessThanOrEqual(64);
+    expect(isValidSessionName(n1)).toBe(true);
+    expect(n1).toContain("aaa111"); // uniq survived truncation
+    expect(n2).toContain("bbb222");
+    expect(n1).not.toBe(n2);        // → distinct per launch, no collision
+  });
   it("planSessionName always yields a tmux-valid name, even for pathological vibes", () => {
     // A malformed name would 400 the launch (server-side ValidateSessionName has
     // the SAME regex as NAME_RE) — so every vibe must slug down to a valid name.
