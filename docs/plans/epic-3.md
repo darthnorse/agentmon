@@ -303,7 +303,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
 
 ## Task 3: Final structural and acceptance validation (AC: 4, 5, 6)
 
-- [ ] **Step 3.1 — Confirm only intended implementation files changed.** Run
+- [x] **Step 3.1 — Confirm only intended implementation files changed.** Run
   `git diff --name-only origin/main...HEAD` and inspect each path. Expected
   implementation paths are exactly the four embedded Markdown files; this plan and
   review evidence are the only additional artifacts. Confirm
@@ -311,7 +311,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   `agent/cmd/agentmon-agent/doctor_cli.go` still checks the installed pipeline path
   for every detected provider.
 
-- [ ] **Step 3.2 — Run focused and full gates.** Run:
+- [x] **Step 3.2 — Run focused and full gates.** Run:
 
   ```bash
   GOCACHE=/tmp/agentmon-go-cache go test ./agent/...
@@ -323,7 +323,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   the final verdict. No separate commit is expected unless validation exposes a
   plan/repo mismatch (which must be escalated/corrected in the plan first).
 
-- [ ] **Step 3.3 — Preserve the supervised efficacy handoff.** In the PR summary,
+- [x] **Step 3.3 — Preserve the supervised efficacy handoff.** In the PR summary,
   call out that the first post-merge `/plan-epics` dogfood must show the effective
   set in its generated issue and committed plan, execute any `check_cmd`, and emit
   a populated parser-valid `requirements:` list. Do not claim that Markdown/static
