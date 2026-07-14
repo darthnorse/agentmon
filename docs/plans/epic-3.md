@@ -266,11 +266,11 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   epic-specific requirements never appear in this structured list. Preserve the
   existing provider-specific `reviews:` examples.
 
-- [x] **Step 2.5 — Make the dogfood acceptance explicit.** Add a finish rule to
-  inspect the first supervised run's committed plan for both requirement tiers and
-  validate its populated PR `requirements:` YAML against
-  `hubd/internal/orchestrator/verdict.go`; this is the functional efficacy check,
-  while `go test` verifies the assets remain embedded/installed.
+- [x] **Step 2.5 — Keep the one-shot dogfood acceptance outside the reusable
+  skill.** The initial implementation added a permanent Finish step, but the final
+  review correctly identified it as a one-time, out-of-order action. Per the human
+  resolution, remove it entirely from both provider prompts; the supervised check
+  is tracked outside the skill and remains called out in the PR handoff.
 
 - [x] **Step 2.6 — Verify provider parity and exact schema vocabulary.** Run:
 
