@@ -332,7 +332,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   Also update `CLAUDE.md` with the accepted v1 issue-body `check_cmd` trust boundary
   and the authoritative-lookup/signed-delivery hardening deferred to v2.
 
-- [ ] **Step 3.4 — Rebase, run the required final whole-branch cross-provider
+- [x] **Step 3.4 — Rebase, run the required final whole-branch cross-provider
   review, route all outcomes, commit `docs/reviews/epic-3-final.md`, rerun the full
   gate, push, and open the PR.** The PR verdict must include the new platform
   requirement results applicable to this epic (or `requirements: []` only if the
