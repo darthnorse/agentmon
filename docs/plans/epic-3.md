@@ -294,7 +294,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   git commit -m "feat(runner): verify requirements in epic pipelines"
   ```
 
-- [ ] **CHECKPOINT 2 — review the final-verification/schema seam immediately after
+- [x] **CHECKPOINT 2 — reviewed to afd1d54. Review the final-verification/schema seam immediately after
   the highest-judgment execution logic.** Review from checkpoint 1's recorded SHA
   through `HEAD`; validate command exit-code honesty, no-command review semantics,
   two-tier behavior, light-pipeline coverage, provider equivalence, and the exact
