@@ -377,7 +377,7 @@ git commit -m "feat(gate): fail closed unless every platform requirement is met"
 
 Unlike the `Decide` unit tests (which build `GateInput` directly and so cannot detect a forgotten `Requirements:` field), this task adds a run-loop test that drives the real gate assembly through `o.Tick`, so the plumbing itself is exercised.
 
-- [ ] **Step 1: Write the failing integration test.** Append to `hubd/internal/orchestrator/orchestrator_test.go`:
+- [x] **Step 1: Write the failing integration test.** Append to `hubd/internal/orchestrator/orchestrator_test.go`:
 
 ```go
 func TestTickGateEnforcesPlatformRequirements(t *testing.T) {
@@ -422,24 +422,24 @@ func TestTickGateEnforcesPlatformRequirements(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it FAILS (the plumbing isn't wired yet, so the gate can't see the requirement and merges).**
+- [x] **Step 2: Run the test to verify it FAILS (the plumbing isn't wired yet, so the gate can't see the requirement and merges).**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/orchestrator/ -run TestTickGateEnforcesPlatformRequirements -v 2>&1 | tail`
 Expected: FAIL — `stage = "merged"` / `merged = [61]` (the requirement is invisible to the gate until Step 3).
 
-- [ ] **Step 3: Add `Requirements: p.Requirements` to the `Decide` call.** Replace the two-line call (currently at ~646–647):
+- [x] **Step 3: Add `Requirements: p.Requirements` to the `Decide` call.** Replace the two-line call (currently at ~646–647):
 
 ```go
 		res := Decide(GateInput{Verdict: v, VerdictErr: verr, Epic: e.IssueNumber, Labels: e.Labels,
 			RequiredReviews: p.RequiredReviews, Requirements: p.Requirements, ChecksGreen: green, ChecksPending: pending})
 ```
 
-- [ ] **Step 4: gofmt + run the integration test to verify it PASSES.**
+- [x] **Step 4: gofmt + run the integration test to verify it PASSES.**
 
 Run: `gofmt -w hubd/internal/orchestrator/orchestrator.go && GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/orchestrator/ -run TestTickGateEnforcesPlatformRequirements -v 2>&1 | tail`
 Expected: `--- PASS: TestTickGateEnforcesPlatformRequirements`, then `ok`.
 
-- [ ] **Step 5: Full gate + vet green, then commit.**
+- [x] **Step 5: Full gate + vet green, then commit.**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/... 2>&1 | tail` → no `FAIL`.
 Run: `GOCACHE=/tmp/agentmon-go-cache go vet ./hubd/... 2>&1 | tail` → no output.
@@ -458,7 +458,7 @@ git commit -m "feat(orchestrator): wire project requirements into the merge gate
 
 **Interfaces:** none (docs only).
 
-- [ ] **Step 1: Add one learnings line to `CLAUDE.md`.** Under the `## Conventions` section, immediately after the existing "Verdict JSON keys are CAPITALIZED" bullet, add:
+- [x] **Step 1: Add one learnings line to `CLAUDE.md`.** Under the `## Conventions` section, immediately after the existing "Verdict JSON keys are CAPITALIZED" bullet, add:
 
 ```markdown
 - **Platform requirements fail the gate closed:** `Decide` iterates
@@ -470,7 +470,7 @@ git commit -m "feat(orchestrator): wire project requirements into the merge gate
   **closed** as `(missing)`; that is the intended safe drift direction, not a bug.
 ```
 
-- [ ] **Step 2: Full gate green (docs-only, but the constraint says every commit), then commit.**
+- [x] **Step 2: Full gate green (docs-only, but the constraint says every commit), then commit.**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/... 2>&1 | tail` → no `FAIL`.
 
