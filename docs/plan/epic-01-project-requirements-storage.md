@@ -1,6 +1,7 @@
 ---
 title: Project-scoped platform requirements — storage & settings UI
 labels: agentmon:epic, pr-gate
+issue: 1
 ---
 ## Scope
 

@@ -2,6 +2,7 @@
 title: Requirements merge gate & verdict enforcement
 labels: agentmon:epic, pr-gate, plan-gate
 blocked-by: epic-01
+issue: 2
 ---
 ## Scope
 

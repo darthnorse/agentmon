@@ -2,6 +2,7 @@
 title: Requirements injection & verification in the runner skills
 labels: agentmon:epic, pr-gate, plan-gate
 blocked-by: epic-02
+issue: 3
 ---
 ## Scope
 
