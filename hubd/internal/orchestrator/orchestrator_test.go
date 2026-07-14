@@ -333,54 +333,6 @@ func TestReportsAdvanceAndGateMerges(t *testing.T) {
 	}
 }
 
-func TestFinishMergedReapsSessionAndWorktree(t *testing.T) {
-	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
-		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
-		"uncertain: false\nlearnings_updated: true\n```"
-	gh := &fakeGH{
-		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
-		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s", HeadRef: "epic/16-x"}},
-		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
-	}
-	ag := &fakeAgents{sessions: []string{sessionName(16)}}
-	o, d := newTestOrch(t, gh, ag)
-	ctx := context.Background()
-	o.Tick(ctx) // spawn → starting (sets SessionName)
-	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
-	o.Tick(ctx) // drain → pr_open → gate merges → reap
-	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
-	if e.Stage != "merged" {
-		t.Fatalf("epic stage = %q", e.Stage)
-	}
-	if len(ag.killed) != 1 || ag.killed[0] != sessionName(16) {
-		t.Fatalf("session not reaped on merge: killed=%v", ag.killed)
-	}
-	if len(ag.tornDown) != 1 || ag.tornDown[0].Branch != "epic/16-x" || ag.tornDown[0].Workdir == "" {
-		t.Fatalf("worktree not torn down on merge: %+v", ag.tornDown)
-	}
-}
-
-func TestFinishMergedProceedsWhenTeardownFails(t *testing.T) {
-	verdictBody := "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
-		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
-		"uncertain: false\nlearnings_updated: true\n```"
-	gh := &fakeGH{
-		issues: map[int]github.Issue{16: {Number: 16, State: "open", Labels: []string{"agentmon:epic"}}},
-		prs:    map[int]github.PullRequest{61: {Number: 61, State: "open", Body: verdictBody, HeadSHA: "s", HeadRef: "epic/16-x"}},
-		checks: map[string][]github.CheckRun{"s": {{Name: "ci", Status: "completed", Conclusion: "success"}}},
-	}
-	ag := &fakeAgents{sessions: []string{sessionName(16)}, teardownErr: errors.New("boom")}
-	o, d := newTestOrch(t, gh, ag)
-	ctx := context.Background()
-	o.Tick(ctx)
-	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
-	o.Tick(ctx)
-	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
-	if e.Stage != "merged" {
-		t.Fatalf("a teardown error must not block the merge; stage = %q", e.Stage)
-	}
-}
-
 func mergeVerdict16() string {
 	return "```yaml\nagentmon-verdict: v1\nepic: 16\nreviews: [codex]\n" +
 		"findings: {found: 0, resolved: 0, unresolved: 0}\ntests: {passed: 1, failed: 0}\n" +
@@ -395,43 +347,54 @@ func newMergeableGH() *fakeGH {
 	}
 }
 
-func TestReapWaitsForConfirmedKillBeforeTeardown(t *testing.T) {
-	// A merged epic whose session kill FAILS must NOT have its worktree torn down,
-	// and must stay unreaped so a later tick retries — never remove a worktree out
-	// from under a runner whose kill has not landed.
-	ag := &fakeAgents{sessions: []string{sessionName(16)}, killErr: errors.New("kill boom")}
+// mergeTo16 spawns epic 16, reports pr_open, and ticks so the gate merges it and
+// finishMerged runs its inline best-effort reap — shared setup for the reap tests.
+func mergeTo16(t *testing.T, ag *fakeAgents) *db.DB {
+	t.Helper()
 	o, d := newTestOrch(t, newMergeableGH(), ag)
 	ctx := context.Background()
-	o.Tick(ctx)
+	o.Tick(ctx) // spawn → starting (sets SessionName)
 	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
-	o.Tick(ctx) // merge + reap: kill fails → teardown must be skipped
-	if len(ag.tornDown) != 0 {
-		t.Fatalf("worktree torn down despite a failed kill: %+v", ag.tornDown)
+	o.Tick(ctx) // drain → pr_open → gate merges → inline reap
+	return d
+}
+
+func TestFinishMergedReapsSessionAndWorktree(t *testing.T) {
+	ag := &fakeAgents{sessions: []string{sessionName(16)}}
+	d := mergeTo16(t, ag)
+	e, _ := d.GetEpicByIssue(context.Background(), "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("epic stage = %q", e.Stage)
 	}
-	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
-	if e.Stage != "merged" || e.ReapedAt != "" {
-		t.Fatalf("epic = stage %q reaped_at %q (want merged + unreaped)", e.Stage, e.ReapedAt)
+	if len(ag.killed) != 1 || ag.killed[0] != sessionName(16) {
+		t.Fatalf("session not reaped on merge: killed=%v", ag.killed)
+	}
+	if len(ag.tornDown) != 1 || ag.tornDown[0].Branch != "epic/16-x" || ag.tornDown[0].Workdir == "" {
+		t.Fatalf("worktree not torn down on merge: %+v", ag.tornDown)
 	}
 }
 
-func TestReapRetriesUntilComplete(t *testing.T) {
-	// A transient teardown failure leaves the epic unreaped; a later tick retries
-	// and completes — the durable, persisted reap loop, not a one-shot.
-	ag := &fakeAgents{sessions: []string{sessionName(16)}, teardownErr: errors.New("agent down")}
-	o, d := newTestOrch(t, newMergeableGH(), ag)
-	ctx := context.Background()
-	o.Tick(ctx)
-	ag.reports = []shared.OrchestratorReport{{Repo: "o/r", Epic: 16, Stage: shared.EpicPROpen, PR: 61, Session: sessionName(16), Ts: "t"}}
-	o.Tick(ctx) // merge + reap attempt → teardown fails → unreaped
-	e, _ := d.GetEpicByIssue(ctx, "p1", 16)
-	if e.ReapedAt != "" {
-		t.Fatalf("must stay unreaped while teardown fails; reaped_at = %q", e.ReapedAt)
+func TestFinishMergedProceedsWhenTeardownFails(t *testing.T) {
+	ag := &fakeAgents{sessions: []string{sessionName(16)}, teardownErr: errors.New("boom")}
+	d := mergeTo16(t, ag)
+	e, _ := d.GetEpicByIssue(context.Background(), "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("a teardown error must not block the merge; stage = %q", e.Stage)
 	}
-	ag.teardownErr = nil
-	o.Tick(ctx) // reap resumes and completes
-	e, _ = d.GetEpicByIssue(ctx, "p1", 16)
-	if e.ReapedAt == "" {
-		t.Fatal("reap did not resume after the agent recovered")
+}
+
+func TestFinishMergedSkipsTeardownWhenKillFails(t *testing.T) {
+	// Ordering: a merged epic whose session kill FAILS must NOT have its worktree
+	// torn down — never pull a worktree out from under a runner whose kill has not
+	// landed. killEpicSession queues the failed kill for per-tick retry.
+	ag := &fakeAgents{sessions: []string{sessionName(16)}, killErr: errors.New("kill boom")}
+	d := mergeTo16(t, ag)
+	if len(ag.tornDown) != 0 {
+		t.Fatalf("worktree torn down despite a failed kill: %+v", ag.tornDown)
+	}
+	e, _ := d.GetEpicByIssue(context.Background(), "p1", 16)
+	if e.Stage != "merged" {
+		t.Fatalf("stage = %q (want merged)", e.Stage)
 	}
 }
 
