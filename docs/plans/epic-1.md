@@ -816,7 +816,7 @@ git commit -m "feat(web): mirror Requirement contract + fixtures (epic #1)"
 - Consumes (from Task 3): `Requirement`, `ProjectDTO.requirements`,
   `ProjectCreateRequest.requirements`, `ProjectPatchRequest.requirements`.
 
-- [ ] **Step 1: Extend the mocks + add the failing component tests** (`ProjectForm.test.tsx`)
+- [x] **Step 1: Extend the mocks + add the failing component tests** (`ProjectForm.test.tsx`)
 
 Replace the hoisted-mocks + api-client mock lines at the top:
 
@@ -874,12 +874,12 @@ describe("ProjectForm requirements", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify FAIL**
+- [x] **Step 2: Run to verify FAIL**
 
 Run: `cd web && npm run test:run -- ProjectForm`
 Expected: the two new tests FAIL (no "Add requirement" button / no requirement inputs).
 
-- [ ] **Step 3: Implement the requirements editor** (`web/src/components/board/ProjectForm.tsx`)
+- [x] **Step 3: Implement the requirements editor** (`web/src/components/board/ProjectForm.tsx`)
 
 Add `Requirement` to the type import:
 ```tsx
@@ -938,16 +938,16 @@ BOTH modes, like Required reviews):
         </div>
 ```
 
-- [ ] **Step 4: Run the component tests to verify PASS**
+- [x] **Step 4: Run the component tests to verify PASS**
 
 Run: `cd web && npm run test:run -- ProjectForm`
 Expected: all ProjectForm tests pass.
 
-- [ ] **Step 5: Run the FULL GATE**
+- [x] **Step 5: Run the FULL GATE**
 
 Run the FULL GATE (Global Constraints). Expected: all green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add web/src/components/board/ProjectForm.tsx web/src/components/board/ProjectForm.test.tsx

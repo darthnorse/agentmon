@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { openOrFocusSession } from "@/components/board/open-session";
 import { MAX_PARALLEL_CEILING, sessionSlug } from "@/lib/board";
 import { ApiError, allBoardKey, createProject, patchProject } from "@/lib/api-client";
-import type { ProjectCreateRequest, ProjectDTO, ProjectPatchRequest, ServerSummary } from "@/lib/contracts";
+import type { ProjectCreateRequest, ProjectDTO, ProjectPatchRequest, Requirement, ServerSummary } from "@/lib/contracts";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { queryClient } from "@/lib/query-client";
 
@@ -29,6 +29,11 @@ export function ProjectForm(props: Mode) {
   const [reviews, setReviews] = React.useState((init?.required_reviews ?? ["cross-model"]).join(", "));
   const [requireCI, setRequireCI] = React.useState(init?.require_ci ?? true);
   const [maxParallel, setMaxParallel] = React.useState(init?.max_parallel ?? 1);
+  const [requirements, setRequirements] = React.useState<Requirement[]>(init?.requirements ?? []);
+  const addRequirement = () => setRequirements((rs) => [...rs, { id: "", text: "" }]);
+  const updateRequirement = (i: number, patch: Partial<Requirement>) =>
+    setRequirements((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const removeRequirement = (i: number) => setRequirements((rs) => rs.filter((_, j) => j !== i));
   const [busy, setBusy] = React.useState(false);
   const [created, setCreated] = React.useState<ProjectDTO | null>(null);
 
@@ -45,6 +50,7 @@ export function ProjectForm(props: Mode) {
         const body: ProjectPatchRequest = {
           name: name.trim(), workdir: workdir.trim(), target: target.trim(),
           base_branch: baseBranch.trim(), provider, required_reviews: reviewList(),
+          requirements,
         };
         const p = await patchProject(props.project.id, body);
         void queryClient.invalidateQueries({ queryKey: allBoardKey() });
@@ -54,7 +60,7 @@ export function ProjectForm(props: Mode) {
         const body: ProjectCreateRequest = {
           name: name.trim(), repo: repo.trim(), server_id: serverId, target: target.trim() || undefined,
           workdir: workdir.trim(), base_branch: baseBranch.trim(), provider,
-          required_reviews: reviewList(), max_parallel: maxParallel, require_ci: requireCI,
+          required_reviews: reviewList(), requirements, max_parallel: maxParallel, require_ci: requireCI,
         };
         const p = await createProject(body);
         void queryClient.invalidateQueries({ queryKey: allBoardKey() });
@@ -108,6 +114,27 @@ export function ProjectForm(props: Mode) {
             <option value="codex">Codex</option>
           </select>)}
         {field("pf-reviews", "Required reviews", <Input id="pf-reviews" value={reviews} onChange={(e) => setReviews(e.target.value)} placeholder="cross-model" />)}
+        <div className="space-y-1.5">
+          <Label>Platform requirements</Label>
+          <div className="space-y-2">
+            {requirements.length === 0 && (
+              <p className="text-xs text-muted-foreground">Standards enforced on every epic (e.g. “Always use RLS”). Optional — inert until later epics wire the gate.</p>
+            )}
+            {requirements.map((r, i) => (
+              <div key={i} className="flex gap-1.5">
+                <Input aria-label={`Requirement ${i + 1} text`} value={r.text}
+                  onChange={(e) => updateRequirement(i, { text: e.target.value })}
+                  placeholder="Standard, e.g. WCAG 2.2 AA" />
+                <Input aria-label={`Requirement ${i + 1} check command`} value={r.check_cmd ?? ""}
+                  onChange={(e) => updateRequirement(i, { check_cmd: e.target.value })}
+                  placeholder="check cmd (optional)" spellCheck={false} className="font-mono text-xs" />
+                <Button type="button" size="sm" variant="ghost" aria-label={`Remove requirement ${i + 1}`}
+                  onClick={() => removeRequirement(i)}>✕</Button>
+              </div>
+            ))}
+            <Button type="button" size="sm" variant="outline" onClick={addRequirement}>Add requirement</Button>
+          </div>
+        </div>
         {props.mode === "create" && (
           <>
             {field("pf-max", "Max parallel",
