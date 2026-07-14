@@ -128,9 +128,15 @@ the repo tree.)
      the repo's existing structure/conventions, state it with rationale —
      surfacing "this doesn't fit cleanly" at plan-review is far cheaper than
      hitting it at a checkpoint.
-   - **Explicit `CHECKPOINT` steps** at the seams: after the data/schema
-     layer, then every ~4–6 tasks at layer boundaries, always one right
-     after the highest-judgment task. Data-layer checkpoints earn the most.
+   - **`CHECKPOINT` steps — sized to the epic; default NONE.** Step 7's final
+     review already covers the WHOLE branch, so an intermediate checkpoint only
+     earns its cost (a full `/multi-review` — ~10 min, 5 lens subagents) when
+     reviewing IN STAGES stops drift compounding across MANY tasks. So a plan of
+     **≤5 tasks gets NO intermediate checkpoints** — the final review catches it
+     (reviewing a 1–2-task segment pays the full review cost for a tiny diff, the
+     anti-pattern this rule kills). **Larger plans**: at most one checkpoint after
+     the data/schema layer and one after the single highest-judgment task — at
+     real seams spanning several tasks, NEVER per-task or per-layer.
    - Epic issue body carries requirements only. If it embeds a plan anyway,
      VALIDATE it against the current code and adapt — never transcribe blind.
 2. Commit the plan: `docs/plans/epic-$ARGUMENTS.md`, message
