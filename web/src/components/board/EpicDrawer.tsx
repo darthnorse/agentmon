@@ -27,6 +27,7 @@ export function EpicDrawer({ epic, project, onClose }: {
   const running = meta.column === "working";
   const waiting = meta.column === "needs";
   const terminal = isTerminalStage(epic.stage);
+  const hasTerminal = running && Boolean(epic.session);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const [guidance, setGuidance] = React.useState("");
   const navigate = useNavigate();
@@ -89,7 +90,7 @@ export function EpicDrawer({ epic, project, onClose }: {
           <span>attempt {epic.attempt}</span>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
+        <div className={cn("flex min-h-0 flex-1 flex-col gap-5 p-4", hasTerminal ? "overflow-hidden" : "overflow-y-auto")}>
           {waiting && (
             <div className={cn("rounded-lg border border-red-500/40 bg-card p-3 text-sm")}>
               <div className="font-semibold text-red-400">⚠ {epic.needs || meta.label}</div>
@@ -112,10 +113,11 @@ export function EpicDrawer({ epic, project, onClose }: {
 
           {planGate && <PlanPanel epic={epic} project={project} />}
 
-          {running && epic.session && (
-            <TerminalPreview project={project} epic={epic} onOpenFull={openFullSession} />
+          {hasTerminal && (
+            <TerminalPreview project={project} epic={epic} onOpenFull={openFullSession} className="min-h-0 flex-1" />
           )}
 
+          <div className={cn("flex flex-col gap-5", hasTerminal && "min-h-0 flex-none max-h-[55%] overflow-y-auto")}>
           {section("Actions", (
             <div className="flex flex-wrap gap-1.5">
               {canApprove(epic) && (
@@ -193,6 +195,7 @@ export function EpicDrawer({ epic, project, onClose }: {
               <span className="text-muted-foreground">Merged</span><span>{epic.merged_at || "—"}</span>
             </div>
           ))}
+          </div>
         </div>
       </aside>
 

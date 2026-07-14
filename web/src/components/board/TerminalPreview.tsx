@@ -6,13 +6,14 @@ import { findRunnerSession } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import { themeOf } from "@/lib/terminal-themes";
 import { usePrefs } from "@/store/prefs";
+import { cn } from "@/lib/utils";
 
 // Watch-only live preview (spec §8.3): the same TerminalView the grid uses,
 // with an input-blocking overlay — keystrokes require Open full session, so a
 // phone scroll can't type into a runner. active={false} keeps xterm from
 // stealing focus while the drawer is open.
-export function TerminalPreview({ project, epic, onOpenFull }: {
-  project: ProjectDTO; epic: EpicDTO; onOpenFull(): void;
+export function TerminalPreview({ project, epic, onOpenFull, className }: {
+  project: ProjectDTO; epic: EpicDTO; onOpenFull(): void; className?: string;
 }) {
   const theme = usePrefs((s) => s.terminalTheme);
   // Query the project's TARGET, not just its server — the runner session lives
@@ -25,7 +26,7 @@ export function TerminalPreview({ project, epic, onOpenFull }: {
   const pane = session?.windows[0]?.panes[0];
 
   return (
-    <section className="flex flex-col gap-2">
+    <section className={cn("flex flex-col gap-2", className)}>
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         Live session{epic.session ? <span className="ml-1 font-mono normal-case">— {epic.session}</span> : null}
       </div>
@@ -34,7 +35,7 @@ export function TerminalPreview({ project, epic, onOpenFull }: {
       ) : !session || !pane ? (
         <div className="text-xs text-muted-foreground">Session ended — nothing to preview.</div>
       ) : (
-        <div className="relative h-56 overflow-hidden rounded-md border border-border lg:h-[45vh]">
+        <div className="relative flex-1 min-h-[14rem] overflow-hidden rounded-md border border-border">
           <TerminalView serverId={project.server_id} paneId={pane.id} target={session.target} active={false} readOnly
             fontSize={11} theme={themeOf(theme)} />
           <div className="absolute inset-0 z-10" aria-hidden onClick={onOpenFull} />
