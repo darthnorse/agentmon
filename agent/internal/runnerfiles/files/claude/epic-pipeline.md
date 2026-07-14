@@ -164,12 +164,12 @@ At every `CHECKPOINT` step in the plan:
    `docs/reviews/epic-$ARGUMENTS-cp<K>.md`, tick the plan's checkpoint box
    appending the reviewed SHA — `- [x] CHECKPOINT K — reviewed to <sha>` —
    and commit both, message `docs: epic #$ARGUMENTS checkpoint K review`.
-6. **Review recursion terminates.** Recurse only while the delta contains
-   UNREVIEWED JUDGMENT: a large fix round of fresh logic warrants ONE
-   review-of-fixes pass (`/multi-review <pre-fix-sha>..HEAD --codex-only`);
-   fixes that merely transcribe validated recommendations do NOT trigger
-   another round. Hard cap: one review-of-fixes per checkpoint. The final
-   whole-branch review is the fixpoint — trust it.
+6. **Review recursion is `/multi-review`'s own job now.** After it applies
+   fixes, `/multi-review` runs its OWN bounded review-of-fixes pass when they
+   carry fresh logic (Claude-gated, `--codex-only`, hard-capped at one — its
+   Step 10.5). Do NOT manually re-run `/multi-review` on the fixes on top of
+   that; it would double the pass. The final whole-branch review is the
+   fixpoint — trust it.
 7. `agentmon report --epic $ARGUMENTS --stage implementing` and continue.
 
 ## Step 7: Finish
@@ -180,7 +180,7 @@ At every `CHECKPOINT` step in the plan:
 2. `agentmon report --epic $ARGUMENTS --stage reviewing`, then the final
    whole-branch review: **`/multi-review <merge-base>..HEAD --codex`** where
    `<merge-base>` = `git merge-base HEAD origin/<base>`. Apply outcomes as in
-   Step 6 (one review-of-fixes max; DISCUSS → escalate). Commit the report to
+   Step 6 (FIX applied by the review, DISCUSS → escalate). Commit the report to
    `docs/reviews/epic-$ARGUMENTS-final.md`.
 3. **Learnings write-back**: anything durable this epic taught (conventions
    discovered, traps hit, decisions future work needs) goes into `CLAUDE.md`
