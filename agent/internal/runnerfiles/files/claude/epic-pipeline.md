@@ -234,12 +234,8 @@ At every `CHECKPOINT` step in the plan:
    discovered, traps hit, decisions future work needs) goes into `CLAUDE.md`
    / `AGENTS.md` / the repo docs — in this same branch. Context is a
    workspace; the repo is memory.
-5. On the first supervised dogfood run, inspect the committed plan for both
-   requirement tiers and validate the populated PR `requirements:` YAML
-   against `hubd/internal/orchestrator/verdict.go`; this is the functional
-   prompt-efficacy check. Go tests only verify embedding and installation.
-6. Run the FULL test suite one last time; record exact pass/fail counts.
-7. Push and open the PR:
+5. Run the FULL test suite one last time; record exact pass/fail counts.
+6. Push and open the PR:
    `git push -u origin epic/$ARGUMENTS-<slug>`
    `gh pr create --base <base> --title "<issue title> (epic #$ARGUMENTS)" --body-file <tmpfile>`
    The body: a summary, `Closes #$ARGUMENTS`, and it MUST END with the fenced
@@ -275,8 +271,8 @@ At every `CHECKPOINT` step in the plan:
    requirement reported `met` (a non-`met` or `(missing)` requirement
    escalates) — anything else escalates to a human, which is the system
    working.
-8. `agentmon report --epic $ARGUMENTS --stage pr_open --pr <PR-number>`
-9. Final message: one-paragraph summary (what shipped, what's unresolved,
+7. `agentmon report --epic $ARGUMENTS --stage pr_open --pr <PR-number>`
+8. Final message: one-paragraph summary (what shipped, what's unresolved,
    where the evidence lives). Then END YOUR TURN. The session stays
    attachable for follow-up questions; the orchestrator retires it on
    Cancel/Retry, and the gate takes it from here.
