@@ -114,24 +114,38 @@ export function ProjectForm(props: Mode) {
             <option value="codex">Codex</option>
           </select>)}
         {field("pf-reviews", "Required reviews", <Input id="pf-reviews" value={reviews} onChange={(e) => setReviews(e.target.value)} placeholder="cross-model" />)}
-        <div className="space-y-1.5">
-          <Label>Platform requirements</Label>
-          <div className="space-y-2">
-            {requirements.length === 0 && (
-              <p className="text-xs text-muted-foreground">Standards enforced on every epic (e.g. “Always use RLS”). Optional — inert until later epics wire the gate.</p>
-            )}
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <Label>Platform requirements</Label>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Standards enforced on every epic in this project — injected into planning and review, and (once the gate is wired) fail-closed at merge. Write each as a plain-language standard the reviewer checks. Optionally add a <span className="font-mono text-foreground">check-command</span>: a shell command the runner runs to verify it — <span className="font-mono">exit 0 = met</span> — for things a review can’t certify, like RLS tests, <span className="font-mono">axe-core</span>, or a PII scanner. Leave it blank for review-only.
+            </p>
+          </div>
+          <div className="space-y-3">
             {requirements.map((r, i) => (
-              <div key={i} className="flex gap-1.5">
-                <Input aria-label={`Requirement ${i + 1} text`} value={r.text}
+              <div key={i} className="space-y-2 rounded-md border border-border bg-card p-3">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor={`pf-req-text-${i}`} className="text-xs">Requirement {i + 1}</Label>
+                  <Button type="button" size="sm" variant="ghost" className="-my-1 h-6 px-1.5 text-xs text-muted-foreground hover:text-red-400"
+                    aria-label={`Remove requirement ${i + 1}`} onClick={() => removeRequirement(i)}>✕ Remove</Button>
+                </div>
+                <textarea id={`pf-req-text-${i}`} aria-label={`Requirement ${i + 1} text`} value={r.text} rows={2}
                   onChange={(e) => updateRequirement(i, { text: e.target.value })}
-                  placeholder="Standard, e.g. WCAG 2.2 AA" />
-                <Input aria-label={`Requirement ${i + 1} check command`} value={r.check_cmd ?? ""}
-                  onChange={(e) => updateRequirement(i, { check_cmd: e.target.value })}
-                  placeholder="check cmd (optional)" spellCheck={false} className="font-mono text-xs" />
-                <Button type="button" size="sm" variant="ghost" aria-label={`Remove requirement ${i + 1}`}
-                  onClick={() => removeRequirement(i)}>✕</Button>
+                  placeholder="e.g. Always use row-level security on data access — no cross-tenant reads"
+                  className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+                <div className="space-y-1">
+                  <Label htmlFor={`pf-req-cmd-${i}`} className="text-xs font-normal text-muted-foreground">
+                    Check command <span className="opacity-70">— optional, exit 0 = met</span>
+                  </Label>
+                  <Input id={`pf-req-cmd-${i}`} aria-label={`Requirement ${i + 1} check command`} value={r.check_cmd ?? ""}
+                    onChange={(e) => updateRequirement(i, { check_cmd: e.target.value })}
+                    placeholder="e.g. npm run test:rls" spellCheck={false} className="w-full font-mono text-xs" />
+                </div>
               </div>
             ))}
+            {requirements.length === 0 && (
+              <p className="text-xs italic text-muted-foreground">None yet — optional. Add one to hold every epic to a standard.</p>
+            )}
             <Button type="button" size="sm" variant="outline" onClick={addRequirement}>Add requirement</Button>
           </div>
         </div>
