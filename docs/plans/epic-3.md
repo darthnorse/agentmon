@@ -204,7 +204,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
 
 ### Complete content to add
 
-- [ ] **Step 2.1 — Parse the carrier while orienting.** In both `Step 1: Orient`
+- [x] **Step 2.1 — Parse the carrier while orienting.** In both `Step 1: Orient`
   sections, require the runner to read `### Effective requirements` from the issue
   body, parse its fenced JSON platform array, and retain two inventories:
 
@@ -219,7 +219,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   State that executing its exact `check_cmd` is accepted for v1 under the private-repo
   owner/runner trust model; authoritative lookup or signed delivery is v2 hardening.
 
-- [ ] **Step 2.2 — Make requirements inherited Global Constraints.** Extend the
+- [x] **Step 2.2 — Make requirements inherited Global Constraints.** Extend the
   plan contract in both `Step 4` sections so the committed plan's Global
   Constraints must reproduce the complete two-tier inventory verbatim, label the
   platform versus epic-specific tiers, and state explicitly that every task
@@ -228,7 +228,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   no committed plan, so add equivalent instructions that its scratch task list must
   retain the same inventory through final verification.
 
-- [ ] **Step 2.3 — Add final requirement verification after fixes settle.** In both
+- [x] **Step 2.3 — Add final requirement verification after fixes settle.** In both
   `Step 7: Finish`, after final review/fixes and before the last test/verdict steps,
   add an ordered verification procedure:
 
@@ -251,7 +251,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
      from the final review and need not equal the number of structured non-met
      platform statuses.
 
-- [ ] **Step 2.4 — Extend the exact verdict template.** Insert immediately after
+- [x] **Step 2.4 — Extend the exact verdict template.** Insert immediately after
   `tests:` in both fenced YAML templates:
 
   ```yaml
@@ -266,13 +266,13 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   epic-specific requirements never appear in this structured list. Preserve the
   existing provider-specific `reviews:` examples.
 
-- [ ] **Step 2.5 — Make the dogfood acceptance explicit.** Add a finish rule to
+- [x] **Step 2.5 — Make the dogfood acceptance explicit.** Add a finish rule to
   inspect the first supervised run's committed plan for both requirement tiers and
   validate its populated PR `requirements:` YAML against
   `hubd/internal/orchestrator/verdict.go`; this is the functional efficacy check,
   while `go test` verifies the assets remain embedded/installed.
 
-- [ ] **Step 2.6 — Verify provider parity and exact schema vocabulary.** Run:
+- [x] **Step 2.6 — Verify provider parity and exact schema vocabulary.** Run:
 
   ```bash
   rg -n "Effective requirements|check_cmd|requirements: \[\]|via: cmd|via: review|met\|unmet\|uncertain" \
@@ -285,7 +285,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   Expected: both prompt variants contain all new behaviors; the prompt vocabulary
   exactly matches the parser; all agent packages pass.
 
-- [ ] **Step 2.7 — Run the full pre-commit gate and commit.** Run the two Global
+- [x] **Step 2.7 — Run the full pre-commit gate and commit.** Run the two Global
   Constraints gate commands; both must exit 0. Then:
 
   ```bash
