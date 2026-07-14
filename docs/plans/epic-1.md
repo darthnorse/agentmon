@@ -95,13 +95,13 @@ Constraints & decisions) and verified against the current code:
 
 ## Setup (before Task 1)
 
-- [ ] **Step 1: Install web dependencies** (this worktree has no `node_modules`; the
+- [x] **Step 1: Install web dependencies** (this worktree has no `node_modules`; the
   web gate needs them)
 
 Run: `cd web && npm ci`
 Expected: completes with exit 0 (`vitest`/`tsc` now resolve). Audit warnings are fine.
 
-- [ ] **Step 2: Confirm the baseline FULL GATE is green** (so later failures are
+- [x] **Step 2: Confirm the baseline FULL GATE is green** (so later failures are
   attributable to your changes)
 
 Run the FULL GATE (Global Constraints).
@@ -123,7 +123,7 @@ Expected: all Go packages `ok`; web typecheck clean; all web tests pass.
   - round-trip through `CreateProject`, `GetProject`, `GetProjectByRepo`,
     `ListProjects`, `UpdateProject`.
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 Create `hubd/internal/db/migrations/0009_requirements.sql` (one line, mirroring
 `0007`/`0008`; loaded in lexical order by `migrate()`):
@@ -132,7 +132,7 @@ Create `hubd/internal/db/migrations/0009_requirements.sql` (one line, mirroring
 ALTER TABLE projects ADD COLUMN requirements TEXT NOT NULL DEFAULT '[]';
 ```
 
-- [ ] **Step 2: Write the failing tests** (append to `hubd/internal/db/projects_test.go`)
+- [x] **Step 2: Write the failing tests** (append to `hubd/internal/db/projects_test.go`)
 
 Also add `"database/sql"` and `"path/filepath"` to the existing import block (needed
 by the upgrade test).
@@ -233,12 +233,12 @@ func TestRequirementsMigrationPreservesExistingRows(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run the db tests to verify they FAIL (compile error)**
+- [x] **Step 3: Run the db tests to verify they FAIL (compile error)**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/db/`
 Expected: build FAILS — `p.Requirements undefined` / `undefined: Requirement`.
 
-- [ ] **Step 4: Add the `Requirement` type + `Project.Requirements` field**
+- [x] **Step 4: Add the `Requirement` type + `Project.Requirements` field**
 
 In `hubd/internal/db/projects.go`, add the type just above `type Project struct`:
 
@@ -264,7 +264,7 @@ Add the field to `Project` immediately after `Pinned bool`:
 	Requirements    []Requirement
 ```
 
-- [ ] **Step 5: Wire `requirements` into the column list, scan, insert, update**
+- [x] **Step 5: Wire `requirements` into the column list, scan, insert, update**
 
 In `hubd/internal/db/projects.go`:
 
@@ -336,16 +336,16 @@ func unmarshalRequirements(s string) []Requirement {
 }
 ```
 
-- [ ] **Step 6: Run the db tests to verify they PASS (bare)**
+- [x] **Step 6: Run the db tests to verify they PASS (bare)**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/db/`
 Expected: `ok  	agentmon/hubd/internal/db`.
 
-- [ ] **Step 7: Run the FULL GATE**
+- [x] **Step 7: Run the FULL GATE**
 
 Run the FULL GATE (Global Constraints). Expected: all green.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add hubd/internal/db/migrations/0009_requirements.sql hubd/internal/db/projects.go hubd/internal/db/projects_test.go

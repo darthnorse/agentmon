@@ -1,0 +1,1 @@
+ALTER TABLE projects ADD COLUMN requirements TEXT NOT NULL DEFAULT '[]';

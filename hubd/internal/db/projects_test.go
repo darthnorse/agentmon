@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
@@ -39,6 +41,100 @@ func TestProjectRoundTrip(t *testing.T) {
 	list, err := d.ListProjects(ctx)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list = %v err=%v", list, err)
+	}
+}
+
+func TestProjectRequirementsRoundTrip(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	enrollTestServer(t, d, "aigallery")
+	p := testProject("aigallery")
+	p.Requirements = []Requirement{
+		{ID: "rls", Text: "Always use RLS", CheckCmd: "scripts/check-rls.sh"},
+		{ID: "wcag", Text: "WCAG 2.2 AA"},
+	}
+	if err := d.CreateProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Requirements) != 2 ||
+		got.Requirements[0] != (Requirement{ID: "rls", Text: "Always use RLS", CheckCmd: "scripts/check-rls.sh"}) ||
+		got.Requirements[1] != (Requirement{ID: "wcag", Text: "WCAG 2.2 AA"}) {
+		t.Fatalf("round-trip via GetProject: %+v", got.Requirements)
+	}
+	list, _ := d.ListProjects(ctx)
+	if len(list) != 1 || len(list[0].Requirements) != 2 {
+		t.Fatalf("round-trip via ListProjects: %+v", list)
+	}
+	byRepo, _ := d.GetProjectByRepo(ctx, "darthnorse/school-platform")
+	if len(byRepo.Requirements) != 2 || byRepo.Requirements[1].ID != "wcag" {
+		t.Fatalf("round-trip via GetProjectByRepo: %+v", byRepo.Requirements)
+	}
+	// UpdateProject rewrites the set.
+	p.Requirements = []Requirement{{ID: "pii", Text: "No PII in logs"}}
+	if ok, err := d.UpdateProject(ctx, p); err != nil || !ok {
+		t.Fatalf("update: ok=%v err=%v", ok, err)
+	}
+	got, _ = d.GetProject(ctx, "p1")
+	if len(got.Requirements) != 1 || got.Requirements[0].ID != "pii" {
+		t.Fatalf("requirements after update: %+v", got.Requirements)
+	}
+}
+
+func TestProjectRequirementsDefaultEmpty(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	enrollTestServer(t, d, "aigallery")
+	// A project created without requirements stores + reads back as empty, never NULL.
+	if err := d.CreateProject(ctx, testProject("aigallery")); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := d.GetProject(ctx, "p1"); len(got.Requirements) != 0 {
+		t.Fatalf("absent requirements must be empty: %+v", got.Requirements)
+	}
+}
+
+// The AC requires that applying 0009 to a DB populated at the PRIOR schema
+// preserves existing rows. openTestDB/Open apply every migration up front, so we
+// build the projects table at the pre-0009 (0008) shape, populate it, then apply
+// the REAL 0009 SQL and confirm the pre-existing row survives, backfilled with '[]'.
+func TestRequirementsMigrationPreservesExistingRows(t *testing.T) {
+	sqldb, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "u.sqlite")+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqldb.Close()
+	ctx := context.Background()
+	// projects at the pre-0009 shape (0005 + 0007 require_ci + 0008 pinned).
+	if _, err := sqldb.ExecContext(ctx, `CREATE TABLE projects (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, repo TEXT NOT NULL, server_id TEXT NOT NULL,
+		target TEXT NOT NULL DEFAULT '', workdir TEXT NOT NULL, base_branch TEXT NOT NULL DEFAULT 'main',
+		provider TEXT NOT NULL DEFAULT 'claude', required_reviews TEXT NOT NULL DEFAULT '[]',
+		max_parallel INTEGER NOT NULL DEFAULT 1, paused INTEGER NOT NULL DEFAULT 0,
+		require_ci INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqldb.ExecContext(ctx, `INSERT INTO projects(id,name,repo,server_id,workdir,created_at,updated_at)
+		VALUES('old','old','o/old','h1','/w', datetime('now'), datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	body, err := migrationFS.ReadFile("migrations/0009_requirements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqldb.ExecContext(ctx, string(body)); err != nil {
+		t.Fatalf("0009 must apply to a populated table: %v", err)
+	}
+	var reqs string
+	if err := sqldb.QueryRowContext(ctx, `SELECT requirements FROM projects WHERE id='old'`).Scan(&reqs); err != nil {
+		t.Fatalf("pre-existing row must survive 0009: %v", err)
+	}
+	if reqs != "[]" {
+		t.Fatalf("backfilled requirements = %q, want []", reqs)
 	}
 }
 

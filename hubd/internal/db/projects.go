@@ -7,6 +7,19 @@ import (
 	"strings"
 )
 
+// Requirement is one platform-invariant standard a project asserts over every
+// epic. It is a value object json-marshaled both into the projects.requirements
+// TEXT column and (embedded in the API DTO) onto the wire, so these json tags are
+// the single source of truth for both shapes. ID is the stable slug the epic-02
+// gate/verdict join on; Text doubles as the review lens; CheckCmd is an optional
+// shell command whose exit code can certify the requirement where an LLM cannot.
+// Stored inert this epic — nothing reads it yet.
+type Requirement struct {
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	CheckCmd string `json:"check_cmd,omitempty"`
+}
+
 // Project is a registered orchestrator target: a repo bound to a fleet host.
 type Project struct {
 	ID              string
@@ -22,27 +35,29 @@ type Project struct {
 	Paused          bool
 	RequireCI       bool
 	Pinned          bool
+	Requirements    []Requirement
 }
 
-const projectCols = "id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, require_ci, pinned"
+const projectCols = "id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, require_ci, pinned, requirements"
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
-	var reviews string
+	var reviews, reqs string
 	if err := row.Scan(&p.ID, &p.Name, &p.Repo, &p.ServerID, &p.Target, &p.Workdir,
-		&p.BaseBranch, &p.Provider, &reviews, &p.MaxParallel, &p.Paused, &p.RequireCI, &p.Pinned); err != nil {
+		&p.BaseBranch, &p.Provider, &reviews, &p.MaxParallel, &p.Paused, &p.RequireCI, &p.Pinned, &reqs); err != nil {
 		return Project{}, err
 	}
 	p.RequiredReviews = unmarshalStrings(reviews)
+	p.Requirements = unmarshalRequirements(reqs)
 	return p, nil
 }
 
 func (d *DB) CreateProject(ctx context.Context, p Project) error {
 	_, err := d.sql.ExecContext(ctx,
-		`INSERT INTO projects(id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, require_ci, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))`,
+		`INSERT INTO projects(id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, require_ci, requirements, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))`,
 		p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider,
-		marshalStrings(p.RequiredReviews), p.MaxParallel, p.Paused, p.RequireCI)
+		marshalStrings(p.RequiredReviews), p.MaxParallel, p.Paused, p.RequireCI, marshalRequirements(p.Requirements))
 	return err
 }
 
@@ -113,6 +128,25 @@ func unmarshalStrings(s string) []string {
 	return out
 }
 
+// marshalRequirements / unmarshalRequirements mirror marshalStrings for the
+// []Requirement TEXT column: a JSON array, "[]" for empty, never NULL.
+func marshalRequirements(rs []Requirement) string {
+	if len(rs) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(rs)
+	return string(b)
+}
+
+func unmarshalRequirements(s string) []Requirement {
+	if s == "" {
+		return nil
+	}
+	var out []Requirement
+	_ = json.Unmarshal([]byte(s), &out)
+	return out
+}
+
 // ErrDuplicateName is returned by UpdateProject when a rename collides with the
 // UNIQUE(name) constraint. The PATCH handler maps it to 400; ANY other error is
 // an internal failure (lock/IO/closed DB) that must surface as 500, not a
@@ -127,8 +161,8 @@ var ErrDuplicateName = errors.New("project name already in use")
 // tell a client-side collision apart from a genuine backend failure.
 func (d *DB) UpdateProject(ctx context.Context, p Project) (bool, error) {
 	found, err := d.execFound(ctx,
-		`UPDATE projects SET name = ?, workdir = ?, target = ?, base_branch = ?, provider = ?, required_reviews = ?, updated_at = datetime('now') WHERE id = ?`,
-		p.Name, p.Workdir, p.Target, p.BaseBranch, p.Provider, marshalStrings(p.RequiredReviews), p.ID)
+		`UPDATE projects SET name = ?, workdir = ?, target = ?, base_branch = ?, provider = ?, required_reviews = ?, requirements = ?, updated_at = datetime('now') WHERE id = ?`,
+		p.Name, p.Workdir, p.Target, p.BaseBranch, p.Provider, marshalStrings(p.RequiredReviews), marshalRequirements(p.Requirements), p.ID)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		return false, ErrDuplicateName
 	}
