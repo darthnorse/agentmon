@@ -156,12 +156,14 @@ epic_usage
    `Usage` per (provider, model). Attached to the report; rides the existing
    drain. **Best-effort: any capture error → no usage; the report is never a
    400** (the stage transition is authoritative, usage is narrative).
-2. **Reap snapshot (tail).** At session retire (`killEpicSession`, hit by
-   merge / cancel / retry), capture one final aggregate before the kill and store
-   it as a terminal boundary — this closes the active-stage **wasted-cost tail**
-   for hub-driven cancel/stall, which emit no report. *This is the one added
-   agent operation vs the first draft; if we choose to skip it in v1, terminal-
-   stage figures are labeled lower-bounds instead (§4.6).*
+2. **Reap snapshot (tail) — required.** At session retire (`killEpicSession`,
+   hit by merge / cancel / retry), the hub captures one final aggregate before
+   the kill (a capture-before-kill in the retire path) and stores it as a
+   terminal boundary, `stage` = the epic's stage at retire — this closes the
+   active-stage **wasted-cost tail** for hub-driven cancel/stall, which emit no
+   report. This is the one added agent operation vs the first draft; it is in
+   v1 (owner-confirmed) because capturing failed/canceled wasted cost is a stated
+   goal.
 
 Wire type (add to `shared/orchestrator.go`):
 
@@ -216,9 +218,10 @@ report, upsert one `epic_usage` row.
     attributed to the first reported stage (captures orientation/worktree
     startup) — the first interval is `[0, b₁]`, not skipped.
   - per-attempt total = its final (reap) cumulative; epic total = Σ attempts.
-  - **lower-bound honesty:** if an attempt ended with no reap/terminal boundary
-    (only if the reap snapshot is skipped), its active-stage figure is flagged
-    `is_lower_bound` and rendered with a `≥`.
+  - **lower-bound honesty:** an attempt still in-flight (no terminal boundary
+    yet), or one whose reap capture failed best-effort, is flagged
+    `is_lower_bound` and rendered with a `≥`. A cleanly-retired attempt always
+    has its reap boundary and is exact.
   - per-stage / per-attempt **duration** from boundary `captured_at` deltas
     (same boundaries as tokens → correctly segmented per attempt); epic total
     wall-clock from the epic row's `started_at`/`merged_at`.
