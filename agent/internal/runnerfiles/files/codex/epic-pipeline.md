@@ -54,10 +54,23 @@ otherwise guess. Refer to the issue number as N throughout.
 1. `gh issue view N --json title,body,labels,state` — the body is your
    REQUIREMENTS (scope, acceptance criteria, constraints, decisions). If the
    issue is closed, report escalated ("issue is closed") and stop.
-2. Note the dials in its labels: `pipeline:light` (see the light variant at
+2. Parse the issue body's canonical `### Effective requirements` carrier and
+   retain two separate inventories: the fenced JSON platform array, preserving
+   each exact `id`, `text`, optional verbatim `check_cmd`, and carrier order;
+   and the Epic-specific textual list. `[]` and `None.` are explicit empty
+   tiers. The canonical section must occur exactly once and its platform JSON
+   must be valid with non-empty, unique ids; malformed, duplicated, or
+   ambiguous carrier data → escalation. For older issues with no canonical
+   section, treat Scope/Acceptance/Constraints as epic-specific requirements
+   and the platform inventory as empty; never invent platform ids. V1
+   consciously trusts exact `check_cmd` values carried by an issue in this
+   private repo: owner/runners who can edit it can already edit code the runner
+   executes. Authoritative `Project.Requirements` lookup or signed delivery is
+   deferred to v2; never alter the carried command or hide its real result.
+3. Note the dials in its labels: `pipeline:light` (see the light variant at
    the end), `plan-gate` (pause after planning), `pr-gate` (informational —
    the hub holds the merge; your job is unchanged).
-3. Derive: base branch (`gh repo view --json defaultBranchRef`), repo name,
+4. Derive: base branch (`gh repo view --json defaultBranchRef`), repo name,
    and your naming set:
    - slug: lowercase alnum-dash from the issue title, ≤4 words
    - branch `epic/N-<slug>`, worktree `../<repo>-epic-N`
@@ -95,7 +108,10 @@ Then `cd` there and STAY there for everything that follows.
    satisfy this contract (checked items are what checkpoint reviews
    repeatedly catch when missing):
    - **Global Constraints section**: build/test gate command, commit style,
-     scope rules — restated in the artifact, not assumed.
+     scope rules, and the complete two-tier effective-requirements inventory —
+     restated in the artifact, not assumed. Reproduce both tiers verbatim,
+     label platform versus epic-specific requirements, and state explicitly
+     that every task inherits every effective requirement.
    - Bite-size tasks with exact file paths, complete code/diff content per
      step, run commands with expected output, exact commit messages,
      **checkbox syntax** (`- [ ]`) — the ticks are your resume state — and an
@@ -104,7 +120,8 @@ Then `cd` there and STAY there for everything that follows.
    - **Requirements traceability**: every epic AC maps to ≥1 task and every
      task maps to an AC — an AC with no task is a coverage gap, a task with no
      AC is scope creep; both are then things the cross-model plan review can
-     catch mechanically. Cite non-obvious constraints/decisions to their
+     catch mechanically. Also map every effective requirement to its tasks
+     and final verification method. Cite non-obvious constraints/decisions to their
      source — `[Source: epic #N]`, `[Source: docs/<file>.md#Section]`, or a
      repo path — so a reviewer can ground each one (an uncitable constraint is
      invented or stale).
@@ -206,12 +223,30 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
 
    Apply outcomes as in Step 6 (one review-of-fixes max; DISCUSS → escalate).
    Commit the report.
-3. **Learnings write-back**: anything durable this epic taught (conventions
+3. **Verify every effective requirement after review fixes settle.** Assess
+   each epic-specific requirement and each platform requirement without a
+   `check_cmd` against the final reviewed diff/repository, recording
+   `met`, `unmet`, or `uncertain`. From the worktree root, run each platform
+   `check_cmd` separately and verbatim, capturing its actual exit code even
+   under fail-fast shells: exit 0 → `met`; non-zero, command-not-found, or
+   execution error → `unmet`. A command-backed result always uses `via: cmd`
+   and may never be skipped, replaced, or overridden by review judgment; an
+   unexecuted command may never be reported as `via: cmd`. A no-command
+   platform result uses `via: review`.
+
+   Route each unmet/uncertain epic-specific requirement through the existing
+   DISCUSS/unresolved path. Platform results always go in the structured
+   `requirements` list; do not invent an `unresolved` finding solely because a
+   command-backed platform status is `unmet`, though independent final-review
+   findings remain. A review assessment that needs human judgment follows the
+   existing DISCUSS escalation path. Set overall `uncertain: true` for any
+   uncertain requirement or other material doubt.
+4. **Learnings write-back**: anything durable this epic taught (conventions
    discovered, traps hit, decisions future work needs) goes into `AGENTS.md`
    / `CLAUDE.md` / the repo docs — in this same branch. Context is a
    workspace; the repo is memory.
-4. Run the FULL test suite one last time; record exact pass/fail counts.
-5. Push and open the PR:
+5. Run the FULL test suite one last time; record exact pass/fail counts.
+6. Push and open the PR:
    `git push -u origin epic/N-<slug>`
    `gh pr create --base <base> --title "<issue title> (epic #N)" --body-file <tmpfile>`
    The body: a summary, `Closes #N`, and it MUST END with the fenced verdict
@@ -225,6 +260,8 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    unresolved:
      - "<each unresolved/DISCUSS item, verbatim>"
    tests: { passed: <N>, failed: <M> }
+   requirements:
+     - { id: <platform requirement id>, status: <met|unmet|uncertain>, via: <cmd|review> }
    uncertain: <true if you hold ANY material doubt about correctness/completeness>
    learnings_updated: true
    ```
@@ -234,11 +271,18 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    review IS cross-model. `findings` counts come from the FINAL review only
    (checkpoint evidence lives in the committed report files). Count every
    DISCUSS item you escalated as unresolved. NEVER round `failed` down to
-   zero. The gate auto-merges only on `unresolved: 0`, `uncertain: false`,
-   green CI, and `reviews ⊇` the project's required set — anything else
-   escalates to a human, which is the system working.
-6. `agentmon report --epic N --stage pr_open --pr <PR-number>`
-7. Final message: one-paragraph summary (what shipped, what's unresolved,
+   zero. Include exactly one requirement entry per platform carrier record,
+   in carrier order, or `requirements: []` for an empty platform tier.
+   `via: cmd` is mandatory when `check_cmd` exists and `via: review` otherwise;
+   ids and the `met|unmet|uncertain` and `cmd|review` values must match
+   `hubd/internal/orchestrator/verdict.go` exactly. Epic-specific requirements
+   never enter this structured list. The gate auto-merges only on
+   `unresolved: 0`, `uncertain: false`, green CI, `reviews ⊇` the project's
+   required set, and every project platform requirement reported `met` (a
+   non-`met` or `(missing)` requirement escalates) — anything else escalates
+   to a human, which is the system working.
+7. `agentmon report --epic N --stage pr_open --pr <PR-number>`
+8. Final message: one-paragraph summary (what shipped, what's unresolved,
    where the evidence lives). Then STOP. The session stays attachable for
    follow-up questions; the orchestrator retires it on Cancel/Retry, and the
    gate takes it from here.
@@ -246,7 +290,8 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
 ## `pipeline:light` variant (label-driven)
 
 For small maintenance epics: skip Step 4's committed plan and Step 6 entirely
-(keep a task list in a scratch file). Everything else is UNCHANGED —
+(keep a task list in a scratch file that reproduces both effective-requirement
+tiers verbatim and retains them through final verification). Everything else is UNCHANGED —
 worktree, stage reports, escalation, ONE full pre-PR headless review over
 `<merge-base>..HEAD`, learnings, full verdict block.
 
