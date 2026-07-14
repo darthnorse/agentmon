@@ -94,10 +94,23 @@ the repo tree.)
    - **Global Constraints section**: build/test gate command, commit style,
      scope rules — restated in the artifact, not assumed.
    - Bite-size tasks with exact file paths, complete code/diff content per
-     step, run commands with expected output, exact commit messages, and
-     **checkbox syntax** (`- [ ]`) — the ticks are your resume state.
+     step, run commands with expected output, exact commit messages,
+     **checkbox syntax** (`- [ ]`) — the ticks are your resume state — and an
+     **`(AC: n)` tag** on each task naming the epic acceptance criterion it
+     serves.
+   - **Requirements traceability**: every epic AC maps to ≥1 task and every
+     task maps to an AC — an AC with no task is a coverage gap, a task with no
+     AC is scope creep; both are then things the cross-model plan review can
+     catch mechanically. Cite non-obvious constraints/decisions to their
+     source — `[Source: epic #$ARGUMENTS]`, `[Source: docs/<file>.md#Section]`,
+     or a repo path — so a reviewer can ground each one (an uncitable
+     constraint is invented or stale).
    - **File dispositions verified against the repo** (create vs modify —
      check each one; wrong dispositions are the top rule-2 stop cause).
+   - **Structure variances**: where a disposition or approach deviates from
+     the repo's existing structure/conventions, state it with rationale —
+     surfacing "this doesn't fit cleanly" at plan-review is far cheaper than
+     hitting it at a checkpoint.
    - **Explicit `CHECKPOINT` steps** at the seams: after the data/schema
      layer, then every ~4–6 tasks at layer boundaries, always one right
      after the highest-judgment task. Data-layer checkpoints earn the most.
