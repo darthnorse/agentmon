@@ -355,7 +355,7 @@ git commit -m "feat(gate): fail closed unless every platform requirement is met"
 
 ---
 
-- [ ] **CHECKPOINT 1 — after Task 2 (highest-judgment: gate semantics, ordering, fail-closed drift + parse-layer validation).**
+- [x] **CHECKPOINT 1 — reviewed to 50cb5d3** — after Task 2 (highest-judgment: gate semantics, ordering, fail-closed drift + parse-layer validation).
   This is the seam right after the core enforcement logic and its data/validation layer, before the plumbing + its integration test. Follow Step 6 of the epic-pipeline:
   1. `agentmon report --epic 2 --stage reviewing`
   2. Segment = `git merge-base HEAD origin/main`..HEAD.
