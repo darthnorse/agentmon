@@ -369,7 +369,7 @@ git commit -m "feat(db): project requirements column + round-trip (epic #1)"
   duplicate resolved id); `projectDTO.Requirements []db.Requirement \`json:"requirements"\``;
   create + PATCH accept/return `requirements`.
 
-- [ ] **Step 1: Write the failing unit tests** (`hubd/internal/api/requirements_test.go`)
+- [x] **Step 1: Write the failing unit tests** (`hubd/internal/api/requirements_test.go`)
 
 ```go
 package api
@@ -433,12 +433,12 @@ func TestNormalizeRequirementsRejectsDuplicateIDs(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify FAIL (compile error)**
+- [x] **Step 2: Run to verify FAIL (compile error)**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/`
 Expected: build FAILS — `undefined: slugify` / `undefined: normalizeRequirements`.
 
-- [ ] **Step 3: Implement `slugify` + `normalizeRequirements`** (`hubd/internal/api/requirements.go`)
+- [x] **Step 3: Implement `slugify` + `normalizeRequirements`** (`hubd/internal/api/requirements.go`)
 
 ```go
 package api
@@ -502,12 +502,12 @@ func normalizeRequirements(in []db.Requirement) ([]db.Requirement, error) {
 }
 ```
 
-- [ ] **Step 4: Run the unit tests to verify PASS (bare)**
+- [x] **Step 4: Run the unit tests to verify PASS (bare)**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/ -run 'TestSlugify|TestNormalizeRequirements'`
 Expected: `ok` (all three pass).
 
-- [ ] **Step 5: Write the failing API round-trip test** (append to `hubd/internal/api/orchestrator_test.go`)
+- [x] **Step 5: Write the failing API round-trip test** (append to `hubd/internal/api/orchestrator_test.go`)
 
 This references `projectDTO.Requirements`, which does not exist yet → it will not
 compile (red) until Step 7.
@@ -572,12 +572,12 @@ func TestProjectRequirementsAPI(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Run to verify FAIL (compile error)**
+- [x] **Step 6: Run to verify FAIL (compile error)**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/`
 Expected: build FAILS — `created.Requirements undefined (type projectDTO ...)`.
 
-- [ ] **Step 7: Wire `requirements` into the DTO + handlers** (`hubd/internal/api/orchestrator.go`)
+- [x] **Step 7: Wire `requirements` into the DTO + handlers** (`hubd/internal/api/orchestrator.go`)
 
 Add the DTO field to `projectDTO`, immediately after `Pinned`:
 
@@ -650,16 +650,16 @@ the `if in.RequiredReviews != nil { ... }` block:
 		}
 ```
 
-- [ ] **Step 8: Run the API tests to verify PASS (bare)**
+- [x] **Step 8: Run the API tests to verify PASS (bare)**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/`
 Expected: `ok  	agentmon/hubd/internal/api`.
 
-- [ ] **Step 9: Run the FULL GATE**
+- [x] **Step 9: Run the FULL GATE**
 
 Run the FULL GATE (Global Constraints). Expected: all green.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add hubd/internal/api/requirements.go hubd/internal/api/requirements_test.go hubd/internal/api/orchestrator.go hubd/internal/api/orchestrator_test.go

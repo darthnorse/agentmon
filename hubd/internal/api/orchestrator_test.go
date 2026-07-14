@@ -58,6 +58,64 @@ func TestRegisterAndListProjects(t *testing.T) {
 		t.Fatalf("missing repo code=%d", w.Code)
 	}
 }
+func TestProjectRequirementsAPI(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	d := Deps{DB: database, Orch: &fakeOrch{}, Reg: registry.New(database), Audit: audit.NewRecorder(&captureSink{})}
+
+	// CREATE: supplied id preserved; missing id derived from text; blank row dropped.
+	body := `{"name":"proj","repo":"o/r","server_id":"h1","workdir":"/w",` +
+		`"requirements":[{"text":"Always use RLS"},{"id":"wcag","text":"WCAG 2.2 AA"},{"text":"  "}]}`
+	r, w := orchReq("POST", "/api/v1/orchestrator/projects", body)
+	d.OrchestratorProjectsHandler()(w, r)
+	if w.Code != 201 {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	var created projectDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Requirements) != 2 ||
+		created.Requirements[0] != (db.Requirement{ID: "always-use-rls", Text: "Always use RLS"}) ||
+		created.Requirements[1] != (db.Requirement{ID: "wcag", Text: "WCAG 2.2 AA"}) {
+		t.Fatalf("create response requirements = %+v", created.Requirements)
+	}
+	got, _ := database.GetProject(ctx, created.ID)
+	if len(got.Requirements) != 2 || got.Requirements[0].ID != "always-use-rls" {
+		t.Fatalf("persisted requirements = %+v", got.Requirements)
+	}
+
+	// PATCH must accept AND RETURN requirements, keeping the id stable across a
+	// text edit.
+	patch := `{"requirements":[{"id":"always-use-rls","text":"Always use row-level security"}]}`
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/"+created.ID, patch)
+	r.SetPathValue("id", created.ID)
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("patch = %d %s", w.Code, w.Body.String())
+	}
+	var patched projectDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if len(patched.Requirements) != 1 ||
+		patched.Requirements[0] != (db.Requirement{ID: "always-use-rls", Text: "Always use row-level security"}) {
+		t.Fatalf("patch response requirements = %+v", patched.Requirements)
+	}
+	if got, _ = database.GetProject(ctx, created.ID); got.Requirements[0].Text != "Always use row-level security" {
+		t.Fatalf("patch must persist the edited text: %+v", got.Requirements)
+	}
+
+	// Duplicate resolved ids are rejected at create time (fail closed).
+	dup := `{"name":"dup","repo":"o/dup","server_id":"h1","workdir":"/w",` +
+		`"requirements":[{"text":"Always use RLS"},{"id":"always-use-rls","text":"Other"}]}`
+	r, w = orchReq("POST", "/api/v1/orchestrator/projects", dup)
+	d.OrchestratorProjectsHandler()(w, r)
+	if w.Code != 400 {
+		t.Fatalf("duplicate requirement ids must 400, got %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestBoardEndpoint(t *testing.T) {
 	database := orchDB(t)
 	ctx := context.Background()
@@ -487,13 +545,13 @@ func (f *fakeContents) GetContents(_ context.Context, repo, path, ref string) ([
 func TestPlanDocPath(t *testing.T) {
 	for needs, want := range map[string]string{
 		"": "docs/plans/epic-7.md",
-		"plan-gate: plan ready at docs/plans/epic-7.md":  "docs/plans/epic-7.md",
-		"plan-gate: plan ready at docs/plans/sub/p.md":   "docs/plans/sub/p.md", // nested under docs/plans/ is fine
-		"plan-gate: plan ready at docs/x/plan.md":        "docs/plans/epic-7.md", // outside docs/plans/ → fall back
-		"plan-gate: plan ready at README.md":             "docs/plans/epic-7.md", // arbitrary repo file → fall back
-		"plan-gate: plan ready at ../../etc/passwd":      "docs/plans/epic-7.md",
-		"plan-gate: plan ready at /abs/path.md":          "docs/plans/epic-7.md",
-		"something else entirely":                        "docs/plans/epic-7.md",
+		"plan-gate: plan ready at docs/plans/epic-7.md": "docs/plans/epic-7.md",
+		"plan-gate: plan ready at docs/plans/sub/p.md":  "docs/plans/sub/p.md",  // nested under docs/plans/ is fine
+		"plan-gate: plan ready at docs/x/plan.md":       "docs/plans/epic-7.md", // outside docs/plans/ → fall back
+		"plan-gate: plan ready at README.md":            "docs/plans/epic-7.md", // arbitrary repo file → fall back
+		"plan-gate: plan ready at ../../etc/passwd":     "docs/plans/epic-7.md",
+		"plan-gate: plan ready at /abs/path.md":         "docs/plans/epic-7.md",
+		"something else entirely":                       "docs/plans/epic-7.md",
 	} {
 		if got := planDocPath(needs, 7); got != want {
 			t.Fatalf("planDocPath(%q) = %q, want %q", needs, got, want)

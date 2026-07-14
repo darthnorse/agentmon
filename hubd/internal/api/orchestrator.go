@@ -60,24 +60,25 @@ func toEpicDTO(e db.Epic) epicDTO {
 }
 
 type projectDTO struct {
-	ID              string         `json:"id"`
-	Name            string         `json:"name"`
-	Repo            string         `json:"repo"`
-	ServerID        string         `json:"server_id"`
-	Target          string         `json:"target"`
-	Workdir         string         `json:"workdir"`
-	BaseBranch      string         `json:"base_branch"`
-	Provider        string         `json:"provider"`
-	RequiredReviews []string       `json:"required_reviews"`
-	MaxParallel     int            `json:"max_parallel"`
-	Paused          bool           `json:"paused"`
-	RequireCI       bool           `json:"require_ci"`
-	Pinned          bool           `json:"pinned"`
-	Counts          map[string]int `json:"counts,omitempty"`
+	ID              string           `json:"id"`
+	Name            string           `json:"name"`
+	Repo            string           `json:"repo"`
+	ServerID        string           `json:"server_id"`
+	Target          string           `json:"target"`
+	Workdir         string           `json:"workdir"`
+	BaseBranch      string           `json:"base_branch"`
+	Provider        string           `json:"provider"`
+	RequiredReviews []string         `json:"required_reviews"`
+	MaxParallel     int              `json:"max_parallel"`
+	Paused          bool             `json:"paused"`
+	RequireCI       bool             `json:"require_ci"`
+	Pinned          bool             `json:"pinned"`
+	Requirements    []db.Requirement `json:"requirements"`
+	Counts          map[string]int   `json:"counts,omitempty"`
 }
 
 func projectOut(p db.Project, counts map[string]int) projectDTO {
-	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, p.Pinned, counts}
+	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, p.Pinned, p.Requirements, counts}
 }
 
 type eventDTO struct {
@@ -125,16 +126,17 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 			return
 		}
 		var in struct {
-			Name            string   `json:"name"`
-			Repo            string   `json:"repo"`
-			ServerID        string   `json:"server_id"`
-			Target          string   `json:"target"`
-			Workdir         string   `json:"workdir"`
-			BaseBranch      string   `json:"base_branch"`
-			Provider        string   `json:"provider"`
-			RequiredReviews []string `json:"required_reviews"`
-			MaxParallel     int      `json:"max_parallel"`
-			RequireCI       bool     `json:"require_ci"`
+			Name            string           `json:"name"`
+			Repo            string           `json:"repo"`
+			ServerID        string           `json:"server_id"`
+			Target          string           `json:"target"`
+			Workdir         string           `json:"workdir"`
+			BaseBranch      string           `json:"base_branch"`
+			Provider        string           `json:"provider"`
+			RequiredReviews []string         `json:"required_reviews"`
+			Requirements    []db.Requirement `json:"requirements"`
+			MaxParallel     int              `json:"max_parallel"`
+			RequireCI       bool             `json:"require_ci"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "bad request")
@@ -175,7 +177,12 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "unknown server")
 			return
 		}
-		pr := db.Project{ID: uuid.NewString(), Name: in.Name, Repo: in.Repo, ServerID: in.ServerID, Target: in.Target, Workdir: in.Workdir, BaseBranch: in.BaseBranch, Provider: in.Provider, RequiredReviews: in.RequiredReviews, MaxParallel: in.MaxParallel, RequireCI: in.RequireCI}
+		reqs, err := normalizeRequirements(in.Requirements)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		pr := db.Project{ID: uuid.NewString(), Name: in.Name, Repo: in.Repo, ServerID: in.ServerID, Target: in.Target, Workdir: in.Workdir, BaseBranch: in.BaseBranch, Provider: in.Provider, RequiredReviews: in.RequiredReviews, Requirements: reqs, MaxParallel: in.MaxParallel, RequireCI: in.RequireCI}
 		if err := d.DB.CreateProject(r.Context(), pr); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "create failed")
 			return
@@ -417,14 +424,15 @@ func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
 			return
 		}
 		var in struct {
-			Name            *string   `json:"name"`
-			Repo            *string   `json:"repo"`
-			ServerID        *string   `json:"server_id"`
-			Workdir         *string   `json:"workdir"`
-			Target          *string   `json:"target"`
-			BaseBranch      *string   `json:"base_branch"`
-			Provider        *string   `json:"provider"`
-			RequiredReviews *[]string `json:"required_reviews"`
+			Name            *string           `json:"name"`
+			Repo            *string           `json:"repo"`
+			ServerID        *string           `json:"server_id"`
+			Workdir         *string           `json:"workdir"`
+			Target          *string           `json:"target"`
+			BaseBranch      *string           `json:"base_branch"`
+			Provider        *string           `json:"provider"`
+			RequiredReviews *[]string         `json:"required_reviews"`
+			Requirements    *[]db.Requirement `json:"requirements"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOrchestratorBody)).Decode(&in); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "bad request")
@@ -496,6 +504,14 @@ func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
 		}
 		if in.RequiredReviews != nil {
 			pr.RequiredReviews = *in.RequiredReviews
+		}
+		if in.Requirements != nil {
+			reqs, err := normalizeRequirements(*in.Requirements)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			pr.Requirements = reqs
 		}
 		if pr.Name == "" || pr.Workdir == "" || pr.BaseBranch == "" {
 			writeJSONError(w, http.StatusBadRequest, "missing required field")
