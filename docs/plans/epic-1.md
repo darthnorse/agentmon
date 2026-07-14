@@ -9,28 +9,35 @@ epic-02 gate and epic-03 runner consume it later.
 
 **Architecture:** Mirror the existing `required_reviews` storage pattern (JSON in a
 `TEXT NOT NULL DEFAULT '[]'` column) but for a struct slice. Each `Requirement` is
-`{ id, text, check_cmd? }` with a **stable** kebab `id` derived from `text` only
-when absent. Derivation/normalization lives at the API boundary; the DB stays a
-faithful store.
+`{ id, text, check_cmd? }` with a **stable** kebab `id` derived from `text` when
+absent. Derivation/validation lives at the API boundary; the DB stays a faithful
+store.
 
 **Tech Stack:** Go (hubd: sqlite + net/http), React 18 + TS (web: Vite, Tailwind,
 TanStack Query, vitest + Testing Library).
 
 ## Global Constraints
 
-- **Gate command (must be green before EVERY commit):**
-  - Go: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/...`
-  - Web: `cd web && npm run typecheck && npm run test:run`
+- **FULL GATE — must be green before EVERY commit** (both stacks; run bare so a
+  failure exits non-zero — do NOT pipe through `tail` on the pass check):
+
+  ```bash
+  GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/... && ( cd web && npm run typecheck && npm run test:run )
+  ```
+
+  (`GOCACHE=/tmp/agentmon-go-cache` is only needed if the default cache is
+  read-only; harmless otherwise.)
 - **Commits:** conventional prefixes (`feat(db):`, `feat(api):`, `feat(web):`).
   **Never** add a `Co-Authored-By:` / AI-attribution trailer.
 - **`web/src/lib/contracts.ts` hand-mirrors the Go `shared`/DTO types** — a new
-  field must traverse DB → API → contract → UI.
+  field must traverse DB → API → contract → UI, and match the Go json emission
+  exactly (a Go field with no `omitempty` is a **required** TS field).
 - **Scope:** storage + settings UI only. The field is **inert** — no gate, verdict,
   or runner wiring. A reviewer must be able to confirm nothing reads it.
 - **Requirement shape is fixed:** `{ id: string; text: string; check_cmd?: string }`.
   `id` is a lowercase-kebab slug, **stable**: derive from `text` when the author
-  supplies none, but never re-derive when `text` is later edited (it is the join
-  key the epic-02 gate/verdict match on).
+  supplies none; when supplied it is normalized to kebab but never re-derived from
+  edited `text` (it is the join key the epic-02 gate/verdict match on).
 - **DTO json tags are snake_case** (`requirements`, and within each record
   `id`/`text`/`check_cmd`) — this is the API DTO, distinct from the Verdict struct's
   CAPITALIZED-JSON caveat (that is epic-02, not here).
@@ -43,17 +50,18 @@ Constraints & decisions) and verified against the current code:
   `marshalStrings`/`unmarshalStrings`) and migrations `0007_require_ci.sql`,
   `0008_pinned.sql`.
 - API DTO/handlers from `hubd/internal/api/orchestrator.go` (`projectDTO`,
-  `projectOut`, create + PATCH handlers).
+  `projectOut`, create + PATCH handlers; existing input validation like
+  provider/max_parallel is the model for requirement validation).
 - Contract + UI from `web/src/lib/contracts.ts`,
   `web/src/components/board/ProjectForm.tsx`.
 
 | Acceptance criterion | Task |
 |---|---|
-| Migration `0009` adds `requirements` (`NOT NULL DEFAULT '[]'`), preserves rows | Task 1 |
+| Migration `0009` adds `requirements` (`NOT NULL DEFAULT '[]'`), preserves rows on upgrade | Task 1 |
 | `Requirements` round-trips CreateProject/GetProject/ListProjects/UpdateProject; `projects_test` | Task 1 |
 | `POST /projects` + PATCH accept/return `requirements`; DTO carries it; `orchestrator_test` | Task 2 |
-| Stable `id`: derive from `text` when absent, preserve on edit | Task 2 |
-| `contracts.ts` mirrors the field + `Requirement` shape; typecheck green | Task 3 |
+| Stable `id`: derive from `text` when absent, keep stable on text edits | Task 2 |
+| `contracts.ts` mirrors the field + `Requirement` shape; typecheck + contract-mirror test green | Task 3 |
 | `ProjectForm.tsx` add/edit/remove rows, persists via PATCH, renders on load; component test | Task 4 |
 | Full gate green | Every task |
 
@@ -61,20 +69,43 @@ Constraints & decisions) and verified against the current code:
 
 - **`Requirement` lives in `hubd/internal/db` with json tags.** The same struct is
   json-marshaled both into the `requirements` TEXT column and (embedded in the DTO)
-  onto the wire, so one json-tagged struct is the single source of truth for both
-  shapes. `check_cmd` uses `omitempty` to match the optional `check_cmd?`.
-- **Normalization is an API-layer concern.** `slugify` + `normalizeRequirements`
-  derive stable ids, trim, and drop rows whose resolved id is empty. The DB stores
-  whatever it is handed (faithful round-trip); only request handlers normalize.
-- **`ProjectDTO.requirements` is OPTIONAL (`requirements?`) in the TS contract**, not
-  `Requirement[] | null` like `required_reviews`. Rationale: (1) during the hub
-  rollout window an older API response legitimately lacks the field, so
-  possibly-absent is the *more* truthful client type; (2) it avoids churning ~11
-  unrelated board-test `ProjectDTO` fixtures; (3) `counts?` already sets the
-  optional-field precedent. The form reads `init?.requirements ?? []`, handling both.
-- **Duplicate ids are NOT de-duplicated here.** The field is inert this epic;
-  de-duplication belongs with the gate that consumes ids (epic-02). Documented in
-  `normalizeRequirements`.
+  onto the wire, so one json-tagged struct is the single source of truth. `check_cmd`
+  uses `omitempty` to match the optional `check_cmd?`.
+- **Validation is an API-layer concern.** `slugify` + `normalizeRequirements` derive
+  stable ids, trim, drop rows whose resolved id is empty, and **reject duplicate
+  resolved ids (→ 400)**. The DB stores whatever it is handed (faithful round-trip);
+  only request handlers normalize/validate. Rationale for rejecting duplicates: the
+  issue frames requirements as the *fail-closed source of truth* whose `id` is the
+  join key the epic-02 gate matches on — two rows resolving to one id would make a
+  single verdict entry ambiguous, and that cannot be repaired downstream. Fail closed
+  at authoring time, mirroring the handler's existing provider/max_parallel 400s.
+- **Supplied ids are normalized to kebab, not preserved verbatim.** The id must be
+  both a valid lowercase-kebab slug and stable across text edits; `slugify` is
+  idempotent on an already-derived slug, so `slugify(suppliedID)` keeps UI-authored
+  ids unchanged while forcing a direct API caller's `"WCAG 2.2"` to `"wcag-2-2"`. It
+  is derived from the id (or text when absent), never from *edited* text.
+- **`ProjectDTO.requirements` is REQUIRED (`Requirement[]`), not optional.** The Go
+  DTO field has no `omitempty`, so the API always emits it (as `[]` when empty), and
+  the web bundle is embedded in and served by the same hub binary (no version skew).
+  The truthful mirror is required; `counts?` is not a precedent (its Go field *does*
+  use `omitempty`). This forces ~10 board-test `ProjectDTO` fixtures to gain
+  `requirements: []` (Task 3).
+
+---
+
+## Setup (before Task 1)
+
+- [ ] **Step 1: Install web dependencies** (this worktree has no `node_modules`; the
+  web gate needs them)
+
+Run: `cd web && npm ci`
+Expected: completes with exit 0 (`vitest`/`tsc` now resolve). Audit warnings are fine.
+
+- [ ] **Step 2: Confirm the baseline FULL GATE is green** (so later failures are
+  attributable to your changes)
+
+Run the FULL GATE (Global Constraints).
+Expected: all Go packages `ok`; web typecheck clean; all web tests pass.
 
 ---
 
@@ -102,6 +133,9 @@ ALTER TABLE projects ADD COLUMN requirements TEXT NOT NULL DEFAULT '[]';
 ```
 
 - [ ] **Step 2: Write the failing tests** (append to `hubd/internal/db/projects_test.go`)
+
+Also add `"database/sql"` and `"path/filepath"` to the existing import block (needed
+by the upgrade test).
 
 ```go
 func TestProjectRequirementsRoundTrip(t *testing.T) {
@@ -144,39 +178,64 @@ func TestProjectRequirementsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestProjectRequirementsColumnDefault(t *testing.T) {
+func TestProjectRequirementsDefaultEmpty(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
 	enrollTestServer(t, d, "aigallery")
-
-	// (1) CreateProject with no requirements → stored + read back empty, never NULL.
+	// A project created without requirements stores + reads back as empty, never NULL.
 	if err := d.CreateProject(ctx, testProject("aigallery")); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := d.GetProject(ctx, "p1"); len(got.Requirements) != 0 {
-		t.Fatalf("absent requirements must be empty via CreateProject: %+v", got.Requirements)
+		t.Fatalf("absent requirements must be empty: %+v", got.Requirements)
 	}
+}
 
-	// (2) A row written before 0009 (raw insert omitting the column) must be
-	// backfilled by the NOT NULL DEFAULT '[]' — GetProject succeeds, empty.
-	if _, err := d.sql.ExecContext(ctx,
-		`INSERT INTO projects(id, name, repo, server_id, target, workdir, base_branch, provider, required_reviews, max_parallel, paused, require_ci, created_at, updated_at)
-		 VALUES('legacy','legacy','o/legacy','aigallery','','/w','main','claude','[]',1,0,0, datetime('now'), datetime('now'))`); err != nil {
+// The AC requires that applying 0009 to a DB populated at the PRIOR schema
+// preserves existing rows. openTestDB/Open apply every migration up front, so we
+// build the projects table at the pre-0009 (0008) shape, populate it, then apply
+// the REAL 0009 SQL and confirm the pre-existing row survives, backfilled with '[]'.
+func TestRequirementsMigrationPreservesExistingRows(t *testing.T) {
+	sqldb, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "u.sqlite")+"?_pragma=foreign_keys(1)")
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := d.GetProject(ctx, "legacy")
-	if err != nil {
-		t.Fatalf("legacy row must survive 0009: %v", err)
+	defer sqldb.Close()
+	ctx := context.Background()
+	// projects at the pre-0009 shape (0005 + 0007 require_ci + 0008 pinned).
+	if _, err := sqldb.ExecContext(ctx, `CREATE TABLE projects (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, repo TEXT NOT NULL, server_id TEXT NOT NULL,
+		target TEXT NOT NULL DEFAULT '', workdir TEXT NOT NULL, base_branch TEXT NOT NULL DEFAULT 'main',
+		provider TEXT NOT NULL DEFAULT 'claude', required_reviews TEXT NOT NULL DEFAULT '[]',
+		max_parallel INTEGER NOT NULL DEFAULT 1, paused INTEGER NOT NULL DEFAULT 0,
+		require_ci INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
 	}
-	if len(got.Requirements) != 0 {
-		t.Fatalf("legacy row requirements must default empty: %+v", got.Requirements)
+	if _, err := sqldb.ExecContext(ctx, `INSERT INTO projects(id,name,repo,server_id,workdir,created_at,updated_at)
+		VALUES('old','old','o/old','h1','/w', datetime('now'), datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	body, err := migrationFS.ReadFile("migrations/0009_requirements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqldb.ExecContext(ctx, string(body)); err != nil {
+		t.Fatalf("0009 must apply to a populated table: %v", err)
+	}
+	var reqs string
+	if err := sqldb.QueryRowContext(ctx, `SELECT requirements FROM projects WHERE id='old'`).Scan(&reqs); err != nil {
+		t.Fatalf("pre-existing row must survive 0009: %v", err)
+	}
+	if reqs != "[]" {
+		t.Fatalf("backfilled requirements = %q, want []", reqs)
 	}
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they FAIL (compile error)**
+- [ ] **Step 3: Run the db tests to verify they FAIL (compile error)**
 
-Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/db/ 2>&1 | tail -5`
+Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/db/`
 Expected: build FAILS — `p.Requirements undefined` / `undefined: Requirement`.
 
 - [ ] **Step 4: Add the `Requirement` type + `Project.Requirements` field**
@@ -277,15 +336,14 @@ func unmarshalRequirements(s string) []Requirement {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they PASS**
+- [ ] **Step 6: Run the db tests to verify they PASS (bare)**
 
-Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/db/ 2>&1 | tail -5`
+Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/db/`
 Expected: `ok  	agentmon/hubd/internal/db`.
 
-- [ ] **Step 7: Run the full Go gate**
+- [ ] **Step 7: Run the FULL GATE**
 
-Run: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/...`
-Expected: all `ok` (no `FAIL`).
+Run the FULL GATE (Global Constraints). Expected: all green.
 
 - [ ] **Step 8: Commit**
 
@@ -296,7 +354,7 @@ git commit -m "feat(db): project requirements column + round-trip (epic #1)"
 
 ---
 
-## Task 2: API layer — DTO, create/PATCH wiring, stable-id normalization
+## Task 2: API layer — DTO, create/PATCH wiring, stable-id + duplicate validation
 
 **Files:**
 - Create: `hubd/internal/api/requirements.go`
@@ -306,9 +364,10 @@ git commit -m "feat(db): project requirements column + round-trip (epic #1)"
 
 **Interfaces:**
 - Consumes (from Task 1): `db.Requirement`, `db.Project.Requirements`.
-- Produces: `slugify(string) string`, `normalizeRequirements([]db.Requirement) []db.Requirement`;
-  `projectDTO.Requirements []db.Requirement \`json:"requirements"\``; create + PATCH
-  accept/return `requirements`.
+- Produces: `slugify(string) string`,
+  `normalizeRequirements([]db.Requirement) ([]db.Requirement, error)` (error on
+  duplicate resolved id); `projectDTO.Requirements []db.Requirement \`json:"requirements"\``;
+  create + PATCH accept/return `requirements`.
 
 - [ ] **Step 1: Write the failing unit tests** (`hubd/internal/api/requirements_test.go`)
 
@@ -338,16 +397,19 @@ func TestSlugify(t *testing.T) {
 }
 
 func TestNormalizeRequirements(t *testing.T) {
-	got := normalizeRequirements([]db.Requirement{
+	got, err := normalizeRequirements([]db.Requirement{
 		{Text: "Always use RLS"},                          // id derived from text
-		{ID: "wcag", Text: "WCAG 2.2 renamed to 2.3"},     // provided id preserved despite text edit
+		{ID: "WCAG 2.2", Text: "WCAG 2.2 renamed to 2.3"}, // supplied id normalized to kebab, stable vs text
 		{Text: "   "},                                     // blank text dropped
 		{Text: "!!!"},                                     // unsluggable text dropped
 		{Text: "  No PII in logs  ", CheckCmd: "  s.sh "}, // trimmed
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	want := []db.Requirement{
 		{ID: "always-use-rls", Text: "Always use RLS"},
-		{ID: "wcag", Text: "WCAG 2.2 renamed to 2.3"},
+		{ID: "wcag-2-2", Text: "WCAG 2.2 renamed to 2.3"},
 		{ID: "no-pii-in-logs", Text: "No PII in logs", CheckCmd: "s.sh"},
 	}
 	if len(got) != len(want) {
@@ -359,11 +421,21 @@ func TestNormalizeRequirements(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeRequirementsRejectsDuplicateIDs(t *testing.T) {
+	// Two rows resolving to the same id would make the epic-02 join ambiguous.
+	if _, err := normalizeRequirements([]db.Requirement{
+		{Text: "Always use RLS"},
+		{ID: "always-use-rls", Text: "A different standard"},
+	}); err == nil {
+		t.Fatal("duplicate resolved id must error")
+	}
+}
 ```
 
 - [ ] **Step 2: Run to verify FAIL (compile error)**
 
-Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/ 2>&1 | tail -5`
+Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/`
 Expected: build FAILS — `undefined: slugify` / `undefined: normalizeRequirements`.
 
 - [ ] **Step 3: Implement `slugify` + `normalizeRequirements`** (`hubd/internal/api/requirements.go`)
@@ -372,6 +444,7 @@ Expected: build FAILS — `undefined: slugify` / `undefined: normalizeRequiremen
 package api
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -381,29 +454,29 @@ import (
 // nonSlugRe collapses every run of non-[a-z0-9] characters to a single dash.
 var nonSlugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
-// slugify derives a stable lowercase-kebab id from a requirement's text:
-// lowercase, non-alphanumeric runs → single dash, trimmed of leading/trailing
-// dashes. "Always use RLS" → "always-use-rls".
+// slugify derives a stable lowercase-kebab id: lowercase, non-alphanumeric runs →
+// single dash, trimmed of leading/trailing dashes. "Always use RLS" →
+// "always-use-rls". It is idempotent on an already-derived slug.
 func slugify(s string) string {
 	s = nonSlugRe.ReplaceAllString(strings.ToLower(s), "-")
 	return strings.Trim(s, "-")
 }
 
-// normalizeRequirements shapes author input into the stored form:
+// normalizeRequirements shapes + validates author input into the stored form:
 //   - trims id/text/check_cmd,
-//   - drops any row with blank text (text is the review lens — a requirement
-//     without it is meaningless),
-//   - derives id from text ONLY when the author supplied none; a provided id is
-//     preserved verbatim so it stays stable across later text edits (the id is
-//     the join key the epic-02 gate/verdict match on — re-deriving it would
-//     silently break enforcement),
-//   - drops any row whose resolved id is still empty (text with no slug-able
-//     characters) so every stored requirement has a usable join key.
-//
-// Duplicate ids are intentionally NOT collapsed: this epic stores the field
-// inert, and de-duplication belongs with the gate that consumes ids (epic-02).
-func normalizeRequirements(in []db.Requirement) []db.Requirement {
+//   - drops any row with blank text (text is the review lens — meaningless without it),
+//   - resolves the id by slugifying the supplied id, or the text when none was
+//     supplied. Slugifying the supplied id enforces the lowercase-kebab invariant
+//     while keeping it STABLE across later text edits (it is derived from the id,
+//     never from edited text; slugify is idempotent on an existing slug),
+//   - drops any row whose resolved id is empty (text with no slug-able characters),
+//   - rejects duplicate resolved ids: the id is the join key the epic-02 gate
+//     matches on, so two rows sharing one id would make a single verdict entry
+//     ambiguous. Fail closed here — mirroring the handler's provider/max_parallel
+//     400s — rather than store an unenforceable set.
+func normalizeRequirements(in []db.Requirement) ([]db.Requirement, error) {
 	out := make([]db.Requirement, 0, len(in))
+	seen := make(map[string]bool, len(in))
 	for _, r := range in {
 		r.ID = strings.TrimSpace(r.ID)
 		r.Text = strings.TrimSpace(r.Text)
@@ -411,24 +484,100 @@ func normalizeRequirements(in []db.Requirement) []db.Requirement {
 		if r.Text == "" {
 			continue
 		}
-		if r.ID == "" {
-			r.ID = slugify(r.Text)
+		base := r.ID
+		if base == "" {
+			base = r.Text
 		}
+		r.ID = slugify(base)
 		if r.ID == "" {
 			continue
 		}
+		if seen[r.ID] {
+			return nil, fmt.Errorf("duplicate requirement id %q", r.ID)
+		}
+		seen[r.ID] = true
 		out = append(out, r)
 	}
-	return out
+	return out, nil
 }
 ```
 
-- [ ] **Step 4: Run the unit tests to verify PASS**
+- [ ] **Step 4: Run the unit tests to verify PASS (bare)**
 
-Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/ -run 'TestSlugify|TestNormalizeRequirements' -v 2>&1 | tail -12`
-Expected: both PASS.
+Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/ -run 'TestSlugify|TestNormalizeRequirements'`
+Expected: `ok` (all three pass).
 
-- [ ] **Step 5: Wire `requirements` into the DTO + handlers** (`hubd/internal/api/orchestrator.go`)
+- [ ] **Step 5: Write the failing API round-trip test** (append to `hubd/internal/api/orchestrator_test.go`)
+
+This references `projectDTO.Requirements`, which does not exist yet → it will not
+compile (red) until Step 7.
+
+```go
+func TestProjectRequirementsAPI(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	d := Deps{DB: database, Orch: &fakeOrch{}, Reg: registry.New(database), Audit: audit.NewRecorder(&captureSink{})}
+
+	// CREATE: supplied id preserved; missing id derived from text; blank row dropped.
+	body := `{"name":"proj","repo":"o/r","server_id":"h1","workdir":"/w",` +
+		`"requirements":[{"text":"Always use RLS"},{"id":"wcag","text":"WCAG 2.2 AA"},{"text":"  "}]}`
+	r, w := orchReq("POST", "/api/v1/orchestrator/projects", body)
+	d.OrchestratorProjectsHandler()(w, r)
+	if w.Code != 201 {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	var created projectDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Requirements) != 2 ||
+		created.Requirements[0] != (db.Requirement{ID: "always-use-rls", Text: "Always use RLS"}) ||
+		created.Requirements[1] != (db.Requirement{ID: "wcag", Text: "WCAG 2.2 AA"}) {
+		t.Fatalf("create response requirements = %+v", created.Requirements)
+	}
+	got, _ := database.GetProject(ctx, created.ID)
+	if len(got.Requirements) != 2 || got.Requirements[0].ID != "always-use-rls" {
+		t.Fatalf("persisted requirements = %+v", got.Requirements)
+	}
+
+	// PATCH must accept AND RETURN requirements, keeping the id stable across a
+	// text edit.
+	patch := `{"requirements":[{"id":"always-use-rls","text":"Always use row-level security"}]}`
+	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/"+created.ID, patch)
+	r.SetPathValue("id", created.ID)
+	d.OrchestratorProjectPatchHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("patch = %d %s", w.Code, w.Body.String())
+	}
+	var patched projectDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &patched); err != nil {
+		t.Fatal(err)
+	}
+	if len(patched.Requirements) != 1 ||
+		patched.Requirements[0] != (db.Requirement{ID: "always-use-rls", Text: "Always use row-level security"}) {
+		t.Fatalf("patch response requirements = %+v", patched.Requirements)
+	}
+	if got, _ = database.GetProject(ctx, created.ID); got.Requirements[0].Text != "Always use row-level security" {
+		t.Fatalf("patch must persist the edited text: %+v", got.Requirements)
+	}
+
+	// Duplicate resolved ids are rejected at create time (fail closed).
+	dup := `{"name":"dup","repo":"o/dup","server_id":"h1","workdir":"/w",` +
+		`"requirements":[{"text":"Always use RLS"},{"id":"always-use-rls","text":"Other"}]}`
+	r, w = orchReq("POST", "/api/v1/orchestrator/projects", dup)
+	d.OrchestratorProjectsHandler()(w, r)
+	if w.Code != 400 {
+		t.Fatalf("duplicate requirement ids must 400, got %d %s", w.Code, w.Body.String())
+	}
+}
+```
+
+- [ ] **Step 6: Run to verify FAIL (compile error)**
+
+Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/`
+Expected: build FAILS — `created.Requirements undefined (type projectDTO ...)`.
+
+- [ ] **Step 7: Wire `requirements` into the DTO + handlers** (`hubd/internal/api/orchestrator.go`)
 
 Add the DTO field to `projectDTO`, immediately after `Pinned`:
 
@@ -456,11 +605,28 @@ In the **create** handler's `in` struct, add `Requirements` after `RequiredRevie
 			RequireCI       bool             `json:"require_ci"`
 ```
 
-In the same handler, set `Requirements` (normalized) when building `pr`:
+In the same handler, normalize + validate, then set `Requirements` when building
+`pr`. Insert this block immediately BEFORE the `pr := db.Project{...}` line:
 
 ```go
-		pr := db.Project{ID: uuid.NewString(), Name: in.Name, Repo: in.Repo, ServerID: in.ServerID, Target: in.Target, Workdir: in.Workdir, BaseBranch: in.BaseBranch, Provider: in.Provider, RequiredReviews: in.RequiredReviews, Requirements: normalizeRequirements(in.Requirements), MaxParallel: in.MaxParallel, RequireCI: in.RequireCI}
+		reqs, err := normalizeRequirements(in.Requirements)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 ```
+
+Then reference `reqs` in the struct literal (add `Requirements: reqs,`):
+
+```go
+		pr := db.Project{ID: uuid.NewString(), Name: in.Name, Repo: in.Repo, ServerID: in.ServerID, Target: in.Target, Workdir: in.Workdir, BaseBranch: in.BaseBranch, Provider: in.Provider, RequiredReviews: in.RequiredReviews, Requirements: reqs, MaxParallel: in.MaxParallel, RequireCI: in.RequireCI}
+```
+
+Note: the create handler already declares `err` earlier via `if err := ...Decode(...)`
+inside an `if` scope; the `reqs, err :=` above is the first `err` in the function
+body scope, so `:=` is correct. If the compiler reports `err` redeclared, change it
+to `var err error` + `reqs, err = ...` — but as written the surrounding `err`s are
+all block-scoped inside `if` statements, so `:=` compiles.
 
 In the **PATCH** handler's `in` struct, add the pointer field after
 `RequiredReviews`:
@@ -470,75 +636,30 @@ In the **PATCH** handler's `in` struct, add the pointer field after
 			Requirements    *[]db.Requirement `json:"requirements"`
 ```
 
-And apply it beside the `RequiredReviews` block (absent = unchanged):
+And apply it beside the `RequiredReviews` block (absent = unchanged). Place after
+the `if in.RequiredReviews != nil { ... }` block:
 
 ```go
-		if in.RequiredReviews != nil {
-			pr.RequiredReviews = *in.RequiredReviews
-		}
 		if in.Requirements != nil {
-			pr.Requirements = normalizeRequirements(*in.Requirements)
+			reqs, err := normalizeRequirements(*in.Requirements)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			pr.Requirements = reqs
 		}
 ```
 
-- [ ] **Step 6: Write the failing API round-trip test** (append to `hubd/internal/api/orchestrator_test.go`)
+- [ ] **Step 8: Run the API tests to verify PASS (bare)**
 
-```go
-func TestProjectRequirementsAPI(t *testing.T) {
-	database := orchDB(t)
-	ctx := context.Background()
-	d := Deps{DB: database, Orch: &fakeOrch{}, Reg: registry.New(database), Audit: audit.NewRecorder(&captureSink{})}
-
-	// CREATE: supplied id preserved; missing id derived from text; blank row dropped.
-	body := `{"name":"proj","repo":"o/r","server_id":"h1","workdir":"/w",` +
-		`"requirements":[{"text":"Always use RLS"},{"id":"wcag","text":"WCAG 2.2 AA"},{"text":"  "}]}`
-	r, w := orchReq("POST", "/api/v1/orchestrator/projects", body)
-	d.OrchestratorProjectsHandler()(w, r)
-	if w.Code != 201 {
-		t.Fatalf("create = %d %s", w.Code, w.Body.String())
-	}
-	var created projectDTO
-	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
-		t.Fatal(err)
-	}
-	if len(created.Requirements) != 2 ||
-		created.Requirements[0] != (db.Requirement{ID: "always-use-rls", Text: "Always use RLS"}) ||
-		created.Requirements[1] != (db.Requirement{ID: "wcag", Text: "WCAG 2.2 AA"}) {
-		t.Fatalf("create requirements = %+v", created.Requirements)
-	}
-	// Persisted for the board/list surfaces.
-	got, _ := database.GetProject(ctx, created.ID)
-	if len(got.Requirements) != 2 || got.Requirements[0].ID != "always-use-rls" {
-		t.Fatalf("persisted requirements = %+v", got.Requirements)
-	}
-
-	// PATCH: editing a requirement's text must NOT change its id (stability).
-	patch := `{"requirements":[{"id":"always-use-rls","text":"Always use row-level security"}]}`
-	r, w = orchReq("PATCH", "/api/v1/orchestrator/projects/"+created.ID, patch)
-	r.SetPathValue("id", created.ID)
-	d.OrchestratorProjectPatchHandler()(w, r)
-	if w.Code != 200 {
-		t.Fatalf("patch = %d %s", w.Code, w.Body.String())
-	}
-	got, _ = database.GetProject(ctx, created.ID)
-	if len(got.Requirements) != 1 || got.Requirements[0].ID != "always-use-rls" ||
-		got.Requirements[0].Text != "Always use row-level security" {
-		t.Fatalf("patch must keep id stable while updating text: %+v", got.Requirements)
-	}
-}
-```
-
-- [ ] **Step 7: Run the API tests to verify PASS**
-
-Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/ 2>&1 | tail -5`
+Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/api/`
 Expected: `ok  	agentmon/hubd/internal/api`.
 
-- [ ] **Step 8: Run the full Go gate**
+- [ ] **Step 9: Run the FULL GATE**
 
-Run: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/...`
-Expected: all `ok`.
+Run the FULL GATE (Global Constraints). Expected: all green.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add hubd/internal/api/requirements.go hubd/internal/api/requirements_test.go hubd/internal/api/orchestrator.go hubd/internal/api/orchestrator_test.go
@@ -547,32 +668,37 @@ git commit -m "feat(api): accept + return project requirements, derive stable id
 
 ---
 
-## CHECKPOINT 1 — backend seam (data/schema + API + slug logic)
+## CHECKPOINT 1 — backend seam (data/schema + API + id validation)
 
-The highest-judgment code (stable-id derivation) and the whole DB → API data flow
-land here. Reviewed before any frontend is built.
+- [ ] **CHECKPOINT 1 — reviewed to <sha>**  *(runner ticks this line with the reviewed SHA)*
+
+The highest-judgment code (stable-id derivation, duplicate rejection) and the whole
+DB → API data flow land here — reviewed before any frontend is built.
 
 - [ ] **Step 1:** `agentmon report --epic 1 --stage reviewing`
 - [ ] **Step 2:** segment base = `git merge-base HEAD origin/main`.
 - [ ] **Step 3:** run `/multi-review <segment-base>..HEAD --codex` in this session.
 - [ ] **Step 4:** route outcomes — FIX already applied+committed by the review
-  (verify suite green); DISCUSS → escalate with the item as the note; NITPICKs →
-  record in the report file only.
-- [ ] **Step 5:** write the consolidated report to `docs/reviews/epic-1-cp1.md`,
-  tick this checkpoint appending the reviewed SHA, commit both:
-  `docs: epic #1 checkpoint 1 review`.
+  (verify the FULL GATE is still green); DISCUSS → escalate with the item as the
+  note; NITPICKs → record in the report file only.
+- [ ] **Step 5:** write the consolidated report to `docs/reviews/epic-1-cp1.md`, tick
+  the `CHECKPOINT 1 — reviewed to <sha>` line above with the reviewed SHA, commit
+  both: `docs: epic #1 checkpoint 1 review`.
 - [ ] **Step 6:** `agentmon report --epic 1 --stage implementing` and continue.
 
 ---
 
-## Task 3: Web contract mirror
+## Task 3: Web contract mirror + fixture updates
 
 **Files:**
 - Modify: `web/src/lib/contracts.ts`
+- Create: `web/src/lib/contracts.test.ts`
+- Modify (add `requirements: []` to the typed `ProjectDTO` fixtures):
+  `web/src/components/board/{ProjectSwitcher,EpicDrawer,PlanPanel,BoardView,EpicCard,ProjectHeader,PinnedProjects,DeleteProject,TimelineView,TerminalPreview}.test.tsx`
 
 **Interfaces:**
 - Produces (consumed by Task 4): `Requirement` interface;
-  `ProjectDTO.requirements?`; `ProjectCreateRequest.requirements?`;
+  `ProjectDTO.requirements: Requirement[]`; `ProjectCreateRequest.requirements?`;
   `ProjectPatchRequest.requirements?`.
 
 - [ ] **Step 1: Add the `Requirement` interface + wire it into the project types**
@@ -586,20 +712,20 @@ In `web/src/lib/contracts.ts`, add the interface just above `ProjectDTO`:
 export interface Requirement { id: string; text: string; check_cmd?: string; }
 ```
 
-Add `requirements?` to `ProjectDTO` (optional — see design note; the API always
-sends it, but an older hub in the rollout window may not):
+Add `requirements` to `ProjectDTO` — REQUIRED, because the Go DTO field has no
+`omitempty` and always emits `[]`:
 
 ```ts
 export interface ProjectDTO {
   id: string; name: string; repo: string; server_id: string; target: string;
   workdir: string; base_branch: string; provider: string;
   required_reviews: string[] | null; max_parallel: number; paused: boolean;
-  require_ci: boolean; pinned: boolean; requirements?: Requirement[];
+  require_ci: boolean; pinned: boolean; requirements: Requirement[];
   counts?: Record<string, number>;
 }
 ```
 
-Add `requirements?` to both request types:
+Add `requirements?` to both request types (optional — the client need not send it):
 
 ```ts
 export interface ProjectCreateRequest {
@@ -613,16 +739,69 @@ export interface ProjectPatchRequest {
 }
 ```
 
-- [ ] **Step 2: Typecheck**
+- [ ] **Step 2: Write the contract-mirror test** (`web/src/lib/contracts.test.ts`)
+
+```ts
+import { describe, expect, it } from "vitest";
+import type { ProjectCreateRequest, ProjectDTO, ProjectPatchRequest, Requirement } from "@/lib/contracts";
+
+// Contract mirror: the web Requirement / ProjectDTO shapes must track Go's
+// db.Requirement / project DTO (CLAUDE.md hand-mirror rule). These are
+// compile-time-checked type assignments plus a runtime shape check; a drift in
+// field names or optionality breaks `npm run typecheck` (and this test).
+describe("Requirement contract mirror", () => {
+  it("matches the Go db.Requirement json shape { id, text, check_cmd? }", () => {
+    const full: Requirement = { id: "rls", text: "Always use RLS", check_cmd: "s.sh" };
+    const minimal: Requirement = { id: "wcag", text: "WCAG 2.2 AA" }; // check_cmd optional
+    expect(Object.keys(full).sort()).toEqual(["check_cmd", "id", "text"]);
+    expect(minimal.check_cmd).toBeUndefined();
+  });
+
+  it("is carried (required) by the project DTO and (optional) by both request bodies", () => {
+    const reqs: Requirement[] = [{ id: "pii", text: "No PII in logs" }];
+    const dto: Pick<ProjectDTO, "requirements"> = { requirements: reqs };
+    const create: ProjectCreateRequest = { name: "n", repo: "o/r", server_id: "h", workdir: "/w", requirements: reqs };
+    const patch: ProjectPatchRequest = { requirements: reqs };
+    expect(dto.requirements).toBe(reqs);
+    expect(create.requirements).toBe(reqs);
+    expect(patch.requirements).toBe(reqs);
+  });
+});
+```
+
+- [ ] **Step 3: Run typecheck to reveal the fixtures that now need `requirements`**
 
 Run: `cd web && npm run typecheck`
-Expected: no errors.
+Expected: FAILS — each typed `const project: ProjectDTO = { ... }` fixture errors
+with "Property 'requirements' is missing". (This is the compile-time proof that the
+field is required.)
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Add `requirements: []` to each typed `ProjectDTO` fixture**
+
+For every file listed under **Files** above, add `requirements: [],` inside the
+`ProjectDTO` object literal / factory (alongside the other fields such as
+`pinned`). Example for `PinnedProjects.test.tsx` (a factory):
+
+```ts
+const p = (id: string, name: string, pinned: boolean): ProjectDTO => ({
+  id, name, repo: "o/r", server_id: "h1", target: "", workdir: "/w",
+  base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1,
+  paused: false, require_ci: false, pinned, requirements: [],
+});
+```
+
+Re-run `cd web && npm run typecheck` and repeat until it is clean — the errors are a
+complete checklist of the fixtures to touch (do not guess; let typecheck drive it).
+
+- [ ] **Step 5: Run the FULL GATE**
+
+Run the FULL GATE (Global Constraints). Expected: all green.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add web/src/lib/contracts.ts
-git commit -m "feat(web): mirror Requirement contract (epic #1)"
+git add web/src/lib/contracts.ts web/src/lib/contracts.test.ts web/src/components/board/*.test.tsx
+git commit -m "feat(web): mirror Requirement contract + fixtures (epic #1)"
 ```
 
 ---
@@ -637,10 +816,9 @@ git commit -m "feat(web): mirror Requirement contract (epic #1)"
 - Consumes (from Task 3): `Requirement`, `ProjectDTO.requirements`,
   `ProjectCreateRequest.requirements`, `ProjectPatchRequest.requirements`.
 
-- [ ] **Step 1: Write the failing component tests** (append to `ProjectForm.test.tsx`, and extend the mocks)
+- [ ] **Step 1: Extend the mocks + add the failing component tests** (`ProjectForm.test.tsx`)
 
-First, extend the hoisted mocks + the `api-client` mock so `patchProject` is
-stubbed. Change the top of the file:
+Replace the hoisted-mocks + api-client mock lines at the top:
 
 Replace:
 ```ts
@@ -658,13 +836,14 @@ Add `ProjectDTO` to the type import:
 import type { ProjectDTO, ServerSummary } from "@/lib/contracts";
 ```
 
-Append this describe block:
+Append this describe block (note the edit fixture includes `pinned: false` — it is a
+typed `ProjectDTO`):
 ```tsx
 describe("ProjectForm requirements", () => {
   beforeEach(() => { h.createProject.mockReset(); h.patchProject.mockReset(); });
 
   it("sends added requirement rows on create (id blank — server derives it)", async () => {
-    h.createProject.mockResolvedValue({ id: "p1", name: "school", repo: "darthnorse/school", server_id: "h1", target: "", workdir: "/srv/school", base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: true, requirements: [] });
+    h.createProject.mockResolvedValue({ id: "p1", name: "school", repo: "darthnorse/school", server_id: "h1", target: "", workdir: "/srv/school", base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: true, pinned: false, requirements: [] });
     render(<ProjectForm mode="create" servers={servers} onDone={() => {}} />);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "school" } });
     fireEvent.change(screen.getByLabelText("Repo"), { target: { value: "darthnorse/school" } });
@@ -680,7 +859,7 @@ describe("ProjectForm requirements", () => {
   });
 
   it("renders existing requirements in edit mode and removes a row, keeping ids", async () => {
-    const project: ProjectDTO = { id: "p1", name: "school", repo: "darthnorse/school", server_id: "h1", target: "", workdir: "/srv/school", base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: true, requirements: [{ id: "rls", text: "Always use RLS" }, { id: "wcag", text: "WCAG 2.2 AA" }] };
+    const project: ProjectDTO = { id: "p1", name: "school", repo: "darthnorse/school", server_id: "h1", target: "", workdir: "/srv/school", base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: true, pinned: false, requirements: [{ id: "rls", text: "Always use RLS" }, { id: "wcag", text: "WCAG 2.2 AA" }] };
     h.patchProject.mockResolvedValue(project);
     render(<ProjectForm mode="edit" project={project} onDone={() => {}} />);
     expect((screen.getByLabelText("Requirement 1 text") as HTMLInputElement).value).toBe("Always use RLS");
@@ -697,7 +876,7 @@ describe("ProjectForm requirements", () => {
 
 - [ ] **Step 2: Run to verify FAIL**
 
-Run: `cd web && npm run test:run -- ProjectForm 2>&1 | tail -20`
+Run: `cd web && npm run test:run -- ProjectForm`
 Expected: the two new tests FAIL (no "Add requirement" button / no requirement inputs).
 
 - [ ] **Step 3: Implement the requirements editor** (`web/src/components/board/ProjectForm.tsx`)
@@ -733,9 +912,8 @@ Include `requirements` in the edit body:
         };
 ```
 
-Render the editor between the `pf-reviews` field and the create-only
-`max_parallel` block (so it shows in BOTH modes, like Required reviews). Insert
-right after the `{field("pf-reviews", ...)}` line:
+Render the editor right after the `{field("pf-reviews", ...)}` line (so it shows in
+BOTH modes, like Required reviews):
 ```tsx
         <div className="space-y-1.5">
           <Label>Platform requirements</Label>
@@ -762,13 +940,12 @@ right after the `{field("pf-reviews", ...)}` line:
 
 - [ ] **Step 4: Run the component tests to verify PASS**
 
-Run: `cd web && npm run test:run -- ProjectForm 2>&1 | tail -20`
-Expected: all ProjectForm tests PASS.
+Run: `cd web && npm run test:run -- ProjectForm`
+Expected: all ProjectForm tests pass.
 
-- [ ] **Step 5: Run the full web gate**
+- [ ] **Step 5: Run the FULL GATE**
 
-Run: `cd web && npm run typecheck && npm run test:run`
-Expected: typecheck clean; all tests pass.
+Run the FULL GATE (Global Constraints). Expected: all green.
 
 - [ ] **Step 6: Commit**
 
@@ -783,14 +960,18 @@ git commit -m "feat(web): edit project requirements in settings form (epic #1)"
 
 After Task 4: rebase onto `origin/main`, run the final whole-branch
 `/multi-review <merge-base>..HEAD --codex` (covers the frontend seam + everything),
-write learnings back into `CLAUDE.md` if any, run the full gate one last time,
+write learnings back into `CLAUDE.md` if any, run the FULL GATE one last time,
 push, open the PR with the verdict block, report `pr_open`.
 
 ## Self-review notes
 
-- **Spec coverage:** every acceptance criterion maps to a task (table above).
-- **Placeholder scan:** no TBD/TODO; all code shown in full.
+- **Spec coverage:** every acceptance criterion maps to a task (table above),
+  including the true-upgrade migration test (Task 1) and the named contract-mirror
+  test (Task 3).
+- **Placeholder scan:** no TBD/TODO; all code shown in full; the one non-exact step
+  (Task 3 Step 4 fixture sweep) is explicitly driven by typecheck errors, not guessed.
 - **Type consistency:** `Requirement{ID,Text,CheckCmd}` (Go) ↔
-  `Requirement{id,text,check_cmd?}` (TS); `normalizeRequirements`/`slugify` names
-  match across Task 2 and its tests; `projectOut` positional literal updated in
-  lockstep with the `projectDTO` field (compile-checked).
+  `Requirement{id,text,check_cmd?}` (TS); `normalizeRequirements` returns
+  `([]db.Requirement, error)` consistently across Task 2 impl, unit tests, and both
+  handlers; `projectOut` positional literal updated in lockstep with the `projectDTO`
+  field (compile-checked).
