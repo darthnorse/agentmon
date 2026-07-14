@@ -180,7 +180,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   git commit -m "feat(runner): carry requirements into generated epics"
   ```
 
-- [ ] **CHECKPOINT 1 — review the generator carrier seam immediately after this
+- [x] **CHECKPOINT 1 — reviewed to 7757eef. Review the generator carrier seam immediately after this
   highest-judgment format decision.** Review from the merge-base through `HEAD`;
   validate that both providers create equivalent issue bodies, exact project fields
   survive verbatim, epic-specific requirements remain unstructured, and the strict
