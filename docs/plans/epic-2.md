@@ -62,7 +62,7 @@
 **Interfaces:**
 - Produces: `type VerdictRequirement struct { ID, Status, Via string }` (yaml tags `id`/`status`/`via`) and `Verdict.Requirements []VerdictRequirement` (yaml tag `requirements`). `ParseVerdict` now rejects out-of-domain requirement entries. Consumed by Task 2 (`unmetRequirements`, gate tests) and Task 3 (integration test).
 
-- [ ] **Step 1: Write the failing happy-path + malformed tests.** Append both to `hubd/internal/orchestrator/verdict_test.go`:
+- [x] **Step 1: Write the failing happy-path + malformed tests.** Append both to `hubd/internal/orchestrator/verdict_test.go`:
 
 ```go
 func TestParseVerdictRequirements(t *testing.T) {
@@ -101,12 +101,12 @@ func TestParseVerdictRejectsBadRequirements(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they FAIL (compile error — the field/type don't exist yet).**
+- [x] **Step 2: Run the tests to verify they FAIL (compile error — the field/type don't exist yet).**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/orchestrator/ -run 'TestParseVerdictRequirements|TestParseVerdictRejectsBadRequirements' 2>&1 | tail`
 Expected: FAIL — build error `undefined: VerdictRequirement` / `v.Requirements undefined`.
 
-- [ ] **Step 3: Add the type, field, and validation.** In `hubd/internal/orchestrator/verdict.go`, add the `VerdictRequirement` type immediately after the `VerdictTests` type (after line ~25):
+- [x] **Step 3: Add the type, field, and validation.** In `hubd/internal/orchestrator/verdict.go`, add the `VerdictRequirement` type immediately after the `VerdictTests` type (after line ~25):
 
 ```go
 // VerdictRequirement is the runner's self-reported result for one platform
@@ -172,12 +172,12 @@ Finally, in `ParseVerdict`, add the validation loop immediately AFTER the existi
 		}
 ```
 
-- [ ] **Step 4: gofmt + run the tests to verify they PASS.**
+- [x] **Step 4: gofmt + run the tests to verify they PASS.**
 
 Run: `gofmt -w hubd/internal/orchestrator/verdict.go && GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/orchestrator/ -run 'TestParseVerdictRequirements|TestParseVerdictRejectsBadRequirements' -v 2>&1 | tail -20`
 Expected: `TestParseVerdictRequirements` PASS and all four `TestParseVerdictRejectsBadRequirements` subtests PASS, then `ok`.
 
-- [ ] **Step 5: Full gate green (existing verdict tests must be untouched), then commit.**
+- [x] **Step 5: Full gate green (existing verdict tests must be untouched), then commit.**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/... 2>&1 | tail` → no `FAIL`.
 
@@ -198,7 +198,7 @@ git commit -m "feat(verdict): parse and validate per-requirement results block"
 - Consumes: `VerdictRequirement`, `Verdict.Requirements` (Task 1); `db.Requirement` (repo).
 - Produces: `GateInput.Requirements []db.Requirement`; `unmetRequirements(required []db.Requirement, reported []VerdictRequirement) []string`. Consumed by Task 3 (plumbing + integration test).
 
-- [ ] **Step 1: Write the failing test.** Append to `hubd/internal/orchestrator/gate_test.go` (and add the `db` import — see Step 4):
+- [x] **Step 1: Write the failing test.** Append to `hubd/internal/orchestrator/gate_test.go` (and add the `db` import — see Step 4):
 
 ```go
 func TestDecideRequirements(t *testing.T) {
@@ -247,12 +247,12 @@ func TestDecideRequirements(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it FAILS.**
+- [x] **Step 2: Run the test to verify it FAILS.**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/orchestrator/ -run TestDecideRequirements 2>&1 | tail`
 Expected: FAIL — build error `unknown field Requirements in struct literal` (and `db` undefined until the import is added in Step 4).
 
-- [ ] **Step 3: Add the `db` import, the `GateInput` field, the `Decide` check, and the helper.** In `hubd/internal/orchestrator/gate.go`:
+- [x] **Step 3: Add the `db` import, the `GateInput` field, the `Decide` check, and the helper.** In `hubd/internal/orchestrator/gate.go`:
 
 Replace the import block:
 
@@ -322,7 +322,7 @@ func unmetRequirements(required []db.Requirement, reported []VerdictRequirement)
 }
 ```
 
-- [ ] **Step 4: Add the `db` import to the test file.** In `hubd/internal/orchestrator/gate_test.go`, the import block becomes:
+- [x] **Step 4: Add the `db` import to the test file.** In `hubd/internal/orchestrator/gate_test.go`, the import block becomes:
 
 ```go
 import (
@@ -333,17 +333,17 @@ import (
 )
 ```
 
-- [ ] **Step 5: gofmt + run the new test to verify it PASSES.**
+- [x] **Step 5: gofmt + run the new test to verify it PASSES.**
 
 Run: `gofmt -w hubd/internal/orchestrator/gate.go hubd/internal/orchestrator/gate_test.go && GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/orchestrator/ -run TestDecideRequirements -v 2>&1 | tail -20`
 Expected: all five subtests `--- PASS`, then `ok`.
 
-- [ ] **Step 6: Verify existing gate/verdict tests still pass unchanged (backward compat).**
+- [x] **Step 6: Verify existing gate/verdict tests still pass unchanged (backward compat).**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./hubd/internal/orchestrator/ -run 'TestDecide|TestParseVerdict' -v 2>&1 | tail -40`
 Expected: `TestDecide`, `TestDecideBindsVerdictToEpic`, and all `TestParseVerdict*` PASS.
 
-- [ ] **Step 7: Full gate + vet green, then commit.**
+- [x] **Step 7: Full gate + vet green, then commit.**
 
 Run: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/... 2>&1 | tail` → no `FAIL`.
 Run: `GOCACHE=/tmp/agentmon-go-cache go vet ./hubd/... 2>&1 | tail` → no output.
