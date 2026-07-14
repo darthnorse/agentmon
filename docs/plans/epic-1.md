@@ -670,21 +670,21 @@ git commit -m "feat(api): accept + return project requirements, derive stable id
 
 ## CHECKPOINT 1 — backend seam (data/schema + API + id validation)
 
-- [ ] **CHECKPOINT 1 — reviewed to <sha>**  *(runner ticks this line with the reviewed SHA)*
+- [x] **CHECKPOINT 1 — reviewed to 0bb3e5e**
 
 The highest-judgment code (stable-id derivation, duplicate rejection) and the whole
 DB → API data flow land here — reviewed before any frontend is built.
 
-- [ ] **Step 1:** `agentmon report --epic 1 --stage reviewing`
-- [ ] **Step 2:** segment base = `git merge-base HEAD origin/main`.
-- [ ] **Step 3:** run `/multi-review <segment-base>..HEAD --codex` in this session.
-- [ ] **Step 4:** route outcomes — FIX already applied+committed by the review
+- [x] **Step 1:** `agentmon report --epic 1 --stage reviewing`
+- [x] **Step 2:** segment base = `git merge-base HEAD origin/main`.
+- [x] **Step 3:** run `/multi-review <segment-base>..HEAD --codex` in this session.
+- [x] **Step 4:** route outcomes — FIX already applied+committed by the review
   (verify the FULL GATE is still green); DISCUSS → escalate with the item as the
   note; NITPICKs → record in the report file only.
-- [ ] **Step 5:** write the consolidated report to `docs/reviews/epic-1-cp1.md`, tick
+- [x] **Step 5:** write the consolidated report to `docs/reviews/epic-1-cp1.md`, tick
   the `CHECKPOINT 1 — reviewed to <sha>` line above with the reviewed SHA, commit
   both: `docs: epic #1 checkpoint 1 review`.
-- [ ] **Step 6:** `agentmon report --epic 1 --stage implementing` and continue.
+- [x] **Step 6:** `agentmon report --epic 1 --stage implementing` and continue.
 
 ---
 
