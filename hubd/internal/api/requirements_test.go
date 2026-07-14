@@ -48,6 +48,20 @@ func TestNormalizeRequirements(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequirementsUnsluggableIDFallsBackToText(t *testing.T) {
+	// A supplied-but-unsluggable id must fall back to deriving the id from the
+	// text, not silently drop a row whose text is perfectly valid.
+	got, err := normalizeRequirements([]db.Requirement{
+		{ID: "!!!", Text: "Always use RLS"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "always-use-rls" {
+		t.Fatalf("unsluggable id must fall back to text-derived id: %+v", got)
+	}
+}
+
 func TestNormalizeRequirementsRejectsDuplicateIDs(t *testing.T) {
 	// Two rows resolving to the same id would make the epic-02 join ambiguous.
 	if _, err := normalizeRequirements([]db.Requirement{

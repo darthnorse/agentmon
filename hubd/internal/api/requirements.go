@@ -22,11 +22,12 @@ func slugify(s string) string {
 // normalizeRequirements shapes + validates author input into the stored form:
 //   - trims id/text/check_cmd,
 //   - drops any row with blank text (text is the review lens — meaningless without it),
-//   - resolves the id by slugifying the supplied id, or the text when none was
-//     supplied. Slugifying the supplied id enforces the lowercase-kebab invariant
-//     while keeping it STABLE across later text edits (it is derived from the id,
-//     never from edited text; slugify is idempotent on an existing slug),
-//   - drops any row whose resolved id is empty (text with no slug-able characters),
+//   - resolves the id by slugifying the supplied id, falling back to the text
+//     when the supplied id is empty OR unsluggable. Slugifying the supplied id
+//     enforces the lowercase-kebab invariant while keeping it STABLE across later
+//     text edits (it is derived from the id, never from edited text; slugify is
+//     idempotent on an existing slug),
+//   - drops the row only when the text too has no slug-able characters,
 //   - rejects duplicate resolved ids: the id is the join key the epic-02 gate
 //     matches on, so two rows sharing one id would make a single verdict entry
 //     ambiguous. Fail closed here — mirroring the handler's provider/max_parallel
@@ -41,11 +42,10 @@ func normalizeRequirements(in []db.Requirement) ([]db.Requirement, error) {
 		if r.Text == "" {
 			continue
 		}
-		base := r.ID
-		if base == "" {
-			base = r.Text
+		r.ID = slugify(r.ID)
+		if r.ID == "" {
+			r.ID = slugify(r.Text)
 		}
-		r.ID = slugify(base)
 		if r.ID == "" {
 			continue
 		}
