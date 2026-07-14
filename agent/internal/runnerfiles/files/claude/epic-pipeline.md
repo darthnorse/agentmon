@@ -229,8 +229,7 @@ At every `CHECKPOINT` step in the plan:
    command-backed platform status is `unmet`, though independent final-review
    findings remain. A review assessment that needs human judgment follows the
    existing DISCUSS escalation path. Set overall `uncertain: true` for any
-   uncertain requirement or other material doubt. Final-review finding counts
-   remain independent of structured platform statuses.
+   uncertain requirement or other material doubt.
 4. **Learnings write-back**: anything durable this epic taught (conventions
    discovered, traps hit, decisions future work needs) goes into `CLAUDE.md`
    / `AGENTS.md` / the repo docs — in this same branch. Context is a
@@ -271,9 +270,11 @@ At every `CHECKPOINT` step in the plan:
    `via: review` otherwise; ids and the `met|unmet|uncertain` and `cmd|review`
    values must match `hubd/internal/orchestrator/verdict.go` exactly.
    Epic-specific requirements never enter this structured list. The gate
-   auto-merges only on `unresolved: 0`,
-   `uncertain: false`, green CI, and `reviews ⊇` the project's required set —
-   anything else escalates to a human, which is the system working.
+   auto-merges only on `unresolved: 0`, `uncertain: false`, green CI,
+   `reviews ⊇` the project's required set, and every project platform
+   requirement reported `met` (a non-`met` or `(missing)` requirement
+   escalates) — anything else escalates to a human, which is the system
+   working.
 8. `agentmon report --epic $ARGUMENTS --stage pr_open --pr <PR-number>`
 9. Final message: one-paragraph summary (what shipped, what's unresolved,
    where the evidence lives). Then END YOUR TURN. The session stays
