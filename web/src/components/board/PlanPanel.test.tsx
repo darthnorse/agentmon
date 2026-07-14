@@ -21,7 +21,7 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 );
 const project: ProjectDTO = {
   id: "p1", name: "school", repo: "o/r", server_id: "h1", target: "", workdir: "/w",
-  base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: true, pinned: false,
+  base_branch: "main", provider: "claude", required_reviews: [], max_parallel: 1, paused: false, require_ci: true, pinned: false, requirements: [],
 };
 const epic: EpicDTO = {
   id: "e1", project_id: "p1", issue: 7, title: "t", labels: [], blocked_by: [],

@@ -701,7 +701,7 @@ DB → API data flow land here — reviewed before any frontend is built.
   `ProjectDTO.requirements: Requirement[]`; `ProjectCreateRequest.requirements?`;
   `ProjectPatchRequest.requirements?`.
 
-- [ ] **Step 1: Add the `Requirement` interface + wire it into the project types**
+- [x] **Step 1: Add the `Requirement` interface + wire it into the project types**
 
 In `web/src/lib/contracts.ts`, add the interface just above `ProjectDTO`:
 
@@ -739,7 +739,7 @@ export interface ProjectPatchRequest {
 }
 ```
 
-- [ ] **Step 2: Write the contract-mirror test** (`web/src/lib/contracts.test.ts`)
+- [x] **Step 2: Write the contract-mirror test** (`web/src/lib/contracts.test.ts`)
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -769,14 +769,14 @@ describe("Requirement contract mirror", () => {
 });
 ```
 
-- [ ] **Step 3: Run typecheck to reveal the fixtures that now need `requirements`**
+- [x] **Step 3: Run typecheck to reveal the fixtures that now need `requirements`**
 
 Run: `cd web && npm run typecheck`
 Expected: FAILS — each typed `const project: ProjectDTO = { ... }` fixture errors
 with "Property 'requirements' is missing". (This is the compile-time proof that the
 field is required.)
 
-- [ ] **Step 4: Add `requirements: []` to each typed `ProjectDTO` fixture**
+- [x] **Step 4: Add `requirements: []` to each typed `ProjectDTO` fixture**
 
 For every file listed under **Files** above, add `requirements: [],` inside the
 `ProjectDTO` object literal / factory (alongside the other fields such as
@@ -793,11 +793,11 @@ const p = (id: string, name: string, pinned: boolean): ProjectDTO => ({
 Re-run `cd web && npm run typecheck` and repeat until it is clean — the errors are a
 complete checklist of the fixtures to touch (do not guess; let typecheck drive it).
 
-- [ ] **Step 5: Run the FULL GATE**
+- [x] **Step 5: Run the FULL GATE**
 
 Run the FULL GATE (Global Constraints). Expected: all green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add web/src/lib/contracts.ts web/src/lib/contracts.test.ts web/src/components/board/*.test.tsx
