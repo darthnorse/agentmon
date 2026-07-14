@@ -34,8 +34,8 @@ final review verifies it honestly before emitting epic-02's exact verdict schema
   validation. [Source: `AGENTS.md`; epic #3 Acceptance]
 - **Commit style:** conventional prefixes, exact messages named below, and no
   `Co-Authored-By` or other AI-attribution trailers. [Source: `AGENTS.md`; epic #3]
-- **Scope:** modify only the four embedded prompt files named below plus this plan
-  and generated review evidence. Do not change the gate/verdict Go code, project
+- **Scope:** modify only the four embedded prompt files named below, `CLAUDE.md`,
+  this plan, and generated review evidence. Do not change the gate/verdict Go code, project
   storage/UI, runnerfiles embed list, doctor implementation, or add a hub API.
   Existing `runnerfiles.go` already embeds and installs the four paths, and
   `doctor_cli.go` already locates each provider's installed `epic-pipeline.md`.
@@ -61,6 +61,13 @@ final review verifies it honestly before emitting epic-02's exact verdict schema
   not the stable server-derived `id`. Missing carrier data therefore fails closed
   at the gate. [Source: epic #3 Constraints; `hubd/internal/api/router.go`;
   `hubd/internal/api/orchestrator.go`; `web/src/components/board/ProjectForm.tsx`]
+- **Accepted v1 trust boundary:** executing a carried `check_cmd` verbatim from
+  the private-repository epic issue body is a conscious v1 decision. Issue editors
+  are limited to the owner and runners and already control repository code the
+  runner executes; this matches the PR-body provenance boundary in `gate.go`.
+  Re-fetching commands from authoritative `Project.Requirements` or using signed
+  delivery is deferred to v2. Preserve the exact carried command and fail closed
+  on parse/execution errors. [Source: human resolution of Checkpoint 1 DISCUSS]
 - **Provider equivalence:** prose and behavior added to Claude/Codex variants must
   be equivalent; preserve only existing provider differences (`$ARGUMENTS` versus
   `$1`/`N`, Codex/Claude reviewer commands, and provider-specific lifecycle text).
@@ -91,6 +98,7 @@ final review verifies it honestly before emitting epic-02's exact verdict schema
 | `agent/internal/runnerfiles/files/claude/epic-pipeline.md` | **Modify** (252 lines) | Orient, plan injection, final verification, verdict schema, light-pipeline parity. |
 | `agent/internal/runnerfiles/files/codex/epic-pipeline.md` | **Modify** (264 lines) | Same behavior with headless Claude review mechanics. |
 | `docs/plans/epic-3.md` | **Create** | This resumable plan. |
+| `CLAUDE.md` | **Modify** | Record the accepted v1 issue-body command trust boundary and deferred v2 hardening. |
 | `docs/reviews/epic-3-cp1.md`, `epic-3-cp2.md`, `epic-3-final.md` | **Create later** | Checkpoint/final review evidence. |
 
 No structure variance is needed in the repository: prompt behavior remains in the
@@ -208,6 +216,8 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   as epic-specific requirements and the structured platform inventory as empty;
   do not invent platform ids. If the canonical section exists but its JSON is
   malformed, has duplicate/empty ids, or is ambiguous, use the escalation protocol.
+  State that executing its exact `check_cmd` is accepted for v1 under the private-repo
+  owner/runner trust model; authoritative lookup or signed delivery is v2 hardening.
 
 - [ ] **Step 2.2 — Make requirements inherited Global Constraints.** Extend the
   plan contract in both `Step 4` sections so the committed plan's Global
@@ -318,6 +328,9 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   set in its generated issue and committed plan, execute any `check_cmd`, and emit
   a populated parser-valid `requirements:` list. Do not claim that Markdown/static
   unit tests prove prompt behavior.
+
+  Also update `CLAUDE.md` with the accepted v1 issue-body `check_cmd` trust boundary
+  and the authoritative-lookup/signed-delivery hardening deferred to v2.
 
 - [ ] **Step 3.4 — Rebase, run the required final whole-branch cross-provider
   review, route all outcomes, commit `docs/reviews/epic-3-final.md`, rerun the full
