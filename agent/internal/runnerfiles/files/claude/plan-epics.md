@@ -48,10 +48,27 @@ prefer multiple choice, and converge on:
 | `agent:claude` / `agent:codex` | Provider override for this epic. |
 | `pipeline:light` | Skip the committed plan + checkpoints (small fixes). |
 
+Where to cut — decide boundaries by review value, not just layer or size.
+MERGE work across a seam the build already guards (compiler, typechecker, a
+contract-mirror test, a round-trip test) — a human plan-gate on a
+machine-checked seam is wasted ceremony. ISOLATE into its own epic whatever is
+novel, security-sensitive, invokes an external tool, or is genuinely ambiguous
+— that is where a fresh-context plan/checkpoint review earns its cost. A
+layer-wise stack (storage → API → wiring) is a starting point, not the answer:
+adjacent layers whose contract the build enforces usually belong together; the
+one layer that carries the feature's real risk usually stands alone.
+
 Recommend dials, don't just ask: first-of-its-kind or risky epics deserve
 `plan-gate` (a human reviews the plan before implementation — ambiguity found
 at planning is far cheaper than at review); schema/auth/data-loss-adjacent
 epics deserve `pr-gate`; one-file maintenance fixes deserve `pipeline:light`.
+
+Before presenting, self-critique the slice: is there a strictly-better cut that
+isolates the same risk in FEWER epics — merging machine-checked layers while
+keeping the novel/risky work standalone? If so, lead with it. When you offer
+alternatives, make them differ in WHERE the boundaries fall, not merely how many
+pieces (three-vs-four-vs-five of the same layer-wise cut is one option, not
+three).
 
 Present the final epic list (title, one-line scope, dials, blocked-by) and get
 explicit approval BEFORE writing files.
