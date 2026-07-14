@@ -24,7 +24,10 @@ Self-hosted fleet monitor + browser terminal for tmux-based agent sessions, plus
   `Project.Requirements` and escalates unless each id is reported `met` in the
   verdict's `Requirements` block (`json.Marshal` emits the CAPITALIZED
   `Requirements` key). `ParseVerdict` rejects out-of-domain `status`/`via`,
-  empty ids, and duplicate ids (fail-closed, like a bad schema). A requirement
+  empty ids, duplicate ids, and **multi-document blocks** (fail-closed, like a
+  bad schema — it decodes exactly one YAML document and requires EOF, because
+  `yaml.Unmarshal` silently drops everything after a `---` and a second document
+  could smuggle a contradictory requirement past validation). A requirement
   added *after* an epic was imported — so the runner never reported it — fails
   **closed** as `(missing)`; that is the intended safe drift direction, not a bug.
 - **Project `requirements` are the platform-invariant source of truth (epic #1):** each is `{id,text,check_cmd?}` stored as JSON in `projects.requirements` (TEXT, `NOT NULL DEFAULT '[]'`, mirrors `required_reviews`/`marshalStrings`). The `id` is a **server-derived, stable lowercase-kebab slug** (`normalizeRequirements`/`slugify`, `hubd/internal/api/requirements.go`): derived from `text` when absent, slugified (never re-derived from *edited* text) when supplied, and it is the **join key** the epic-02 gate/verdict match on — duplicate resolved ids are rejected (400). Snake_case DTO json tags (`id`/`text`/`check_cmd`), distinct from the CAPITALIZED Verdict caveat. The field is **inert**: epic-02 (gate reads it) and epic-03 (runner injects it + runs `check_cmd`) are the consumers.

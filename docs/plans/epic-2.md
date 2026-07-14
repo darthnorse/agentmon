@@ -483,11 +483,11 @@ git commit -m "docs: platform requirements fail the merge gate closed"
 
 ## Finish (epic-pipeline Step 7 — the final whole-branch review + PR)
 
-- [ ] Rebase onto the moved base: `git fetch origin && git rebase origin/main`. Unresolvable conflict → escalate.
-- [ ] `agentmon report --epic 2 --stage reviewing`, then final review: `/multi-review $(git merge-base HEAD origin/main)..HEAD --codex`. Apply FIXes (already committed by the review), escalate DISCUSS items. Commit the report to `docs/reviews/epic-2-final.md`.
-- [ ] Full suite one last time: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/... 2>&1 | tail` — record exact pass/fail counts for the verdict block.
-- [ ] Push `epic/2-requirements-merge-gate-verdict` and open the PR with `Closes #2` and the fenced `agentmon-verdict: v1` block (epic 2; `reviews: [specialist, simplifier, deep-scan, codex, cross-model]`; findings from the FINAL review only; `uncertain: false` only if no material doubt remains).
-- [ ] `agentmon report --epic 2 --stage pr_open --pr <PR-number>`.
+- [x] Rebase onto the moved base: `git fetch origin && git rebase origin/main`. Unresolvable conflict → escalate.
+- [x] `agentmon report --epic 2 --stage reviewing`, then final review: `/multi-review $(git merge-base HEAD origin/main)..HEAD --codex`. Apply FIXes (already committed by the review), escalate DISCUSS items. Commit the report to `docs/reviews/epic-2-final.md`.
+- [x] Full suite one last time: `GOCACHE=/tmp/agentmon-go-cache go test ./shared/... ./agent/... ./hubd/... 2>&1 | tail` — record exact pass/fail counts for the verdict block.
+- [x] Push `epic/2-requirements-merge-gate-verdict` and open the PR with `Closes #2` and the fenced `agentmon-verdict: v1` block (epic 2; `reviews: [specialist, simplifier, deep-scan, codex, cross-model]`; findings from the FINAL review only; `uncertain: false` only if no material doubt remains).
+- [x] `agentmon report --epic 2 --stage pr_open --pr <PR-number>`.
 
 ## Self-Review (checked against the epic AC)
 
