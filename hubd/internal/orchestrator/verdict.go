@@ -5,6 +5,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
@@ -63,8 +64,21 @@ func ParseVerdict(prBody string) (*Verdict, error) {
 		if !strings.Contains(block, "agentmon-verdict") {
 			continue
 		}
+		// Decode exactly ONE YAML document. yaml.Unmarshal reads only the first
+		// document and silently drops any that follow a `---` separator, which
+		// would let a second document smuggle contradictory requirement data
+		// (met for an id in doc 1, unmet for the same id in doc 2) past the
+		// validation below — the same ambiguity the duplicate-id check rejects.
+		// A verdict is one document, so require the block to end after it.
+		dec := yaml.NewDecoder(strings.NewReader(block))
 		var v Verdict
-		if err := yaml.Unmarshal([]byte(block), &v); err != nil {
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+		if err := dec.Decode(new(struct{})); !errors.Is(err, io.EOF) {
+			if err == nil {
+				return nil, fmt.Errorf("orchestrator: verdict block has multiple YAML documents")
+			}
 			return nil, err
 		}
 		// Fail closed on anything that isn't a well-formed v1 verdict: a block

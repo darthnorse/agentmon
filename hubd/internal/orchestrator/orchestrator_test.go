@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"agentmon/hubd/internal/config"
@@ -854,5 +855,12 @@ func TestTickGateEnforcesPlatformRequirements(t *testing.T) {
 	}
 	if len(gh.merged) != 0 {
 		t.Fatalf("gate must not merge with an unmet requirement: merged = %v", gh.merged)
+	}
+	// Pin the escalation reason: the fixture is deliberately built so the
+	// requirements check is the SOLE escalation source (verdict reviews match
+	// RequiredReviews, epic binds, checks green, no uncertainty/unresolved/failed
+	// tests), so a plumbing regression can't hide behind an unrelated escalation.
+	if !strings.Contains(strings.Join(gh.comments, "\n"), "platform requirements not met: always-use-rls (missing)") {
+		t.Fatalf("escalation must name the missing requirement, comments = %v", gh.comments)
 	}
 }

@@ -104,3 +104,21 @@ func TestParseVerdictRejectsBadRequirements(t *testing.T) {
 		})
 	}
 }
+
+func TestParseVerdictRejectsMultiDocument(t *testing.T) {
+	// yaml decodes only the FIRST document in a block; a second document after a
+	// `---` separator must not smuggle contradictory requirement data past
+	// validation (met for an id in doc 1, unmet for the same id in doc 2). A
+	// verdict is exactly one document — a multi-document block is malformed and
+	// must fail closed, like a duplicate id.
+	body := "```yaml\n" +
+		"agentmon-verdict: v1\nepic: 1\n" +
+		"requirements:\n  - { id: rls, status: met, via: cmd }\n" +
+		"tests: { passed: 1, failed: 0 }\n" +
+		"---\n" +
+		"requirements:\n  - { id: rls, status: unmet, via: review }\n" +
+		"```"
+	if _, err := ParseVerdict(body); err == nil {
+		t.Fatal("multi-document verdict block must fail closed")
+	}
+}
