@@ -26,6 +26,10 @@ export const XTerm = React.forwardRef<
   const hostRef = React.useRef<HTMLDivElement>(null);
   const termRef = React.useRef<Terminal | null>(null);
   const fitRef = React.useRef<FitAddon | null>(null);
+  // Tracks whether the host was laid-out-hidden on the last ResizeObserver tick, so a
+  // hidden→shown REVEAL can force a one-off repaint (see the RO below). Starts true:
+  // a pane may mount hidden (pooled / expanded-mode non-focused tile).
+  const wasHiddenRef = React.useRef(true);
 
   // keep the latest callbacks without re-creating the terminal
   const onDataRef = React.useRef(onData);
@@ -108,8 +112,32 @@ export const XTerm = React.forwardRef<
     });
     term.onResize(({ cols, rows }) => onResizeRef.current(cols, rows));
 
-    const ro = new ResizeObserver(() => { try { safeFit(); } catch { /* detached */ } });
+    // A stale renderer frame (the cursor drawn ~a line off, corrected only by the next
+    // byte written) appears whenever the terminal stops being painted for a while: the
+    // pane is display:none'd (an expanded-mode non-focused tile, or a route switch), OR
+    // the whole PWA/tab is backgrounded (iPad app-switch). Force ONE repaint when it
+    // comes back — cheap (one viewport redraw of content that's already there, so no
+    // flicker), and scoped to a real visibility change, never a tile-to-tile focus switch.
+    const forceRepaint = () => {
+      const h = hostRef.current, t = termRef.current;
+      if (!h || !t || h.clientWidth === 0 || h.clientHeight === 0) return; // hidden → skip
+      try { t.refresh(0, Math.max(0, t.rows - 1)); } catch { /* renderer detached / mid context-loss */ }
+    };
+    // Element-level reveal (display:none → shown): the ResizeObserver sees size 0 → real.
+    const ro = new ResizeObserver(() => {
+      try {
+        const hidden = !hostRef.current || hostRef.current.clientWidth === 0 || hostRef.current.clientHeight === 0;
+        safeFit();
+        if (wasHiddenRef.current && !hidden) forceRepaint();
+        wasHiddenRef.current = hidden;
+      } catch { /* detached */ }
+    });
     ro.observe(hostRef.current!);
+    // App/tab-level foreground: backgrounding the PWA doesn't change the element's size,
+    // so the RO can't see it — the document's visibilitychange can. (This is the iPad
+    // app-switch case.)
+    const onVisible = () => { if (document.visibilityState === "visible") forceRepaint(); };
+    document.addEventListener("visibilitychange", onVisible);
 
     // Touch gestures (quick drag = scroll, long-press + drag = select) live in
     // lib/terminal-touch so the state machine is unit-testable. We wire the xterm-specific bits:
@@ -138,6 +166,7 @@ export const XTerm = React.forwardRef<
 
     return () => {
       ro.disconnect();
+      document.removeEventListener("visibilitychange", onVisible);
       gesture.teardown();
       host.removeEventListener("touchstart", gesture.onStart);
       host.removeEventListener("touchmove", gesture.onMove);
