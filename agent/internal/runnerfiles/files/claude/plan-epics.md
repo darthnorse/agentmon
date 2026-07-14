@@ -28,6 +28,16 @@ implementer? What order/dependency does it have?
 3. Check for existing epics: `ls docs/plan/epic-*.md` and
    `gh issue list --label agentmon:epic --state all --limit 50`. New epics must
    slot into (not duplicate) what exists; note the highest `epic-NN` number.
+4. Establish the current project's platform requirements before decomposition.
+   Ask the human to copy or confirm the exact `requirements` JSON array from the
+   existing authenticated `GET /api/v1/orchestrator/projects` response (for
+   example, from the board's Network response or an authenticated same-origin
+   browser fetch), selecting the project DTO whose `repo` matches this clone.
+   Treat the confirmed list — including an explicitly empty `[]` — as ground
+   truth. Never infer, rename, edit, or reconstruct ids, text, or `check_cmd`
+   values from repo clues. If the current set cannot be established, STOP before
+   writing epic files. Keep these platform records separate from epic-specific
+   textual requirements gathered during brainstorming.
 
 ## Step 2: Brainstorm the decomposition WITH the human
 
@@ -38,6 +48,10 @@ prefer multiple choice, and converge on:
 - The independent pieces (each epic = one runner session's worth of coherent
   work; if you cannot state acceptance criteria in a few lines, split it).
 - The dependency order (`blocked-by` edges — only REAL blockers, not niceties).
+- The effective requirement set for each epic: the full confirmed platform set
+  applies to every epic, union that epic's own textual requirements. Keep the two
+  tiers visibly distinct; only platform records later enter the structured PR
+  verdict schema.
 - Per-epic dials, from this table:
 
 | Label | Effect |
@@ -99,6 +113,29 @@ blocked-by: epic-01, #12
   epic's birth certificate.
 - Body sections to include: `## Scope`, `## Acceptance criteria`,
   `## Constraints & decisions`, optionally `## Pointers` (PRD/docs links).
+  Acceptance criteria must restate observable compliance with every effective
+  requirement. End `## Constraints & decisions` with this canonical carrier:
+
+  ````markdown
+  ### Effective requirements
+
+  Platform (project ground truth; exact records):
+  ```json
+  [
+    {"id":"<stable-id>","text":"<requirement text>","check_cmd":"<verbatim shell command>"}
+  ]
+  ```
+
+  Epic-specific:
+  - <textual requirement>
+  ````
+
+  Copy the complete platform array as valid JSON, in its original order, so
+  quotes, backticks, and shell characters remain unambiguous. Omit `check_cmd`
+  only when the source record has none; use `[]` for an empty platform tier and
+  `None.` for an empty epic-specific tier. Do not filter records by perceived
+  relevance or add implementation-plan detail. This section is the issue-body
+  carrier consumed by `epic-pipeline`, not the gate's source of truth.
   Do NOT write your own `Blocked-by:` lines in the body — the importer
   appends the resolved `Blocked-by: #N` line the hub parses.
 

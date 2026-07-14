@@ -107,7 +107,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
 
 ### Complete content to add
 
-- [ ] **Step 1.1 — Establish the authoritative input before decomposition.** In
+- [x] **Step 1.1 — Establish the authoritative input before decomposition.** In
   each `Step 1: Understand the ground`, after reading the topic/repo, add
   behavior-equivalent instructions that:
 
@@ -127,14 +127,14 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   human confirmation of the existing authenticated project DTO in this
   already-interactive workflow is therefore the delivery mechanism at this seam.
 
-- [ ] **Step 1.2 — Define the effective set during brainstorming.** Add a bullet to
+- [x] **Step 1.2 — Define the effective set during brainstorming.** Add a bullet to
   each `Step 2` saying that every epic's effective set is the full confirmed
   platform set union that epic's own textual requirements. Platform requirements
   apply to every epic; epic-specific requirements apply only to their epic. Keep
   the two tiers visibly distinct so only platform records later enter the verdict
   schema.
 
-- [ ] **Step 1.3 — Define one canonical issue-body carrier.** Extend each `Step 3`
+- [x] **Step 1.3 — Define one canonical issue-body carrier.** Extend each `Step 3`
   body contract so `## Acceptance criteria` restates observable compliance with
   every effective requirement and `## Constraints & decisions` ends with this
   exact shape. Copy the platform array as valid JSON so quotes/backticks/shell
@@ -161,7 +161,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
   importer rejects them). State that this section is the carrier consumed by
   `epic-pipeline`, not the gate's source of truth.
 
-- [ ] **Step 1.4 — Verify provider parity and the focused module.** Run:
+- [x] **Step 1.4 — Verify provider parity and the focused module.** Run:
 
   ```bash
   rg -n "Effective requirements|project ground truth|check_cmd|effective set" \
@@ -171,7 +171,7 @@ brittle substring tests; AC6 retains the issue's supervised dogfood validation.
 
   Expected: both files contain every new carrier concept; all agent packages pass.
 
-- [ ] **Step 1.5 — Run the full pre-commit gate and commit.** Run the two Global
+- [x] **Step 1.5 — Run the full pre-commit gate and commit.** Run the two Global
   Constraints gate commands; both must exit 0. Then:
 
   ```bash
