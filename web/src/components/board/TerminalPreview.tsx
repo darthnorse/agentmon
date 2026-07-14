@@ -34,7 +34,7 @@ export function TerminalPreview({ project, epic, onOpenFull }: {
       ) : !session || !pane ? (
         <div className="text-xs text-muted-foreground">Session ended — nothing to preview.</div>
       ) : (
-        <div className="relative h-56 overflow-hidden rounded-md border border-border">
+        <div className="relative h-56 overflow-hidden rounded-md border border-border lg:h-[45vh]">
           <TerminalView serverId={project.server_id} paneId={pane.id} target={session.target} active={false} readOnly
             fontSize={11} theme={themeOf(theme)} />
           <div className="absolute inset-0 z-10" aria-hidden onClick={onOpenFull} />

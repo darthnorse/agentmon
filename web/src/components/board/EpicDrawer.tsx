@@ -76,7 +76,7 @@ export function EpicDrawer({ epic, project, onClose }: {
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={`Epic ${epic.issue} detail`}>
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <aside className="absolute inset-y-0 right-0 flex w-full flex-col border-l border-border bg-background sm:max-w-[560px]">
+      <aside className="absolute inset-y-0 right-0 flex w-full flex-col border-l border-border bg-background sm:max-w-[560px] lg:max-w-[50vw]">
         <div className="flex items-start gap-2 border-b border-border p-4">
           <h2 className="text-[15px] font-semibold leading-snug">
             <span className="text-muted-foreground">#{epic.issue}</span> {epic.title}
