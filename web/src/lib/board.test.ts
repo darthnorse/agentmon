@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { EpicDTO, EpicStage } from "@/lib/contracts";
+import { isValidSessionName } from "@/lib/session-name";
 import {
   boardStats, canApprove, cardProvider, fmtElapsed, groupByColumn, isPlanGate,
-  mergeMode, parseVerdict, sessionSlug, stageMeta, STAGE_META,
+  mergeMode, parseVerdict, planSessionName, sessionSlug, stageMeta, STAGE_META,
 } from "@/lib/board";
 
 const epic = (over: Partial<EpicDTO>): EpicDTO => ({
@@ -94,6 +95,31 @@ describe("small helpers", () => {
     expect(sessionSlug("plan", "school platform!")).toBe("plan-school-platform-");
     expect(sessionSlug("doctor", "")).toBe("doctor-project");
     expect(sessionSlug("plan", "x".repeat(80)).length).toBeLessThanOrEqual(64);
+  });
+  it("planSessionName seeds a unique, readable, valid name per launch", () => {
+    // uniq before the readable hint (lowercased, first 4 words); empty vibe → no hint
+    expect(planSessionName("agentmon", "Add project-scoped requirements now", "a1b2"))
+      .toBe("plan-agentmon-a1b2-add-project-scoped-requirements-now");
+    expect(planSessionName("school", "", "z9")).toBe("plan-school-z9");
+    expect(planSessionName("school", "   ", "z9")).toBe("plan-school-z9");
+    // different uniq → different name (this is what keeps relaunch off the 409
+    // attach-existing path that used to drop the vibe)
+    expect(planSessionName("s", "x", "aaa")).not.toBe(planSessionName("s", "x", "bbb"));
+    // truncation at 64 must NOT eat the uniqueness token: a long project + hint
+    // still keeps `-<uniq>` right after the base.
+    const long = planSessionName("x".repeat(50), "some very long vibe text goes here", "u9");
+    expect(long.length).toBeLessThanOrEqual(64);
+    expect(long.startsWith(`plan-${"x".repeat(50)}-u9`)).toBe(true);
+  });
+  it("planSessionName always yields a tmux-valid name, even for pathological vibes", () => {
+    // A malformed name would 400 the launch (server-side ValidateSessionName has
+    // the SAME regex as NAME_RE) — so every vibe must slug down to a valid name.
+    const nasties = ["", "   ", "!@#$%^&*()", "日本語 テスト", "'; rm -rf / #", "-".repeat(80),
+      "a".repeat(200), "x  y\t\r\nz", "🚀 rocket launch now please", "UPPER Case MiXeD"];
+    for (const v of nasties) {
+      const n = planSessionName("weird project! name", v, "l3k9ab");
+      expect(isValidSessionName(n), `vibe=${JSON.stringify(v)} → ${n}`).toBe(true);
+    }
   });
   it("fmtElapsed formats minutes/hours/days", () => {
     const t0 = Date.parse("2026-07-11T10:00:00Z");

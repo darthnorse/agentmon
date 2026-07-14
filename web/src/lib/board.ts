@@ -135,6 +135,23 @@ export function sessionSlug(prefix: string, name: string): string {
   return `${prefix}-${core || "project"}`.slice(0, 64);
 }
 
+// Name for a Plan-epics launch. Unlike doctor (idempotent, self-exiting), each
+// Plan-epics launch is a fresh one-shot brainstorm seeded with its OWN vibe, and
+// its interactive session never self-exits. A deterministic `plan-<project>`
+// name would collide on every relaunch — and openOrFocusSession treats a
+// duplicate-name (409) as "attach to the existing session", silently dropping
+// the new vibe AND forbidding two epics being planned at once. `uniq` (a short
+// caller-supplied token) guarantees a fresh session per launch; a readable hint
+// from the vibe's first words keeps concurrent plan sessions tellable apart on
+// the board. `uniq` is placed BEFORE the hint so a long hint truncated at 64
+// chars can never eat the uniqueness. Empty vibe → `plan-<project>-<uniq>`.
+export function planSessionName(project: string, vibe: string, uniq: string): string {
+  const base = sessionSlug("plan", project);
+  const hint = vibe.trim().split(/\s+/).slice(0, 4).join(" ").toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return [base, uniq, hint].filter(Boolean).join("-").slice(0, 64);
+}
+
 export function fmtElapsed(fromIso: string, now: number): string {
   const ms = now - Date.parse(fromIso);
   if (!Number.isFinite(ms) || ms < 0) return "";

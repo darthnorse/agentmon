@@ -5,7 +5,7 @@ import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { openOrFocusSession } from "@/components/board/open-session";
 import { PlanEpicsModal } from "@/components/board/PlanEpicsModal";
 import { useEpicActions } from "@/hooks/useEpicActions";
-import { boardStats, MAX_PARALLEL_CEILING, sessionSlug } from "@/lib/board";
+import { boardStats, MAX_PARALLEL_CEILING, planSessionName, sessionSlug } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import { planCommand } from "@/lib/shell-quote";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -103,9 +103,14 @@ export function ProjectHeader({ project, epics, onEdit }: {
           onClose={() => setShowPlan(false)}
           onSubmit={(vibe) => {
             setShowPlan(false);
+            // Each launch is a fresh, one-shot brainstorm seeded with this vibe.
+            // A UNIQUE name keeps openOrFocusSession off the duplicate-name (409)
+            // path — which attaches to an existing plan session and would silently
+            // drop this vibe — and lets several epics be planned in parallel.
+            const uniq = Date.now().toString(36).slice(-3) + Math.random().toString(36).slice(2, 6);
             void openOrFocusSession(
               { serverId: project.server_id, serverName: project.name, target: project.target,
-                name: sessionSlug("plan", project.name), cwd: project.workdir,
+                name: planSessionName(project.name, vibe, uniq), cwd: project.workdir,
                 command: planCommand(project.provider === "codex" ? "codex" : "claude", vibe) },
               isDesktop, navigate, false, // launch → grid tile, not an expanded glance
             );

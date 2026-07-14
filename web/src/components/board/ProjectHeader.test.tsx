@@ -67,6 +67,27 @@ describe("ProjectHeader", () => {
     );
   });
 
+  it("each Plan epics launch gets a fresh, unique session name (never re-attaches, so the vibe is never dropped)", () => {
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    // launch #1
+    fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "add dark mode" } });
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+    // launch #2 — same vibe, modal reopened
+    fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "add dark mode" } });
+    fireEvent.click(screen.getByRole("button", { name: "Launch" }));
+
+    const name1 = h.openOrFocusSession.mock.calls[0][0].name as string;
+    const name2 = h.openOrFocusSession.mock.calls[1][0].name as string;
+    // fixture project name is "school"; a unique token + the vibe hint
+    expect(name1).toMatch(/^plan-school-[a-z0-9]+-add-dark-mode$/);
+    expect(name2).toMatch(/^plan-school-[a-z0-9]+-add-dark-mode$/);
+    // distinct per launch → createSession never 409s onto an existing plan
+    // session, so the vibe always runs (and epics can be planned in parallel).
+    expect(name1).not.toBe(name2);
+  });
+
   it("Run doctor re-runs the host check in a session", () => {
     render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Run doctor…" }));
