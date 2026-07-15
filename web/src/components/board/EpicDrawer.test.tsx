@@ -131,9 +131,10 @@ describe("EpicDrawer", () => {
       ],
     };
     h.getEpicUsage.mockResolvedValue(usage);
+
+    expect(h.getEpicUsage).not.toHaveBeenCalled();
     render(<EpicDrawer epic={epic({})} project={project} onClose={() => {}} />, { wrapper });
 
-    expect(h.getEpicUsage).not.toHaveBeenCalled;
     await waitFor(() => expect(h.getEpicUsage).toHaveBeenCalledWith("p1", "e1"));
 
     await waitFor(() => expect(screen.getByText(/attempt 1 \(escalated\)/)).toBeInTheDocument());

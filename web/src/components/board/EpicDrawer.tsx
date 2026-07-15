@@ -33,7 +33,7 @@ function UsageStageRow({ stage }: { stage: UsageStage }) {
       {stage.by_model.length > 1 && (
         <div className="mt-0.5 flex flex-col gap-0.5 pl-3 text-muted-foreground">
           {stage.by_model.map((m, i) => (
-            <div key={i}>{m.provider}/{m.model}: {fmtTokens(m.tokens.total)} tok · {fmtCost(m.cost)}</div>
+            <div key={i}>{m.provider}/{m.model} — {fmtTokens(m.tokens.total)} tok · {fmtCost(m.cost)}</div>
           ))}
         </div>
       )}

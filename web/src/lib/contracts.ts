@@ -84,9 +84,6 @@ export interface ProjectUsage { tokens: TokenTotals; cost: number | null; durati
 // Inline light rollup carried on board epic/project DTOs (omitted when absent):
 export interface UsageRollup { tokens: number; cost: number | null; duration_ms: number; }
 
-export type EpicUsageResponse = EpicUsage;
-export type ProjectUsageResponse = ProjectUsage;
-
 // SSE `board` delta — hubd/internal/api/orchestrator_events.go:74
 export interface BoardDeltaFrame {
   project_id: string; epic_id: string; issue: number; stage: EpicStage; needs: string; title: string;
