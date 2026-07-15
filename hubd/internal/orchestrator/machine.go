@@ -29,10 +29,16 @@ func ValidTransition(from, to shared.EpicStage) bool {
 		return to == shared.EpicStarting || to == shared.EpicCanceled || to == shared.EpicFailed
 	case shared.EpicEscalated:
 		switch to {
-		// → merged: a human merging the PR in GitHub is a spec-promised
-		// recovery (§6); reconcile/webhook observe it and must close the epic.
-		case shared.EpicQueued, shared.EpicImplementing, shared.EpicMerging,
-			shared.EpicMerged, shared.EpicCanceled:
+		// Escalated is a PAUSE, not a dead end: resolving a DISCUSS resumes the
+		// pipeline FORWARD (implement → review → PR), so accept any forward stage
+		// the runner reports on resume — a runner that finishes the discussed work
+		// and jumps straight to pr_open (skipping intermediate stage reports) must
+		// not be stranded in escalated with its PR unrecorded.
+		// → queued: Retry re-runs from artifacts.
+		// → merged: a human merging the PR in GitHub is a spec-promised recovery
+		//   (§6); reconcile/webhook observe it and must close the epic.
+		case shared.EpicQueued, shared.EpicImplementing, shared.EpicReviewing, shared.EpicPROpen,
+			shared.EpicMerging, shared.EpicMerged, shared.EpicCanceled:
 			return true
 		}
 		return false
