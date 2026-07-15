@@ -229,13 +229,27 @@ type SessionKiller func(ctx context.Context, socket, name string) error
 // capturer/result, or even a panic inside it, must never turn a valid kill
 // into a failed one.
 //
-// capture and kill run under DELIBERATELY SEPARATE contexts: capture gets its
-// own short captureTimeout budget, independent of the kill's — so a slow
-// capture (the /proc + filesystem walks are best-effort and can stall) can
-// never eat into the kill's own timeout. The kill then runs under a FRESH
-// withTmuxTimeout(r), unaffected by however long capture took. The kill is
-// REQUIRED (worktree teardown / retry retirement depend on it); the capture
-// is not.
+// capture runs in its OWN goroutine against a buffered result channel: the
+// capturer is a synchronous call (a hung syscall inside it can't be
+// interrupted just because its ctx expired), so the handler goroutine
+// SELECTs between that result and a captureTimeout deadline instead of
+// blocking on the call directly. If the timeout wins, the handler proceeds
+// with nil usage and simply stops waiting — the channel is buffered so the
+// still-running goroutine's eventual send never blocks, and any ctx-aware
+// walk inside capture unwinds once capCtx's own timeout expires. A recover()
+// inside the goroutine keeps a capture panic from ever crashing it.
+//
+// The kill runs under a DETACHED context — context.WithoutCancel(r.Context())
+// rebounded by agentTmuxTimeout — so it is unaffected by however long capture
+// took AND cannot be aborted by the inbound request's own cancellation (e.g.
+// the hub client disconnecting or timing out while capture was still
+// running). The kill is REQUIRED (worktree teardown / retry retirement
+// depend on it) and ALWAYS runs after the capture select, regardless of
+// capture's outcome; the capture is not required.
+//
+// CapturedAt is stamped the moment a non-empty capture result is observed —
+// not after kill returns — so a slow kill can never shift the reap boundary
+// the hub records.
 func KillSessionHandler(cfg config.Config, kill SessionKiller, capture report.UsageCapturer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxCreateBody)
@@ -262,17 +276,41 @@ func KillSessionHandler(cfg config.Config, kill SessionKiller, capture report.Us
 			return
 		}
 		var usage []shared.Usage
+		var capturedAt string
 		if capture != nil {
 			capCtx, capCancel := context.WithTimeout(r.Context(), captureTimeout)
-			func() {
+			resultCh := make(chan []shared.Usage, 1) // buffered: a late/discarded send must never block
+			go func() {
 				defer capCancel()
-				defer func() { _ = recover() }() // capture is best-effort; never break the kill
-				usage = capture(capCtx, t.SocketName, req.Name)
+				var result []shared.Usage
+				func() {
+					defer func() { _ = recover() }() // capture is best-effort; a panic must not crash the goroutine
+					result = capture(capCtx, t.SocketName, req.Name)
+				}()
+				resultCh <- result
 			}()
+			select {
+			case usage = <-resultCh:
+			case <-time.After(captureTimeout):
+				// Capture is taking too long — proceed with nil usage. The
+				// goroutine above keeps running; capCtx's own timeout unwinds
+				// any ctx-aware walk inside it, and the buffered channel means
+				// its eventual (unread) send never blocks.
+			}
+			if len(usage) > 0 {
+				// The agent's own clock, second precision RFC3339 to match report
+				// Ts's lexicographic-ordering contract — never RFC3339Nano. Stamped
+				// NOW, at capture time, not after the kill below completes.
+				capturedAt = time.Now().UTC().Format(time.RFC3339)
+			}
 		}
-		ctx, cancel := withTmuxTimeout(r)
-		defer cancel()
-		if err := kill(ctx, t.SocketName, req.Name); err != nil {
+		// Detached from r.Context(): request cancellation (e.g. the hub client
+		// disconnecting or timing out while capture ran) must never abort the
+		// REQUIRED kill. Still bounded by agentTmuxTimeout so a hung tmux
+		// invocation can't pin the goroutine forever.
+		killCtx, killCancel := context.WithTimeout(context.WithoutCancel(r.Context()), agentTmuxTimeout)
+		defer killCancel()
+		if err := kill(killCtx, t.SocketName, req.Name); err != nil {
 			if errors.Is(err, tmux.ErrNoSession) {
 				writeJSONError(w, http.StatusNotFound, "no such session")
 				return
@@ -281,12 +319,7 @@ func KillSessionHandler(cfg config.Config, kill SessionKiller, capture report.Us
 			writeJSONError(w, http.StatusInternalServerError, "kill failed")
 			return
 		}
-		resp := shared.KillSessionResponse{Usage: usage}
-		if len(usage) > 0 {
-			// The agent's own clock, second precision RFC3339 to match report
-			// Ts's lexicographic-ordering contract — never RFC3339Nano.
-			resp.CapturedAt = time.Now().UTC().Format(time.RFC3339)
-		}
+		resp := shared.KillSessionResponse{Usage: usage, CapturedAt: capturedAt}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}

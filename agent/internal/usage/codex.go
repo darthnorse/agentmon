@@ -27,33 +27,36 @@ type codexLine struct {
 // token_count's payload.info carries totals but no payload.model). It shows
 // up on other record kinds instead (e.g. turn_context's payload.model,
 // collaboration_mode's nested payload.collaboration_mode.settings.model), so
-// this tracks the most-recent non-empty payload.model seen across ANY record
-// in the rollout and pairs it with the last token_count total. A rollout is
-// one session/model, so last-seen model == the session's model. If no record
-// ever carries a model, Model stays "" — best-effort, never fails closed on
-// the totals.
+// this tracks curModel — the most-recent non-empty payload.model seen so
+// far — and snapshots it into the result's Model INSIDE the token_count
+// branch, at the moment each token_count is emitted. That snapshot (not a
+// last-seen-across-the-whole-rollout value) is what survives to the return:
+// a payload.model record appearing AFTER the final token_count (e.g. a new
+// turn's context) must not relabel the earlier cumulative total with a model
+// that wasn't current when it was captured. If no record ever carries a
+// model before the last token_count, Model stays "" — best-effort, never
+// fails closed on the totals.
 func ParseCodex(r io.Reader) (MsgUsage, bool, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var last MsgUsage
 	var found bool
-	var model string
+	var curModel string
 	for sc.Scan() {
 		var l codexLine
 		if json.Unmarshal(sc.Bytes(), &l) != nil {
 			continue
 		}
 		if l.Payload.Model != "" {
-			model = l.Payload.Model
+			curModel = l.Payload.Model
 		}
 		if l.Payload.Type != "token_count" {
 			continue
 		}
 		t := l.Payload.Info.Total
-		last = MsgUsage{Provider: "codex",
+		last = MsgUsage{Provider: "codex", Model: curModel,
 			Input: t.Input - t.Cached, Output: t.Output, CacheRead: t.Cached, CacheWrite: 0}
 		found = true
 	}
-	last.Model = model
 	return last, found, sc.Err()
 }
