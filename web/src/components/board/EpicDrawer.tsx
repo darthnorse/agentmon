@@ -308,6 +308,7 @@ export function EpicDrawer({ epic, project, onClose }: {
                 queryKey={epicArtifactKey(epic.project_id, epic.id, selectedArtifact)}
                 queryFn={() => getEpicArtifact(epic.project_id, epic.id, selectedArtifact)}
                 branchUrl={epic.branch ? `https://github.com/${project.repo}/tree/${epic.branch}` : `https://github.com/${project.repo}`}
+                bodyMaxHeightClass="max-h-none"
               />
             </section>
           </div>

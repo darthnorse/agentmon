@@ -10,11 +10,16 @@ import type { EpicArtifactResponse } from "@/lib/contracts";
 // GitHub fallback URL; ArtifactPanel owns the loading/error/render states and an
 // optional footer (e.g. the plan's "Approve plan" button). Reviewing from a
 // phone is the whole point — real markdown, not a <pre>.
-export function ArtifactPanel({ queryKey, queryFn, branchUrl, children }: {
+export function ArtifactPanel({ queryKey, queryFn, branchUrl, children, bodyMaxHeightClass = "max-h-[50vh]" }: {
   queryKey: readonly unknown[];
   queryFn: () => Promise<EpicArtifactResponse>;
   branchUrl: string;
   children?: ReactNode;
+  // Caps the markdown body's own scroll region. Drawer sections (e.g.
+  // PlanPanel) want the 50vh default so the doc doesn't blow out the panel;
+  // a dedicated full-height overlay (e.g. EpicDrawer's artifact view) passes
+  // "max-h-none" so the doc fills it and the overlay's own container scrolls.
+  bodyMaxHeightClass?: string;
 }) {
   const q = useQuery({ queryKey, queryFn, staleTime: 30_000, retry: false });
 
@@ -33,7 +38,7 @@ export function ArtifactPanel({ queryKey, queryFn, branchUrl, children }: {
   return (
     <>
       <div className="font-mono text-[11px] text-muted-foreground">{q.data.path} @ {q.data.ref}</div>
-      <div className="markdown max-h-[50vh] overflow-y-auto rounded-md border border-border bg-background p-3">
+      <div className={`markdown ${bodyMaxHeightClass} overflow-y-auto rounded-md border border-border bg-background p-3`}>
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.data.markdown}</ReactMarkdown>
       </div>
       {children}

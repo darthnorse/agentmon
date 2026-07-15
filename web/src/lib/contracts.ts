@@ -72,6 +72,10 @@ export interface EpicEventDTO { from: string; to: string; source: string; note: 
 export interface AllBoardResponse { orchestrator_enabled: boolean; projects: ProjectDTO[]; epics: EpicDTO[]; }
 export interface ProjectBoardResponse { project: ProjectDTO; epics: EpicDTO[]; events: Record<string, EpicEventDTO[]>; }
 export interface EpicPlanResponse { path: string; ref: string; markdown: string; }
+// Must stay structurally identical to EpicPlanResponse: PlanPanel injects
+// getEpicPlan (which returns EpicPlanResponse) into ArtifactPanel's queryFn,
+// which types its query result as EpicArtifactResponse — the two are relied
+// on to be structurally compatible.
 export interface EpicArtifactResponse { path: string; ref: string; markdown: string; }
 
 // Usage tracking DTO family (mirrors Go shared.Usage* types)

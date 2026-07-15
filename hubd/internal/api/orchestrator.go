@@ -759,8 +759,8 @@ func (d Deps) fetchArtifact(ctx context.Context, w http.ResponseWriter, repo, ba
 	b, err := d.Contents.GetContents(ctx, repo, path, branch)
 	ref := branch
 	if errors.Is(err, github.ErrNotFound) && baseBranch != "" && baseBranch != branch {
-		if b2, err2 := d.Contents.GetContents(ctx, repo, path, baseBranch); err2 == nil {
-			b, err, ref = b2, nil, baseBranch
+		if b2, err2 := d.Contents.GetContents(ctx, repo, path, baseBranch); err2 == nil || !errors.Is(err2, github.ErrNotFound) {
+			b, err, ref = b2, err2, baseBranch
 		}
 	}
 	switch {

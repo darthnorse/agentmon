@@ -866,6 +866,74 @@ func TestEpicArtifactHandler(t *testing.T) {
 	}
 }
 
+// TestFetchArtifactFallbackEdges locks in the base-branch fallback's edges:
+// it must only fire when the base branch actually differs from the epic
+// branch, and when it does fire, a non-NotFound base error must surface
+// (not get masked as the branch's generic 404 — the Fix 1 regression).
+func TestFetchArtifactFallbackEdges(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+
+	call := func(d Deps, project, epicID, path string) *httptest.ResponseRecorder {
+		r, w := orchReq("GET", "/api/v1/orchestrator/projects/"+project+"/epics/"+epicID+"/artifact?path="+url.QueryEscape(path), "")
+		r.SetPathValue("id", project)
+		r.SetPathValue("epicID", epicID)
+		d.OrchestratorEpicArtifactHandler()(w, r)
+		return w
+	}
+
+	// base=="" (project BaseBranch never set): branch ErrNotFound must not
+	// trigger a fallback attempt at all — exactly one GetContents call, 404.
+	database.CreateProject(ctx, db.Project{ID: "p-nobase", Name: "p-nobase", Repo: "o/r-nobase", ServerID: "h1", Workdir: "/w", BaseBranch: "", Provider: "claude", MaxParallel: 1})
+	e1, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p-nobase", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	if ok, err := database.SetEpicPR(ctx, e1.ID, 0, "epic/7-x"); err != nil || !ok {
+		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
+	}
+	fc1 := &fakeContents{err: github.ErrNotFound}
+	d1 := Deps{DB: database, Orch: &fakeOrch{}, Contents: fc1}
+	if w := call(d1, "p-nobase", e1.ID, "docs/reviews/epic-7-final.md"); w.Code != 404 {
+		t.Fatalf("empty base = %d %s", w.Code, w.Body.String())
+	}
+	if len(fc1.refsSeen) != 1 {
+		t.Fatalf("expected exactly one GetContents call with empty base, got %v", fc1.refsSeen)
+	}
+
+	// base==branch: nothing new to try, so branch ErrNotFound must not
+	// trigger a fallback attempt either — exactly one GetContents call, 404.
+	database.CreateProject(ctx, db.Project{ID: "p-samebase", Name: "p-samebase", Repo: "o/r-samebase", ServerID: "h1", Workdir: "/w", BaseBranch: "epic/7-x", Provider: "claude", MaxParallel: 1})
+	e2, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p-samebase", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	if ok, err := database.SetEpicPR(ctx, e2.ID, 0, "epic/7-x"); err != nil || !ok {
+		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
+	}
+	fc2 := &fakeContents{err: github.ErrNotFound}
+	d2 := Deps{DB: database, Orch: &fakeOrch{}, Contents: fc2}
+	if w := call(d2, "p-samebase", e2.ID, "docs/reviews/epic-7-final.md"); w.Code != 404 {
+		t.Fatalf("same base = %d %s", w.Code, w.Body.String())
+	}
+	if len(fc2.refsSeen) != 1 {
+		t.Fatalf("expected exactly one GetContents call when base==branch, got %v", fc2.refsSeen)
+	}
+
+	// branch ErrNotFound + base ErrTooLarge → 413: the base's own error must
+	// be surfaced, not swallowed into the branch's generic 404 (Fix 1).
+	database.CreateProject(ctx, db.Project{ID: "p-basetoolarge", Name: "p-basetoolarge", Repo: "o/r-basetoolarge", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e3, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p-basetoolarge", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	if ok, err := database.SetEpicPR(ctx, e3.ID, 0, "epic/7-x"); err != nil || !ok {
+		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
+	}
+	fc3 := &fakeContents{byRef: map[string]refResp{
+		"epic/7-x": {err: github.ErrNotFound},
+		"main":     {err: github.ErrTooLarge},
+	}}
+	d3 := Deps{DB: database, Orch: &fakeOrch{}, Contents: fc3}
+	if w := call(d3, "p-basetoolarge", e3.ID, "docs/reviews/epic-7-final.md"); w.Code != 413 {
+		t.Fatalf("base too-large = %d %s", w.Code, w.Body.String())
+	}
+	if len(fc3.refsSeen) != 2 || fc3.refsSeen[0] != "epic/7-x" || fc3.refsSeen[1] != "main" {
+		t.Fatalf("expected branch-then-base fetch order, got %v", fc3.refsSeen)
+	}
+}
+
 // TestEpicUsageHandler: the epic usage-detail endpoint resolves the epic
 // exactly as the plan handler does (same cross-project 404 guard) and
 // returns orchestrator.DeriveEpicUsage's full breakdown verbatim, not a
