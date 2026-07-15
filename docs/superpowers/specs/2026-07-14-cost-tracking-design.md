@@ -363,3 +363,35 @@ on live runner data:
 
 These are empirical, not design-open; the design above is stable regardless of
 their answers.
+
+### Capture-spike finding (2026-07-14)
+
+No live `/multi-review` pipeline run was available to observe during this
+spike. Instead, the Step-1 probe was run against the existing transcripts on
+this host:
+
+```
+files 74 isSidechain rows 0
+```
+
+74 `.jsonl` files under `~/.claude/projects/*agentmon*/`, **zero** rows
+contain `"isSidechain":true`. This is consistent with (not a live-confirmation
+of) the hypothesis that `/multi-review` lens subagents write their own
+separate transcript files rather than inlining usage into the parent's
+transcript — across 74 files from real prior sessions (including epic-01/02
+runs that invoked `/multi-review`), none show sidechain-inlined usage.
+
+**This does not by itself pin down where those separate subagent files land**
+(same project dir vs. elsewhere) or their exact naming/lineage — that requires
+observing file creation *during* a live pipeline run, which did not happen
+here. Confirming subagent transcript placement live remains a **follow-up**
+for the next real runner execution (e.g. during epic-03's implementation).
+
+**Why this is non-blocking regardless:** the aggregator's dedup in Task 6 is
+**global by `message.id`**, not scoped to a single expected file. Any Claude
+transcript in scope — parent or subagent, wherever it lands — has its usage
+counted exactly once. So the aggregator's correctness does not depend on
+knowing the subagent file's exact location or naming convention ahead of
+time; it only depends on the file being *discoverable* within the attempt's
+worktree/window scope, which is a separate (already-tracked) empirical
+unknown (#3 above, the fd-binding / scope-discovery mechanics).
