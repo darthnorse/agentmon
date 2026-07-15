@@ -105,7 +105,7 @@ func main() {
 	mux.Handle("GET /sessions", api.RequireBearer(cfg.HubToken, api.SessionsHandler(cfg, discover, machine)))
 	mux.Handle("POST /sessions", api.RequireBearer(cfg.HubToken, api.CreateSessionHandler(cfg, createSession)))
 	mux.Handle("POST /sessions/rename", api.RequireBearer(cfg.HubToken, api.RenameSessionHandler(cfg, renameSession)))
-	mux.Handle("POST /sessions/kill", api.RequireBearer(cfg.HubToken, api.KillSessionHandler(cfg, killSession)))
+	mux.Handle("POST /sessions/kill", api.RequireBearer(cfg.HubToken, api.KillSessionHandler(cfg, killSession, captureUsage)))
 	mux.Handle("POST /worktrees/teardown", api.RequireBearer(cfg.HubToken, api.WorktreeTeardownHandler(cfg, teardownWorktree)))
 	mux.Handle("GET /state", api.RequireBearer(cfg.HubToken, api.StateHandler(cfg, machine)))
 	mux.Handle("GET /orchestrator/reports", api.RequireBearer(cfg.HubToken, report.DrainHandler(cfg, reportStore)))

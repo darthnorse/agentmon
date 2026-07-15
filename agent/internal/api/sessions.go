@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentmon/agent/internal/config"
+	"agentmon/agent/internal/report"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
 	"agentmon/shared"
@@ -209,7 +210,15 @@ type SessionKiller func(ctx context.Context, socket, name string) error
 // KillSessionHandler serves POST /sessions/kill?target=<label>. The body's `name`
 // must be a non-empty existing tmux session name; the target resolves via config
 // (the agent's own socket — never client-controlled). Maps tmux.ErrNoSession→404.
-func KillSessionHandler(cfg config.Config, kill SessionKiller) http.HandlerFunc {
+//
+// Task 10 (reap snapshot): BEFORE killing, capture runs against the target
+// session — tmux `display-message -t <session_name>` targets that session's
+// active pane, so the session NAME doubles as the capturer's `pane` arg — and
+// the resulting usage (if any) rides the success response so the hub can
+// record the session's terminal boundary before it's gone. capture is
+// best-effort like the report intake's: a nil capturer/result, or even a
+// panic inside it, must never turn a valid kill into a failed one.
+func KillSessionHandler(cfg config.Config, kill SessionKiller, capture report.UsageCapturer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxCreateBody)
 		var req shared.KillSessionRequest
@@ -236,6 +245,13 @@ func KillSessionHandler(cfg config.Config, kill SessionKiller) http.HandlerFunc 
 		}
 		ctx, cancel := withTmuxTimeout(r)
 		defer cancel()
+		var usage []shared.Usage
+		if capture != nil {
+			func() {
+				defer func() { _ = recover() }() // capture is best-effort; never break the kill
+				usage = capture(ctx, t.SocketName, req.Name)
+			}()
+		}
 		if err := kill(ctx, t.SocketName, req.Name); err != nil {
 			if errors.Is(err, tmux.ErrNoSession) {
 				writeJSONError(w, http.StatusNotFound, "no such session")
@@ -246,7 +262,7 @@ func KillSessionHandler(cfg config.Config, kill SessionKiller) http.HandlerFunc 
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(shared.CreateSessionResponse{Name: req.Name})
+		_ = json.NewEncoder(w).Encode(shared.KillSessionResponse{Usage: usage})
 	}
 }
 

@@ -96,6 +96,15 @@ type KillSessionRequest struct {
 	Name string `json:"name"`
 }
 
+// KillSessionResponse is the agent's POST /sessions/kill success body. Usage
+// is the target session's terminal usage snapshot — captured (best-effort)
+// immediately BEFORE the kill, per Task 10's reap-snapshot design — so the
+// hub can attribute the tail of tokens a merge/cancel/retry would otherwise
+// drop. Empty/omitted when capture is unavailable, nil, or returns nothing.
+type KillSessionResponse struct {
+	Usage []Usage `json:"usage,omitempty"`
+}
+
 // WorktreeTeardownRequest is the body of POST /worktrees/teardown (agent) and
 // the hub's teardown call. Workdir is the project's main clone; Branch is the
 // epic's branch whose worktree to remove.

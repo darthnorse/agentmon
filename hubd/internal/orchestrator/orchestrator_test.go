@@ -72,6 +72,7 @@ type fakeAgents struct {
 	drainAcks       [][2]any
 	killed          []string
 	killErr         error
+	killUsage       []shared.Usage
 	spawnErr        error
 	sessions        []string // live tmux session names the agent would list
 	sessionsErr     error
@@ -106,9 +107,9 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: uint64(len(out)), Reports: out}, nil
 }
 
-func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) error {
+func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) ([]shared.Usage, error) {
 	f.killed = append(f.killed, name)
-	return f.killErr
+	return f.killUsage, f.killErr
 }
 
 func (f *fakeAgents) TeardownWorktree(_ context.Context, _ db.Server, _, workdir, branch string) error {
@@ -382,6 +383,44 @@ func TestFinishMergedProceedsWhenTeardownFails(t *testing.T) {
 	if e.Stage != "merged" {
 		t.Fatalf("a teardown error must not block the merge; stage = %q", e.Stage)
 	}
+}
+
+// TestKillEpicSessionStoresTerminalUsage covers the reap snapshot (task 10):
+// the agent's kill response can carry the session's final cumulative usage,
+// captured immediately before the kill. On a CONFIRMED kill, killEpicSession
+// must upsert that usage into the epic's ledger — closing the wasted-cost
+// tail of a merge/cancel/retry reap that would otherwise report nothing past
+// the last stage report.
+func TestKillEpicSessionStoresTerminalUsage(t *testing.T) {
+	ag := &fakeAgents{sessions: []string{sessionName(16)},
+		killUsage: []shared.Usage{{Provider: "codex", Model: "m", Output: 7}}}
+	d := mergeTo16(t, ag)
+	ctx := context.Background()
+	e, err := d.GetEpicByIssue(ctx, "p1", 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.ListEpicUsage(ctx, e.ProjectID, e.IssueNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// killEpicSession runs from finishMerged BEFORE finishMerged's own
+	// merged transition lands on the local epic struct it was passed, so the
+	// terminal row's stage is the epic's stage as of the kill call ("merging",
+	// the gate's pre-merged transition) — not "merged". That is the documented
+	// behavior (Stage: shared.EpicStage(e.Stage) uses the struct as received).
+	if !hasUsageRow(rows, "codex", 7, string(shared.EpicMerging)) {
+		t.Fatalf("terminal usage not stored: %+v", rows)
+	}
+}
+
+func hasUsageRow(rows []db.UsageRow, provider string, output int64, stage string) bool {
+	for _, r := range rows {
+		if r.Provider == provider && r.Output == output && r.Stage == stage {
+			return true
+		}
+	}
+	return false
 }
 
 func TestFinishMergedSkipsTeardownWhenKillFails(t *testing.T) {

@@ -34,7 +34,7 @@ type GitHubAPI interface {
 type AgentAPI interface {
 	CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error)
 	DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)
-	KillSession(ctx context.Context, srv db.Server, target, name string) error
+	KillSession(ctx context.Context, srv db.Server, target, name string) ([]shared.Usage, error)
 	TeardownWorktree(ctx context.Context, srv db.Server, target, workdir, branch string) error
 	Sessions(ctx context.Context, srv db.Server, target string) ([]shared.Session, error)
 }
@@ -196,7 +196,7 @@ func (o *Orchestrator) retryRetire(ctx context.Context) {
 		}
 		kept := names[:0]
 		for _, name := range names {
-			if err := o.d.Agents.KillSession(ctx, srv, target, name); err != nil && !errors.Is(err, registry.ErrNoSession) {
+			if _, err := o.d.Agents.KillSession(ctx, srv, target, name); err != nil && !errors.Is(err, registry.ErrNoSession) {
 				kept = append(kept, name)
 				continue
 			}
@@ -901,13 +901,21 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 	if !ok {
 		return false
 	}
-	if err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName); err != nil && !errors.Is(err, registry.ErrNoSession) {
+	usage, err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName)
+	if err != nil && !errors.Is(err, registry.ErrNoSession) {
 		// The runner may still be alive, sharing the epic's attempt-agnostic
 		// branch/worktree with its successor — queue the kill for per-tick
 		// retry before the next spawn overwrites e.SessionName.
 		o.queueRetire(srv.ID, p.Target, e.SessionName)
 		log.Printf("orchestrator[%s]: %s kill session %q failed (queued for retry): %v", p.Name, phase, e.SessionName, err)
 		return false
+	}
+	// The kill is CONFIRMED (killed, or already gone) — the agent's best-effort
+	// capture-then-kill snapshot (if any) is the epic's terminal usage boundary,
+	// closing the wasted-cost tail of a merge/cancel/retry reap that would
+	// otherwise report nothing past the last stage report.
+	if len(usage) > 0 {
+		o.upsertUsage(ctx, p, e, shared.OrchestratorReport{Stage: shared.EpicStage(e.Stage), Ts: o.d.Now(), Usage: usage})
 	}
 	return true
 }
