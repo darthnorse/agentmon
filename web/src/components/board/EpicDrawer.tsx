@@ -10,12 +10,75 @@ import { TerminalPreview } from "@/components/board/TerminalPreview";
 import { openOrFocusSession } from "@/components/board/open-session";
 import { useEpicActions } from "@/hooks/useEpicActions";
 import {
-  boardSessionsKey, getProjectBoard, listServers, listSessions, projectBoardKey, serversKey,
+  boardSessionsKey, epicUsageKey, getEpicUsage, getProjectBoard, listServers, listSessions, projectBoardKey, serversKey,
 } from "@/lib/api-client";
 import { canApprove, findRunnerSession, isPlanGate, isTerminalStage, mergeMode, parseVerdict, stageMeta } from "@/lib/board";
-import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
+import type { EpicDTO, EpicUsage, ProjectDTO, UsageStage } from "@/lib/contracts";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { fmtCost, fmtDuration, fmtTokens } from "@/lib/usage-format";
 import { cn } from "@/lib/utils";
+
+// Task 17: per-attempt → per-stage → per-model usage breakdown, lazily
+// fetched (the drawer only mounts this query when open — no extra flag
+// needed). A `≥` prefix flags an attempt whose usage rows are known
+// incomplete (is_lower_bound) so the human doesn't mistake a partial sum
+// for the true total. Per-model detail only appears when a stage actually
+// spans more than one model — keeps the common single-model case readable.
+function UsageStageRow({ stage }: { stage: UsageStage }) {
+  return (
+    <div>
+      <div>
+        {stage.stage} — {fmtTokens(stage.tokens.total)} tok · {fmtCost(stage.cost)} · {fmtDuration(stage.duration_ms)}
+      </div>
+      {stage.by_model.length > 1 && (
+        <div className="mt-0.5 flex flex-col gap-0.5 pl-3 text-muted-foreground">
+          {stage.by_model.map((m, i) => (
+            <div key={i}>{m.provider}/{m.model}: {fmtTokens(m.tokens.total)} tok · {fmtCost(m.cost)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UsageBreakdown({ epic }: { epic: EpicDTO }) {
+  const q = useQuery({
+    queryKey: epicUsageKey(epic.project_id, epic.id),
+    queryFn: () => getEpicUsage(epic.project_id, epic.id),
+    staleTime: 30_000,
+  });
+
+  if (q.isLoading) return <div className="text-xs text-muted-foreground">Loading usage…</div>;
+  const usage: EpicUsage | undefined = q.data;
+  if (!usage || usage.attempts.length === 0) {
+    return <div className="text-xs text-muted-foreground">No usage yet.</div>;
+  }
+
+  return (
+    <div className="flex flex-col gap-2 text-xs">
+      <div className="font-medium">
+        {fmtTokens(usage.tokens.total)} tok · {fmtCost(usage.cost)} · {fmtDuration(usage.duration_ms)}
+      </div>
+      <div className="flex flex-col gap-2">
+        {usage.attempts.map((a) => {
+          const lb = a.is_lower_bound ? "≥" : "";
+          return (
+            <div key={a.attempt} className="rounded-md border border-border bg-card p-2">
+              <div className="font-medium">
+                attempt {a.attempt} ({a.outcome}) — {lb}{fmtTokens(a.tokens.total)} tok · {lb}{fmtCost(a.cost)} · {fmtDuration(a.duration_ms)}
+              </div>
+              {a.stages.length > 0 && (
+                <div className="mt-1.5 flex flex-col gap-1.5 border-l border-border pl-3 text-muted-foreground">
+                  {a.stages.map((s, i) => <UsageStageRow key={i} stage={s} />)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function EpicDrawer({ epic, project, onClose }: {
   epic: EpicDTO; project: ProjectDTO; onClose(): void;
@@ -181,6 +244,8 @@ export function EpicDrawer({ epic, project, onClose }: {
               </div>
             )
           ))}
+
+          {section("Usage", <UsageBreakdown epic={epic} />)}
 
           {section("Details", (
             <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">

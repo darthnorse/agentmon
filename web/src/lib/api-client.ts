@@ -2,7 +2,7 @@ import type {
   ServerSummary, SessionInfo, Session, SeenRequest,
   PushSubscriptionJSON, VapidKeyResponse, CreateSessionRequest, PendingServer, ChangePasswordRequest,
   AllBoardResponse, ProjectBoardResponse, EpicPlanResponse, EpicActionRequest,
-  ProjectCreateRequest, ProjectPatchRequest, ProjectDTO,
+  ProjectCreateRequest, ProjectPatchRequest, ProjectDTO, EpicUsage,
 } from "@/lib/contracts";
 
 const BASE = "/api/v1";
@@ -133,6 +133,7 @@ export const unsubscribePush = (endpoint: string) =>
 export const allBoardKey = () => ["board"] as const;
 export const projectBoardKey = (projectId: string) => ["board", projectId] as const;
 export const epicPlanKey = (projectId: string, epicId: string) => ["epic-plan", projectId, epicId] as const;
+export const epicUsageKey = (projectId: string, epicId: string) => ["epic-usage", projectId, epicId] as const;
 // A runner session lives under the project's TARGET socket. Key by target so
 // same-host projects on different targets don't collide; an empty target
 // reuses the home screen's sessionsKey (identical default-target list).
@@ -146,6 +147,11 @@ export const getEpicPlan = (projectId: string, epicId: string) =>
   request<EpicPlanResponse>(
     "GET",
     `/orchestrator/projects/${encodeURIComponent(projectId)}/epics/${encodeURIComponent(epicId)}/plan`,
+  );
+export const getEpicUsage = (projectId: string, epicId: string) =>
+  request<EpicUsage>(
+    "GET",
+    `/orchestrator/projects/${encodeURIComponent(projectId)}/epics/${encodeURIComponent(epicId)}/usage`,
   );
 export const epicAction = (projectId: string, body: EpicActionRequest) =>
   request<{ ok: boolean }>("POST", `/orchestrator/projects/${encodeURIComponent(projectId)}/actions`, body);

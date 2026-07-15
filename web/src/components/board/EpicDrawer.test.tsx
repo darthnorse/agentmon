@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   epicAction: vi.fn(),
   getProjectBoard: vi.fn(),
+  getEpicUsage: vi.fn(),
   listServers: vi.fn(),
   listSessions: vi.fn(),
   openOrFocusSession: vi.fn(),
@@ -14,7 +15,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/api-client", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api-client")>();
   return {
-    ...mod, epicAction: h.epicAction, getProjectBoard: h.getProjectBoard,
+    ...mod, epicAction: h.epicAction, getProjectBoard: h.getProjectBoard, getEpicUsage: h.getEpicUsage,
     listServers: h.listServers, listSessions: h.listSessions,
   };
 });
@@ -25,7 +26,7 @@ vi.mock("@/lib/use-media-query", () => ({ useMediaQuery: () => true }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 
 import { EpicDrawer } from "@/components/board/EpicDrawer";
-import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
+import type { EpicDTO, EpicUsage, ProjectDTO } from "@/lib/contracts";
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -59,6 +60,10 @@ describe("EpicDrawer", () => {
       project, epics: [],
       events: { e1: [{ from: "planning", to: "implementing", source: "report", note: "", ts: "2026-07-11T08:30:00Z" }] },
     });
+    h.getEpicUsage.mockReset().mockResolvedValue({
+      tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 },
+      cost: null, duration_ms: 0, by_model: [], attempts: [],
+    } satisfies EpicUsage);
   });
 
   it("renders verdict block, stage history, details, and GitHub links", async () => {
@@ -93,6 +98,58 @@ describe("EpicDrawer", () => {
       expect.objectContaining({ serverId: "h1", serverName: "host-one", name: "epic-15-x", session: expect.objectContaining({ name: "epic-15-x" }) }),
       true, expect.any(Function),
     );
+  });
+
+  it("renders per-attempt/stage/model usage, lazily fetched", async () => {
+    const tok = (total: number) => ({ input: total, output: 0, cache_read: 0, cache_write: 0, total });
+    const usage: EpicUsage = {
+      tokens: tok(15000), cost: 1.23, duration_ms: 600000, by_model: [],
+      attempts: [
+        {
+          attempt: 1, outcome: "escalated", duration_ms: 300000, tokens: tok(10000), cost: 0.8,
+          is_lower_bound: false,
+          stages: [
+            {
+              stage: "implementing", duration_ms: 200000, tokens: tok(9000), cost: 0.7,
+              by_model: [
+                { provider: "anthropic", model: "claude-opus", tokens: tok(6000), cost: 0.5 },
+                { provider: "openai", model: "gpt-5", tokens: tok(3000), cost: 0.2 },
+              ],
+            },
+          ],
+        },
+        {
+          attempt: 2, outcome: "running", duration_ms: 300000, tokens: tok(5000), cost: 0.43,
+          is_lower_bound: true,
+          stages: [
+            {
+              stage: "reviewing", duration_ms: 100000, tokens: tok(5000), cost: 0.43,
+              by_model: [{ provider: "anthropic", model: "claude-opus", tokens: tok(5000), cost: 0.43 }],
+            },
+          ],
+        },
+      ],
+    };
+    h.getEpicUsage.mockResolvedValue(usage);
+    render(<EpicDrawer epic={epic({})} project={project} onClose={() => {}} />, { wrapper });
+
+    expect(h.getEpicUsage).not.toHaveBeenCalled;
+    await waitFor(() => expect(h.getEpicUsage).toHaveBeenCalledWith("p1", "e1"));
+
+    await waitFor(() => expect(screen.getByText(/attempt 1 \(escalated\)/)).toBeInTheDocument());
+    expect(screen.getByText(/attempt 2 \(running\)/)).toBeInTheDocument();
+    expect(screen.getByText(/implementing —/)).toBeInTheDocument();
+    expect(screen.getByText(/reviewing —/)).toBeInTheDocument();
+
+    // is_lower_bound attempt 2 gets a ≥ prefix on tokens/cost
+    const attempt2Row = screen.getByText(/attempt 2 \(running\)/).closest("div")!;
+    expect(attempt2Row.textContent).toContain("≥");
+    const attempt1Row = screen.getByText(/attempt 1 \(escalated\)/).closest("div")!;
+    expect(attempt1Row.textContent).not.toContain("≥");
+
+    // multi-model stage lists both models
+    expect(screen.getByText(/anthropic\/claude-opus/)).toBeInTheDocument();
+    expect(screen.getByText(/openai\/gpt-5/)).toBeInTheDocument();
   });
 
   it("escape closes", () => {
