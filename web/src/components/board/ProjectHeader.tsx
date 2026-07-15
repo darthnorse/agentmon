@@ -1,15 +1,58 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { openOrFocusSession } from "@/components/board/open-session";
 import { PlanEpicsModal } from "@/components/board/PlanEpicsModal";
 import { useEpicActions } from "@/hooks/useEpicActions";
+import { getProjectUsage, projectUsageKey } from "@/lib/api-client";
 import { boardStats, MAX_PARALLEL_CEILING, planSessionName, sessionSlug } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import { planCommand } from "@/lib/shell-quote";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { fmtCost, fmtDuration, fmtTokens } from "@/lib/usage-format";
 import { cn } from "@/lib/utils";
+
+// Task 18: project-page usage rollup. Deliberately plain text rows — same
+// treatment as EpicDrawer's UsageBreakdown (Task 17) — not a chart; it's a
+// header summary, not a full panel. Renders nothing while loading beyond a
+// subtle hint, and nothing at all once loaded if the project has zero usage
+// (a brand-new project shouldn't grow a permanent empty block in the header).
+function ProjectUsageSummary({ projectId }: { projectId: string }) {
+  const usageQ = useQuery({
+    queryKey: projectUsageKey(projectId),
+    queryFn: () => getProjectUsage(projectId),
+    staleTime: 30_000,
+  });
+
+  if (usageQ.isLoading) return <div className="w-full pt-2 text-xs text-muted-foreground">Loading usage…</div>;
+  const usage = usageQ.data;
+  const empty = !usage || (usage.tokens.total === 0 && usage.by_stage.length === 0 && usage.by_model.length === 0);
+  if (empty) return null;
+
+  return (
+    <div className="flex w-full flex-col gap-1 pt-2 text-xs">
+      <div className="font-medium">
+        {fmtTokens(usage.tokens.total)} tok · {fmtCost(usage.cost)} · {fmtDuration(usage.duration_ms)}
+      </div>
+      {usage.by_stage.length > 0 && (
+        <div className="flex flex-col gap-0.5 text-muted-foreground">
+          {usage.by_stage.map((s, i) => (
+            <div key={i}>{s.stage} — {fmtTokens(s.tokens.total)} tok · {fmtCost(s.cost)} · {fmtDuration(s.duration_ms)}</div>
+          ))}
+        </div>
+      )}
+      {usage.by_model.length > 0 && (
+        <div className="flex flex-col gap-0.5 text-muted-foreground">
+          {usage.by_model.map((m, i) => (
+            <div key={i}>{m.provider}/{m.model} — {fmtTokens(m.tokens.total)} tok · {fmtCost(m.cost)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Parse "47", "#47", or a GitHub issue/PR URL → issue number (0 = invalid).
 // A URL/path form must name THIS project's repo (owner/repo right before
@@ -96,6 +139,8 @@ export function ProjectHeader({ project, epics, onEdit }: {
         <ConfirmButton label="Pause project" confirmLabel="Pause?" disabled={busy !== null}
           onConfirm={() => void act({ action: "pause" }, "Project paused — running epics finish")} />
       )}
+
+      <ProjectUsageSummary projectId={project.id} />
 
       {showPlan && (
         <PlanEpicsModal
