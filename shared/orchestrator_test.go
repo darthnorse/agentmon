@@ -56,3 +56,19 @@ func TestOrchestratorReportBatchJSONShape(t *testing.T) {
 		}
 	}
 }
+
+func TestOrchestratorReportUsageOmitempty(t *testing.T) {
+	// Backward-additive: a report without usage marshals with NO "usage" key.
+	b, _ := json.Marshal(OrchestratorReport{Repo: "o/r", Epic: 1, Stage: EpicPlanning})
+	if strings.Contains(string(b), "usage") {
+		t.Fatalf("empty usage must be omitted, got %s", b)
+	}
+	// Round-trips when present.
+	in := OrchestratorReport{Repo: "o/r", Epic: 1, Stage: EpicReviewing,
+		Usage: []Usage{{Provider: "claude", Model: "claude-opus-4-8", Input: 10, Output: 20, CacheRead: 30, CacheWrite: 40}}}
+	b, _ = json.Marshal(in)
+	var out OrchestratorReport
+	if err := json.Unmarshal(b, &out); err != nil || len(out.Usage) != 1 || out.Usage[0].CacheRead != 30 {
+		t.Fatalf("round-trip failed: %v %+v", err, out)
+	}
+}

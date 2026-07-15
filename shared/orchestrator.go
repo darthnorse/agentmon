@@ -37,6 +37,18 @@ func ReportableStage(s EpicStage) bool {
 	return false
 }
 
+// Usage is one (provider,model) cumulative token snapshot attached to a stage
+// report. Buckets are DISJOINT: total = Input+Output+CacheRead+CacheWrite.
+// Input is fresh input only (cache excluded) for BOTH providers.
+type Usage struct {
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	Input      int64  `json:"input"`
+	Output     int64  `json:"output"`
+	CacheRead  int64  `json:"cache_read"`
+	CacheWrite int64  `json:"cache_write"`
+}
+
 // OrchestratorReport is one runner stage report. The CLI posts it to the local
 // agent's loopback intake; the hub drains buffered reports over its existing
 // poll channel (hub dials agent — there is no agent→hub connection).
@@ -49,6 +61,7 @@ type OrchestratorReport struct {
 	Branch  string    `json:"branch,omitempty"`
 	Session string    `json:"session"`
 	Ts      string    `json:"ts"`
+	Usage   []Usage   `json:"usage,omitempty"`
 }
 
 // OrchestratorReportBatch is one drain response (ack-on-next-drain protocol).
