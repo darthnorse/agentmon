@@ -92,6 +92,29 @@ func TestDeriveMultiProviderMidAppearance(t *testing.T) {
 	}
 }
 
+func TestDeriveOutcomeUsesEpicAttemptNotMaxRow(t *testing.T) {
+	// Epic already advanced to attempt 2 (spawned, e.Attempt=2), but attempt 2
+	// has not reported any usage yet — only attempt 1 rows exist.
+	rows := []db.UsageRow{
+		{ProjectID: "p", IssueNumber: 7, Attempt: 1, Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z", Provider: "claude", Model: "claude-opus-4-8", Input: 100},
+		{ProjectID: "p", IssueNumber: 7, Attempt: 1, Stage: "implementing", CapturedAt: "2026-07-14T10:05:00Z", Provider: "claude", Model: "claude-opus-4-8", Input: 300},
+	}
+	got := DeriveEpicUsage(rows, db.Epic{IssueNumber: 7, Attempt: 2, Stage: "implementing"})
+	// attempt 1 is NOT the current attempt (e.Attempt==2), so it must read "retried", not e.Stage.
+	var a1 *UsageAttempt
+	for i := range got.Attempts {
+		if got.Attempts[i].Attempt == 1 {
+			a1 = &got.Attempts[i]
+		}
+	}
+	if a1 == nil {
+		t.Fatal("attempt 1 missing from output")
+	}
+	if a1.Outcome != "retried" || a1.IsLowerBound {
+		t.Fatalf("prior attempt must be retried/false, got outcome=%q lowerbound=%v", a1.Outcome, a1.IsLowerBound)
+	}
+}
+
 func TestDeriveIsLowerBoundNonTerminal(t *testing.T) {
 	// A single boundary, current (only) attempt, epic still on a non-terminal stage: no
 	// terminal reap boundary has landed yet, so this attempt's totals are a floor, not exact.

@@ -117,19 +117,18 @@ func DeriveEpicUsage(rows []db.UsageRow, e db.Epic) EpicUsage {
 	}
 	sort.Ints(attemptNums)
 
-	maxAttempt := 0
-	for _, n := range attemptNums {
-		if n > maxAttempt {
-			maxAttempt = n
-		}
-	}
-
 	attempts := make([]UsageAttempt, 0, len(attemptNums))
 	epicTokens := TokenTotals{}
 	epicModelTokens := map[modelKey]TokenTotals{}
 
 	for _, n := range attemptNums {
-		att, finalCum := deriveAttempt(byAttempt[n], n, n == maxAttempt, e)
+		// The "current" attempt is the one matching e.Attempt — NOT necessarily
+		// max(attemptNums). e.Attempt is bumped at spawn time, before the new
+		// attempt has reported any usage rows; in that window the highest
+		// attempt number present in the rows still belongs to the just-finished
+		// PRIOR attempt, which must be labeled "retried", not the live epic's
+		// Outcome/IsLowerBound.
+		att, finalCum := deriveAttempt(byAttempt[n], n, n == e.Attempt, e)
 		attempts = append(attempts, att)
 		epicTokens = epicTokens.add(att.Tokens)
 		for k, v := range finalCum {
@@ -170,8 +169,11 @@ func epicDurationMs(e db.Epic) int64 {
 
 // deriveAttempt derives one attempt's UsageAttempt, plus the final (last
 // boundary) cumulative per (provider,model) — the epic-level rollup needs
-// that same map to sum across attempts.
-func deriveAttempt(rows []db.UsageRow, attemptNum int, isLast bool, e db.Epic) (UsageAttempt, map[modelKey]TokenTotals) {
+// that same map to sum across attempts. isCurrent marks the attempt whose
+// number equals e.Attempt (the live attempt, which may still be running or
+// may not have reported any usage rows yet); every other attempt is a
+// prior/superseded one.
+func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic) (UsageAttempt, map[modelKey]TokenTotals) {
 	boundaries := buildBoundaries(rows)
 	sortBoundaries(boundaries)
 
@@ -256,7 +258,7 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isLast bool, e db.Epic) (
 
 	outcome := "retried"
 	lowerBound := false
-	if isLast {
+	if isCurrent {
 		outcome = e.Stage
 		lowerBound = !isTerminalEpicStage(e.Stage)
 	}
