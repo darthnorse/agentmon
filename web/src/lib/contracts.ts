@@ -72,11 +72,11 @@ export interface EpicEventDTO { from: string; to: string; source: string; note: 
 export interface AllBoardResponse { orchestrator_enabled: boolean; projects: ProjectDTO[]; epics: EpicDTO[]; }
 export interface ProjectBoardResponse { project: ProjectDTO; epics: EpicDTO[]; events: Record<string, EpicEventDTO[]>; }
 export interface EpicPlanResponse { path: string; ref: string; markdown: string; }
-// Must stay structurally identical to EpicPlanResponse: PlanPanel injects
-// getEpicPlan (which returns EpicPlanResponse) into ArtifactPanel's queryFn,
-// which types its query result as EpicArtifactResponse — the two are relied
-// on to be structurally compatible.
-export interface EpicArtifactResponse { path: string; ref: string; markdown: string; }
+// The artifact endpoint returns the same {path,ref,markdown} shape as the plan
+// endpoint. Aliased (not re-declared) so the two cannot silently diverge:
+// PlanPanel injects getEpicPlan (→ EpicPlanResponse) into ArtifactPanel's
+// queryFn, which is typed EpicArtifactResponse, so the two MUST stay identical.
+export type EpicArtifactResponse = EpicPlanResponse;
 
 // Usage tracking DTO family (mirrors Go shared.Usage* types)
 export interface TokenTotals { input: number; output: number; cache_read: number; cache_write: number; total: number; }

@@ -41,18 +41,19 @@ otherwise guess. Refer to the issue number as N throughout.
 
 ### Escalation protocol
 
-1. **If you are on an epic branch, push it first (never force-push)** so the
-   artifacts you already committed (plan, review evidence) are readable from
-   the AgentMon UI: `b=$(git branch --show-current)`; if `$b` names an epic
-   branch (not the repo's base branch), run `git push -u origin "$b"`. The
-   runner only auto-pushes at plan-gate and PR-open, so without this a
-   mid-pipeline escalation leaves your committed artifacts stranded on the
-   branch. Do not proceed until the push succeeds; if you are not on an epic
-   branch yet (e.g. escalating during Orient), skip this step.
-2. `agentmon report --epic N --stage escalated --note "<one-line problem + what you need>"`
+1. **Capture and push your artifacts first (best-effort).** Commit any clean
+   work-in-progress (never a broken tree) so the plan / review evidence you're
+   escalating about is captured. Then, if you are on an epic branch, push it
+   (**never force-push**): `b=$(git branch --show-current)`; if `$b` names an
+   epic branch (not the repo's base branch), run `git push -u origin "$b"`.
+   This is what makes your committed artifacts readable in the AgentMon UI — the
+   runner otherwise only auto-pushes at plan-gate and PR-open. **A failed push
+   must NEVER block the escalation:** if it fails, say so in your note and
+   continue to the report anyway. Skip the push entirely if you're not on an
+   epic branch yet (e.g. escalating during Orient).
+2. `agentmon report --epic N --stage escalated --branch "$b" --note "<one-line problem + what you need; name the docs/…md artifact if the escalation is about one>"` — the `--branch "$b"` records the epic branch so the UI can open your pushed artifact even before a PR exists (**omit `--branch` only** if you skipped the push because you're not on an epic branch).
 3. If (and only if) that command FAILS: `gh issue comment N --body "ESCALATED: <same note>"`
-4. Commit any clean work-in-progress (never commit a broken tree).
-5. State the blocker plainly in your final message, then STOP and wait. The
+4. State the blocker plainly in your final message, then STOP and wait. The
    session stays attachable — a human may join and resolve it (then continue
    where you stopped), or fix things elsewhere and hit Retry (which kills
    this session; a fresh one resumes from your artifacts). Both are normal.
@@ -317,7 +318,7 @@ worktree, stage reports, escalation, ONE full pre-PR headless review over
 | entering implementation | `agentmon report --epic N --stage implementing` |
 | each review (checkpoint/final) | `agentmon report --epic N --stage reviewing` |
 | PR opened | `agentmon report --epic N --stage pr_open --pr <num>` |
-| blocked / DISCUSS | push the epic branch first, then `agentmon report --epic N --stage escalated --note "…"` |
+| blocked / DISCUSS | commit + push the epic branch, then `agentmon report --epic N --stage escalated --branch <branch> --note "…"` |
 | plan-gate (pause after planning) | push branch, then `agentmon report … --stage escalated --branch <branch> --note "plan-gate: …"` — see Step 4 |
 | report CLI broken during escalation | `gh issue comment N --body "ESCALATED: …"` |
 | cross-provider review | `IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md` |
