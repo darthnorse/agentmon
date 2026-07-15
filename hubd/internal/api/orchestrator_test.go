@@ -898,3 +898,111 @@ func TestProjectUsageHandler(t *testing.T) {
 		t.Fatalf("by_model haiku = %+v", gotHaiku)
 	}
 }
+
+// TestProjectUsageMixedModelCostFailsClosed guards the Should-Fix finding:
+// projectUsageRollup (board) summed non-nil PER-EPIC costs, skipping any nil
+// one, while aggregateProjectUsage/sumKnownCosts (project endpoint) summed
+// non-nil PER-MODEL costs across the whole project. When a single epic mixes
+// a priced model with an unpriced one in the same stage, DeriveEpicUsage
+// already fails that epic's own Cost closed to nil — so the OLD board rollup
+// (its only epic contributes a nil cost) skipped it and landed on nil, while
+// the OLD project endpoint still summed the priced model's known share and
+// reported a real number, silently dropping the unpriced model's unknown
+// share. The two surfaces disagreed on the same project's total dollars.
+// Both must now report nil uniformly (fail-closed, matching DeriveEpicUsage),
+// while by_model rows stay independently priced per model.
+func TestProjectUsageMixedModelCostFailsClosed(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	// Both rows share one captured_at (one runner report = one boundary), so
+	// both models land in the SAME interval and SAME stage of the SAME
+	// epic — the mixed scope the finding is about, not two separately-priced
+	// stages/epics that each happen to be fully known or fully unknown.
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "claude-opus-4-8", Input: 100, Output: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "future-model-x", Input: 40, Output: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
+
+	// GET /projects (board rollup) — project usage.cost must be null.
+	r, w := orchReq("GET", "/api/v1/orchestrator/projects", "")
+	d.OrchestratorProjectsHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("list projects = %d %s", w.Code, w.Body.String())
+	}
+	var list []projectDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	var p1 *projectDTO
+	for i := range list {
+		if list[i].ID == "p1" {
+			p1 = &list[i]
+		}
+	}
+	if p1 == nil {
+		t.Fatal("p1 missing from project list")
+	}
+	if p1.Usage == nil {
+		t.Fatalf("p1 usage must be present (it has ledger rows), got nil")
+	}
+	if p1.Usage.Cost != nil {
+		t.Fatalf("board rollup cost must be nil when the project mixes an unpriced model, got %v", *p1.Usage.Cost)
+	}
+
+	// GET /projects/{id}/usage — project total AND the mixed stage must be
+	// null; by_model stays independently priced per model.
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/usage", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectUsageHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("project usage = %d %s", w.Code, w.Body.String())
+	}
+	var got projectUsageDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Cost != nil {
+		t.Fatalf("project-total cost must be nil when any contributing model is unpriced, got %v", *got.Cost)
+	}
+	if len(got.ByStage) != 1 || got.ByStage[0].Stage != "planning" {
+		t.Fatalf("by_stage = %+v", got.ByStage)
+	}
+	if got.ByStage[0].Cost != nil {
+		t.Fatalf("by_stage[planning].cost must be nil (mixes an unpriced model), got %v", *got.ByStage[0].Cost)
+	}
+
+	if len(got.ByModel) != 2 {
+		t.Fatalf("by_model = %+v", got.ByModel)
+	}
+	var gotOpus, gotUnpriced *orchestrator.ModelUsage
+	for i := range got.ByModel {
+		switch got.ByModel[i].Model {
+		case "claude-opus-4-8":
+			gotOpus = &got.ByModel[i]
+		case "future-model-x":
+			gotUnpriced = &got.ByModel[i]
+		}
+	}
+	wantOpusCost := (100*5.0)/1e6 + (50*25.0)/1e6
+	if gotOpus == nil || gotOpus.Cost == nil || *gotOpus.Cost != wantOpusCost {
+		t.Fatalf("by_model opus must stay independently priced even though the aggregate is nil, got %+v", gotOpus)
+	}
+	if gotUnpriced == nil || gotUnpriced.Cost != nil {
+		t.Fatalf("by_model future-model-x must stay nil (unknown to the rate card), got %+v", gotUnpriced)
+	}
+}

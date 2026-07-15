@@ -107,30 +107,36 @@ func (d Deps) epicUsageRollups(ctx context.Context, projectID string, epics []db
 }
 
 // projectUsageRollup sums a project's per-epic rollups (from epicUsageRollups)
-// into one project-level figure: nil when no epic has any usage. Cost is nil
-// only when EVERY epic's cost is nil (unpriced/no data) — otherwise it sums
-// whichever epics do have a priced cost, same fail-closed-per-model but
-// sum-what-you-know-at-the-project-level rule as the rollup itself.
+// into one project-level figure: nil when no epic has any usage. Cost is
+// fail-closed at the project level, same as DeriveEpicUsage is fail-closed at
+// the epic level: nil the moment ANY epic's own cost is nil (that epic mixed
+// a priced model with one the rate card doesn't know), because a partial sum
+// would understate the true total and render as a misleadingly low dollar
+// figure. Only when every epic's cost is known does this sum them. This must
+// stay in lockstep with aggregateProjectUsage's project-total and by_stage
+// cost below — same rule, so the board and the project-usage endpoint never
+// disagree on the same project's total dollars.
 func projectUsageRollup(perEpic map[string]*usageRollupDTO) *usageRollupDTO {
 	if len(perEpic) == 0 {
 		return nil
 	}
 	var tokens, durationMs int64
 	var costSum float64
-	haveCost := false
+	allPriced := true
 	for _, u := range perEpic {
 		if u == nil {
 			continue
 		}
 		tokens += u.Tokens
 		durationMs += u.DurationMs
-		if u.Cost != nil {
-			costSum += *u.Cost
-			haveCost = true
+		if u.Cost == nil {
+			allPriced = false
+			continue
 		}
+		costSum += *u.Cost
 	}
 	var cost *float64
-	if haveCost {
+	if allPriced {
 		cost = &costSum
 	}
 	return &usageRollupDTO{Tokens: tokens, Cost: cost, DurationMs: durationMs}
@@ -892,18 +898,16 @@ type usageModelKey struct {
 // entries by stage name across epics, by_model sums every stage's ByModel
 // entries by (provider,model) across epics.
 //
-// Cost aggregation deliberately follows a different rule than
-// orchestrator.aggregateCost: that helper fails a single scope's cost
-// closed to nil the moment ANY contributing model is unpriced, because a
-// partial sum there would understate one coherent total. At the project
-// level we are summing across many epics and models; one unrecognized
-// model must not blank out an otherwise-known total, so project-total and
-// per-stage cost instead sum whichever per-model costs ARE known and are
-// nil only when every contributing model in that scope is unpriced — the
-// same "sum what you know" rule projectUsageRollup already uses to fold
-// per-epic board costs. by_model rows have no such ambiguity: each is
-// priced directly from its own aggregated token bucket via
-// orchestrator.CostUSD.
+// Cost aggregation mirrors orchestrator.aggregateCost's fail-closed rule at
+// every scope except by_model: project-total and per-stage cost (via
+// sumKnownCosts) are nil the moment ANY contributing model in that scope is
+// unpriced, and are the real sum only when every contributing model is
+// known — same rule projectUsageRollup applies at the epic level, so the
+// board and this endpoint never disagree on the same project's total
+// dollars. by_model rows have no such ambiguity: each is priced directly
+// from its own aggregated token bucket via orchestrator.CostUSD, independent
+// of whatever else shares its scope, and is left as "sum/blank what you
+// know" — a lone (provider,model) row is unambiguously priced-or-null.
 func aggregateProjectUsage(rows []db.UsageRow, epics []db.Epic) projectUsageDTO {
 	byIssue := map[int][]db.UsageRow{}
 	for _, r := range rows {
@@ -1000,20 +1004,23 @@ func modelUsageRows(byModel map[usageModelKey]orchestrator.TokenTotals) []orches
 	return out
 }
 
-// sumKnownCosts sums a scope's per-model costs: nil only when every model in
-// the scope is unpriced (or the scope is empty) — see aggregateProjectUsage's
-// doc comment for why this differs from orchestrator.aggregateCost.
+// sumKnownCosts fails a scope's cost closed to nil: empty, or ANY model in
+// it unpriced (unknown to the rate card) — a partial sum would understate
+// the real total and render as a misleadingly low dollar figure, so this
+// blanks to "$—" rather than quietly dropping the unknown model's share.
+// Same rule as orchestrator.aggregateCost, reimplemented here because the
+// project-wide fold happens in this package — see aggregateProjectUsage's
+// doc comment.
 func sumKnownCosts(models []orchestrator.ModelUsage) *float64 {
-	var sum float64
-	have := false
-	for _, m := range models {
-		if m.Cost != nil {
-			sum += *m.Cost
-			have = true
-		}
-	}
-	if !have {
+	if len(models) == 0 {
 		return nil
+	}
+	var sum float64
+	for _, m := range models {
+		if m.Cost == nil {
+			return nil
+		}
+		sum += *m.Cost
 	}
 	return &sum
 }
