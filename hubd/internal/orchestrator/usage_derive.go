@@ -30,6 +30,15 @@ func (t TokenTotals) add(o TokenTotals) TokenTotals {
 	return newTokenTotals(t.Input+o.Input, t.Output+o.Output, t.CacheRead+o.CacheRead, t.CacheWrite+o.CacheWrite)
 }
 
+// AddTokens sums two TokenTotals, recomputing Total from the summed parts
+// rather than adding the Total fields (same never-independently-derived
+// invariant as the unexported add). Exported for the API layer's project-wide
+// usage aggregation (Task 14), which folds TokenTotals across many epics'
+// derived breakdowns from outside this package.
+func AddTokens(a, b TokenTotals) TokenTotals {
+	return a.add(b)
+}
+
 func (t TokenTotals) sub(o TokenTotals) TokenTotals {
 	return newTokenTotals(t.Input-o.Input, t.Output-o.Output, t.CacheRead-o.CacheRead, t.CacheWrite-o.CacheWrite)
 }
