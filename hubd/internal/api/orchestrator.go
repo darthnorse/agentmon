@@ -19,6 +19,7 @@ import (
 	"agentmon/hubd/internal/db"
 	"agentmon/hubd/internal/github"
 	"agentmon/hubd/internal/orchestrator"
+	"agentmon/shared"
 )
 
 const (
@@ -751,14 +752,18 @@ func planDocPath(needs string, issue int) string {
 
 // fetchArtifact resolves a repo-relative .md doc for an epic and writes the
 // {path,ref,markdown} JSON response (or the mapped error status). It tries the
-// epic branch first, then falls back to the project base branch on ErrNotFound:
-// in-flight artifacts live on the branch; a merged epic's live on the base
-// branch (the branch is often deleted post-merge). Callers must have validated
+// epic branch first, then — only when allowBaseFallback is set — falls back to
+// the project base branch on ErrNotFound. That fallback is for a MERGED epic
+// only: its branch is often deleted post-merge, so the doc now lives on the
+// base branch. An active (non-merged) epic's branch-side 404 is a genuine
+// not-pushed-yet 404 — we must NOT serve a possibly-stale same-named doc off
+// the base branch (e.g. a prior merged epic's docs/plans/epic-N.md), which
+// would let a human approve an obsolete plan. Callers must have validated
 // `path`, confirmed branch != "" and d.Contents != nil.
-func (d Deps) fetchArtifact(ctx context.Context, w http.ResponseWriter, repo, baseBranch, branch, path string) {
+func (d Deps) fetchArtifact(ctx context.Context, w http.ResponseWriter, repo, baseBranch, branch, path string, allowBaseFallback bool) {
 	b, err := d.Contents.GetContents(ctx, repo, path, branch)
 	ref := branch
-	if errors.Is(err, github.ErrNotFound) && baseBranch != "" && baseBranch != branch {
+	if allowBaseFallback && errors.Is(err, github.ErrNotFound) && baseBranch != "" && baseBranch != branch {
 		if b2, err2 := d.Contents.GetContents(ctx, repo, path, baseBranch); err2 == nil || !errors.Is(err2, github.ErrNotFound) {
 			b, err, ref = b2, err2, baseBranch
 		}
@@ -808,7 +813,8 @@ func (d Deps) OrchestratorEpicPlanHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, planDocPath(e.Needs, e.IssueNumber))
+		merged := e.Stage == string(shared.EpicMerged)
+		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, planDocPath(e.Needs, e.IssueNumber), merged)
 	}
 }
 
@@ -850,7 +856,8 @@ func (d Deps) OrchestratorEpicArtifactHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, path)
+		merged := e.Stage == string(shared.EpicMerged)
+		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, path, merged)
 	}
 }
 

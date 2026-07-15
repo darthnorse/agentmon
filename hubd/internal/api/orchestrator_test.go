@@ -744,6 +744,9 @@ func TestEpicPlanHandlerBaseBranchFallback(t *testing.T) {
 	if ok, err := database.SetEpicPR(ctx, e.ID, 0, "epic/7-x"); err != nil || !ok {
 		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
 	}
+	if ok, err := database.TransitionEpic(ctx, e.ID, "queued", "merged", "hub", "", "t"); err != nil || !ok {
+		t.Fatalf("TransitionEpic: ok=%v err=%v", ok, err)
+	}
 
 	fc := &fakeContents{byRef: map[string]refResp{
 		"epic/7-x": {err: github.ErrNotFound},
@@ -841,7 +844,11 @@ func TestEpicArtifactHandler(t *testing.T) {
 		t.Fatalf("cross-project = %d", w.Code)
 	}
 
-	// Not on branch, present on base → 404 falls back to 200.
+	// Not on branch, present on base → 404 falls back to 200 — but only for a
+	// merged epic; an active epic never gets this fallback (see codex4 fix).
+	if ok, err := database.TransitionEpic(ctx, e.ID, "queued", "merged", "hub", "", "t"); err != nil || !ok {
+		t.Fatalf("TransitionEpic: ok=%v err=%v", ok, err)
+	}
 	fc.byRef = map[string]refResp{"epic/7-x": {err: github.ErrNotFound}, "main": {body: []byte("# Base Review")}}
 	w = call("p1", "docs/reviews/epic-7-final.md")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ref":"main"`) {
@@ -921,6 +928,11 @@ func TestFetchArtifactFallbackEdges(t *testing.T) {
 	if ok, err := database.SetEpicPR(ctx, e3.ID, 0, "epic/7-x"); err != nil || !ok {
 		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
 	}
+	// The fallback only fires for a merged epic — transition it so this edge
+	// (the base's own error must surface, not get masked) still exercises it.
+	if ok, err := database.TransitionEpic(ctx, e3.ID, "queued", "merged", "hub", "", "t"); err != nil || !ok {
+		t.Fatalf("TransitionEpic: ok=%v err=%v", ok, err)
+	}
 	fc3 := &fakeContents{byRef: map[string]refResp{
 		"epic/7-x": {err: github.ErrNotFound},
 		"main":     {err: github.ErrTooLarge},
@@ -931,6 +943,30 @@ func TestFetchArtifactFallbackEdges(t *testing.T) {
 	}
 	if len(fc3.refsSeen) != 2 || fc3.refsSeen[0] != "epic/7-x" || fc3.refsSeen[1] != "main" {
 		t.Fatalf("expected branch-then-base fetch order, got %v", fc3.refsSeen)
+	}
+
+	// An ACTIVE (non-merged) epic must NEVER fall back to the base branch,
+	// even when base != branch and a same-named doc exists there — that doc
+	// could be a stale prior-merged artifact (codex4 fix). Exactly one
+	// GetContents call, straight 404.
+	database.CreateProject(ctx, db.Project{ID: "p-active", Name: "p-active", Repo: "o/r-active", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e4, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p-active", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	if ok, err := database.SetEpicPR(ctx, e4.ID, 0, "epic/7-x"); err != nil || !ok {
+		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
+	}
+	if ok, err := database.TransitionEpic(ctx, e4.ID, "queued", "reviewing", "hub", "", "t"); err != nil || !ok {
+		t.Fatalf("TransitionEpic: ok=%v err=%v", ok, err)
+	}
+	fc4 := &fakeContents{byRef: map[string]refResp{
+		"epic/7-x": {err: github.ErrNotFound},
+		"main":     {body: []byte("# Stale Prior Plan")},
+	}}
+	d4 := Deps{DB: database, Orch: &fakeOrch{}, Contents: fc4}
+	if w := call(d4, "p-active", e4.ID, "docs/reviews/epic-7-final.md"); w.Code != 404 {
+		t.Fatalf("active epic = %d %s, want 404 (no stale base fallback)", w.Code, w.Body.String())
+	}
+	if len(fc4.refsSeen) != 1 || fc4.refsSeen[0] != "epic/7-x" {
+		t.Fatalf("expected exactly one branch-only GetContents call for an active epic, got %v", fc4.refsSeen)
 	}
 }
 
