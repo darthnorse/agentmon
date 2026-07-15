@@ -11,9 +11,12 @@ import type { SessionState } from "@/lib/contracts";
 import { fmtCost, fmtDuration, fmtTokens } from "@/lib/usage-format";
 import { cn } from "@/lib/utils";
 
-export function EpicCard({ epic, project, showProject = false, liveState, onOpen }: {
+export function EpicCard({ epic, project, showProject = false, liveState, onOpen, onOpenSession }: {
   epic: EpicDTO; project?: ProjectDTO; showProject?: boolean;
   liveState?: SessionState; onOpen(): void;
+  // Attach to the epic's live runner session (escalated → join & decide). Wired
+  // by the board page, which holds the session-open machinery.
+  onOpenSession?(epic: EpicDTO, project: ProjectDTO): void;
 }) {
   const meta = stageMeta(epic.stage);
   const col = meta.column;
@@ -96,6 +99,10 @@ export function EpicCard({ epic, project, showProject = false, liveState, onOpen
                 disabled={busy !== null}
                 onConfirm={() => void act({ action: "approve", epic_id: epic.id }, `Approving #${epic.issue}`)}
               />
+            ) : epic.session && onOpenSession && project ? (
+              // A DISCUSS/blocked escalation is resolved by joining the live
+              // session and answering — not by Retry, which discards it.
+              <Button variant="default" size="sm" onClick={() => onOpenSession(epic, project)}>Open session</Button>
             ) : null}
             <ConfirmButton
               label="Retry"

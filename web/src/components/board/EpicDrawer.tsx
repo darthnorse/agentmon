@@ -1,22 +1,18 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ArtifactPanel } from "@/components/board/ArtifactPanel";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { PlanPanel } from "@/components/board/PlanPanel";
 import { StageChip } from "@/components/board/StageChip";
 import { TerminalPreview } from "@/components/board/TerminalPreview";
-import { openOrFocusSession } from "@/components/board/open-session";
 import { useEpicActions } from "@/hooks/useEpicActions";
+import { useOpenRunnerSession } from "@/hooks/useOpenRunnerSession";
 import {
-  boardSessionsKey, epicArtifactKey, epicUsageKey, getEpicArtifact, getEpicUsage, getProjectBoard, listServers, listSessions,
-  projectBoardKey, serversKey,
+  epicArtifactKey, epicUsageKey, getEpicArtifact, getEpicUsage, getProjectBoard, projectBoardKey,
 } from "@/lib/api-client";
-import { canApprove, findRunnerSession, isPlanGate, isTerminalStage, mergeMode, parseVerdict, stageMeta } from "@/lib/board";
+import { canApprove, isPlanGate, isTerminalStage, mergeMode, parseVerdict, stageMeta } from "@/lib/board";
 import type { EpicDTO, EpicUsage, ProjectDTO, UsageStage } from "@/lib/contracts";
-import { useMediaQuery } from "@/lib/use-media-query";
 import { fmtCost, fmtDuration, fmtTokens } from "@/lib/usage-format";
 import { cn } from "@/lib/utils";
 
@@ -120,29 +116,12 @@ export function EpicDrawer({ epic, project, onClose }: {
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const [guidance, setGuidance] = React.useState("");
   const [selectedArtifact, setSelectedArtifact] = React.useState<string | null>(null);
-  const navigate = useNavigate();
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
-  // Pass the project's TARGET (Finding: a non-default-target project's runner
-  // lives under that socket, not the agent default). Key by target too so two
-  // projects on the same host under different targets don't collide in cache;
-  // an empty target reuses the home screen's sessionsKey (same default list).
-  const sessKey = boardSessionsKey(project.server_id, project.target);
-  const sessionsQ = useQuery({ queryKey: sessKey, queryFn: () => listSessions(project.server_id, project.target || undefined) });
-
-  // Open the runner session exactly as today's UI would (spec §8.3): desktop
-  // grid tile via the pane store + home, mobile the /t terminal route.
-  const openFullSession = React.useCallback(() => {
-    const session = findRunnerSession(sessionsQ.data, epic, project);
-    if (!session) {
-      toast.error("Session ended — nothing to attach to.");
-      return;
-    }
-    const serverName = serversQ.data?.find((s) => s.id === project.server_id)?.name ?? project.server_id;
-    void openOrFocusSession({
-      serverId: project.server_id, serverName, target: project.target, name: session.name, session,
-    }, isDesktop, navigate);
-  }, [sessionsQ.data, serversQ.data, isDesktop, epic.session, project, navigate]);
+  // Attach to the runner session the same way the board card does (shared hook):
+  // desktop grid tile / mobile terminal route, resolving servers + sessions on
+  // demand. Used for a running epic's terminal preview AND for joining an
+  // escalated epic that's waiting on a human decision.
+  const openSession = useOpenRunnerSession();
+  const openFullSession = React.useCallback(() => void openSession(epic, project), [openSession, epic, project]);
 
   // Lazy detail fetch: the per-project board carries each epic's last-20
   // events (spec §5.1 keeps them out of the all-board payload).
@@ -214,6 +193,14 @@ export function EpicDrawer({ epic, project, onClose }: {
           <div className={cn("flex flex-col gap-5", hasTerminal && "min-h-0 flex-none max-h-[55%] overflow-y-auto")}>
           {section("Actions", (
             <div className="flex flex-wrap gap-1.5">
+              {/* An escalated/stalled epic keeps its runner session alive & attachable
+                  (the hub reaps only on merge/retry/cancel), so a DISCUSS/blocked
+                  escalation is resolved by JOINING the session and answering — not by
+                  Retry, which kills it and re-runs. Running epics get this via the
+                  terminal preview above; here it's the primary action. */}
+              {waiting && epic.session && (
+                <Button variant="default" size="sm" onClick={openFullSession}>Open session</Button>
+              )}
               {canApprove(epic) && (
                 <ConfirmButton label={`Approve & merge PR #${epic.pr}`} confirmLabel="Sure?"
                   variant="default" disabled={busy !== null}

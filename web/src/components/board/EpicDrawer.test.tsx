@@ -96,10 +96,25 @@ describe("EpicDrawer", () => {
   it("delegates opening the existing runner session to the shared helper", async () => {
     render(<EpicDrawer epic={epic({ stage: "implementing" })} project={project} onClose={() => {}} />, { wrapper });
     fireEvent.click(await screen.findByRole("button", { name: "Open full session" }));
-    expect(h.openOrFocusSession).toHaveBeenCalledWith(
-      expect.objectContaining({ serverId: "h1", serverName: "host-one", name: "epic-15-x", session: expect.objectContaining({ name: "epic-15-x" }) }),
-      true, expect.any(Function),
-    );
+    // The shared hook resolves servers + sessions asynchronously before it attaches.
+    await waitFor(() =>
+      expect(h.openOrFocusSession).toHaveBeenCalledWith(
+        expect.objectContaining({ serverId: "h1", serverName: "host-one", name: "epic-15-x", session: expect.objectContaining({ name: "epic-15-x" }) }),
+        true, expect.any(Function),
+      ));
+  });
+
+  it("offers Open session for an escalated pre-PR epic with a live session", async () => {
+    // The user's case: a DISCUSS/blocked escalation before any PR. The runner
+    // session is still alive & attachable, but the epic sits in the Needs column
+    // — the human must be able to jump in and answer, not just Retry.
+    render(<EpicDrawer epic={epic({ pr: 0 })} project={project} onClose={() => {}} />, { wrapper });
+    fireEvent.click(await screen.findByRole("button", { name: "Open session" }));
+    await waitFor(() =>
+      expect(h.openOrFocusSession).toHaveBeenCalledWith(
+        expect.objectContaining({ serverId: "h1", name: "epic-15-x", session: expect.objectContaining({ name: "epic-15-x" }) }),
+        true, expect.any(Function),
+      ));
   });
 
   it("renders per-attempt/stage/model usage, lazily fetched", async () => {

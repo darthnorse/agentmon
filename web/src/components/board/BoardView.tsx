@@ -11,9 +11,10 @@ import { cn } from "@/lib/utils";
 
 const DONE_VISIBLE = 10;
 
-export function BoardView({ epics, projects, showProject, liveStateOf, onOpenEpic }: {
+export function BoardView({ epics, projects, showProject, liveStateOf, onOpenEpic, onOpenSession }: {
   epics: EpicDTO[]; projects: Map<string, ProjectDTO>; showProject: boolean;
   liveStateOf(e: EpicDTO): SessionState | undefined; onOpenEpic(id: string): void;
+  onOpenSession?(epic: EpicDTO, project: ProjectDTO): void;
 }) {
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const layout = usePrefs((s) => s.projectsBoardLayout);
@@ -30,7 +31,7 @@ export function BoardView({ epics, projects, showProject, liveStateOf, onOpenEpi
       <>
         {list.map((e) => (
           <EpicCard key={e.id} epic={e} project={projects.get(e.project_id)} showProject={showProject}
-            liveState={liveStateOf(e)} onOpen={() => onOpenEpic(e.id)} />
+            liveState={liveStateOf(e)} onOpen={() => onOpenEpic(e.id)} onOpenSession={onOpenSession} />
         ))}
         {col === "done" && !allDone && cols.done.length > DONE_VISIBLE && (
           <Button variant="ghost" size="sm" onClick={() => setAllDone(true)}>

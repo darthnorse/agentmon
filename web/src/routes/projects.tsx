@@ -9,6 +9,7 @@ import { ProjectForm } from "@/components/board/ProjectForm";
 import { ProjectHeader } from "@/components/board/ProjectHeader";
 import { TimelineView } from "@/components/board/TimelineView";
 import { ProjectSwitcher } from "@/components/board/ProjectSwitcher";
+import { useOpenRunnerSession } from "@/hooks/useOpenRunnerSession";
 import { allBoardKey, getAllBoard, listServers, serversKey } from "@/lib/api-client";
 import type { EpicDTO, SessionState } from "@/lib/contracts";
 import { effectiveSessionState } from "@/lib/state";
@@ -50,6 +51,7 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
 
   const boardQ = useQuery({ queryKey: allBoardKey(), queryFn: getAllBoard });
   const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
+  const openSession = useOpenRunnerSession();
   const needs = useNeedsByProject();
   const snap = useStateSnapshot();
 
@@ -172,6 +174,7 @@ function ProjectsShell({ projectId }: { projectId: string | null }) {
                 showProject={!projectId}
                 liveStateOf={liveStateOf}
                 onOpenEpic={(id) => setSearch({ epic: id })}
+                onOpenSession={openSession}
               />
             ) : (
               <TimelineView epics={epics} projects={projects} groupByProject={!projectId} onOpenEpic={(id) => setSearch({ epic: id })} />

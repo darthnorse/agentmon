@@ -67,6 +67,18 @@ describe("EpicCard", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
+  it("offers Open session on a pre-PR escalation with a live session, without opening the drawer", () => {
+    const onOpen = vi.fn();
+    const onOpenSession = vi.fn();
+    const e = epic({ stage: "escalated", pr: 0, session: "epic-15-x", needs: "blocked: needs a decision" });
+    render(<EpicCard epic={e} project={project} onOpen={onOpen} onOpenSession={onOpenSession} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open session" }));
+    expect(onOpenSession).toHaveBeenCalledWith(e, project);
+    expect(onOpen).not.toHaveBeenCalled(); // action must not bubble into drawer-open
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve/ })).toBeNull(); // no PR → no approve
+  });
+
   it("Enter on a nested action does not also open the drawer", () => {
     const onOpen = vi.fn();
     render(
