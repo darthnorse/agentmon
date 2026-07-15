@@ -72,6 +72,7 @@ export interface EpicEventDTO { from: string; to: string; source: string; note: 
 export interface AllBoardResponse { orchestrator_enabled: boolean; projects: ProjectDTO[]; epics: EpicDTO[]; }
 export interface ProjectBoardResponse { project: ProjectDTO; epics: EpicDTO[]; events: Record<string, EpicEventDTO[]>; }
 export interface EpicPlanResponse { path: string; ref: string; markdown: string; }
+export interface EpicArtifactResponse { path: string; ref: string; markdown: string; }
 
 // Usage tracking DTO family (mirrors Go shared.Usage* types)
 export interface TokenTotals { input: number; output: number; cache_read: number; cache_write: number; total: number; }
