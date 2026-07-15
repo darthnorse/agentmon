@@ -45,13 +45,14 @@ func (t TokenTotals) sub(o TokenTotals) TokenTotals {
 
 // clampNonNeg floors each bucket at 0, recomputing Total from the floored
 // parts (never independently derived, same invariant as every other
-// TokenTotals constructor). Used on a per-interval delta: if a later
-// boundary reports a LOWER cumulative than an earlier one for the same
-// (provider,model) — a source dropping out mid-run, or any other
-// non-monotonicity — the naive delta goes negative. A decreasing cumulative
-// must contribute 0 to that interval, never subtract from it; subtracting
-// would produce negative stage tokens and, downstream, a negative CostUSD
-// polluting by_stage/by_model/totals.
+// TokenTotals constructor). Used on a per-interval delta measured against
+// the running HIGH-WATER cumulative (see maxBuckets), not the last raw
+// boundary value: if a later boundary reports a cumulative BELOW the
+// high-water mark for some (provider,model) — a source dropping out
+// mid-run, or any other non-monotonicity — the naive delta goes negative. A
+// decreasing reading must contribute 0 to that interval, never subtract from
+// it; subtracting would produce negative stage tokens and, downstream, a
+// negative CostUSD polluting by_stage/by_model/totals.
 func (t TokenTotals) clampNonNeg() TokenTotals {
 	clamp := func(v int64) int64 {
 		if v < 0 {
@@ -60,6 +61,28 @@ func (t TokenTotals) clampNonNeg() TokenTotals {
 		return v
 	}
 	return newTokenTotals(clamp(t.Input), clamp(t.Output), clamp(t.CacheRead), clamp(t.CacheWrite))
+}
+
+// maxBuckets returns the per-bucket (never per-Total) max of a and b, with
+// Total recomputed from the maxed parts (same never-independently-derived
+// invariant as every other TokenTotals constructor). This maintains a
+// MONOTONIC high-water cumulative per (provider,model): once a bucket has
+// been seen at some value, its recorded high-water mark may only grow, never
+// fall back — even if a later boundary's reading regresses. Replacing the
+// high-water outright with a later, lower target (instead of maxing into it)
+// is exactly the bug this guards: a cumulative sequence 100→500→200 would
+// lower the baseline to 200, so a subsequent regrowth to 600 would compute
+// delta 600−200=400 and double-count the 300 tokens already attributed to
+// the 100→500 climb. Maxing keeps the baseline at its true peak (500), so
+// that same regrowth correctly adds only 600−500=100.
+func maxBuckets(a, b TokenTotals) TokenTotals {
+	max := func(x, y int64) int64 {
+		if y > x {
+			return y
+		}
+		return x
+	}
+	return newTokenTotals(max(a.Input, b.Input), max(a.Output, b.Output), max(a.CacheRead, b.CacheRead), max(a.CacheWrite, b.CacheWrite))
 }
 
 // ModelUsage is one (provider, model)'s token/cost contribution within some
@@ -234,8 +257,8 @@ func boundarySpanMs(rows []db.UsageRow) int64 {
 	return 0
 }
 
-// deriveAttempt derives one attempt's UsageAttempt, plus the final (last
-// boundary) cumulative per (provider,model) — the epic-level rollup needs
+// deriveAttempt derives one attempt's UsageAttempt, plus the final
+// HIGH-WATER cumulative per (provider,model) — the epic-level rollup needs
 // that same map to sum across attempts. isCurrent marks the attempt whose
 // number equals e.Attempt (the live attempt, which may still be running or
 // may not have reported any usage rows yet); every other attempt is a
@@ -251,7 +274,8 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 		}
 	}
 
-	cum := map[ModelKey]TokenTotals{} // carried-forward cumulative, keyed by model; a missing key reads as the zero value (0), which is exactly the "never seen yet" baseline.
+	cum := map[ModelKey]TokenTotals{} // carried-forward RAW cumulative (the source's latest known reading, which can legitimately fall), keyed by model; a missing key reads as the zero value (0), the "never seen yet" baseline.
+	hw := map[ModelKey]TokenTotals{}  // running HIGH-WATER cumulative per model — see maxBuckets. Deltas are measured against this, never against cum directly, and this (not cum) is the attempt's final per-model total: see the finalModels/attemptTokens computation and the returned map below.
 	stageOrder := []string{}
 	stageSeen := map[string]bool{}
 	stageTokens := map[string]map[ModelKey]TokenTotals{}
@@ -276,12 +300,17 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 		}
 
 		for k := range seen {
-			target := cum[k] // default: carry forward unchanged (delta 0) when absent at this boundary
+			target := cum[k] // default: carry forward the last known RAW reading when absent at this boundary
 			if v, ok := b.cum[k]; ok {
 				target = v
 			}
-			delta := target.sub(cum[k]).clampNonNeg()
+			// Delta is growth above the HIGH-WATER mark, never against the
+			// raw carried-forward target: a target below hw[k] (a decrease)
+			// clamps to 0 for this interval, and hw[k] is then maxed — never
+			// replaced — so it never itself falls. See maxBuckets.
+			delta := target.sub(hw[k]).clampNonNeg()
 			stageTokens[stage][k] = stageTokens[stage][k].add(delta)
+			hw[k] = maxBuckets(hw[k], target)
 		}
 
 		if i > 0 {
@@ -317,7 +346,12 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 		})
 	}
 
-	finalModels := ModelUsageList(cum)
+	// The attempt total per (provider,model) is the final HIGH-WATER
+	// cumulative, NOT cum (the last boundary's raw reading) — cum can sit
+	// below the true peak after a decrease, which would understate the
+	// attempt's real spend and break the by_stage-sums-to-attempt-total
+	// invariant the stage loop above maintains via hw.
+	finalModels := ModelUsageList(hw)
 	attemptTokens := TokenTotals{}
 	for _, m := range finalModels {
 		attemptTokens = attemptTokens.add(m.Tokens)
@@ -338,7 +372,7 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 		Cost:         AggregateCost(finalModels),
 		IsLowerBound: lowerBound,
 		Stages:       stages,
-	}, cum
+	}, hw
 }
 
 // boundaryKey identifies one runner report within an attempt: the

@@ -1007,14 +1007,17 @@ func TestApplyReportUpsertsUsageEvenOnNoopTransition(t *testing.T) {
 	}
 }
 
-// TestApplyReportGatesUsageUpsertOnTransitionLegality guards Fix D1: usage
-// upsert must be gated on the report's transition being legal (or a
-// same-stage redelivery — see TestApplyReportUpsertsUsageEvenOnNoopTransition),
-// never for a genuinely ILLEGAL transition. An illegal report is dropped
-// outright a few lines later anyway; upserting its usage first would plant a
-// phantom stage boundary that skews attribution for work that was never
-// really attributed to that stage. A subsequent LEGAL transition must still
-// upsert normally.
+// TestApplyReportGatesUsageUpsertOnTransitionLegality guards Fix D1 and its
+// Fix #4 refinement: usage upsert must be gated on the report being fully
+// ACCEPTED — a same-stage redelivery (see
+// TestApplyReportUpsertsUsageEvenOnNoopTransition), or a real transition
+// that is legal AND actually landed — never for a report dropped by ANY
+// guard, whether that's a genuinely ILLEGAL transition or a legal-looking
+// pr_open claim with no PR number. Both are dropped outright a few lines
+// later anyway; upserting their usage first (the pre-Fix-#4 ordering) would
+// plant a phantom stage boundary that skews attribution for work never
+// really attributed to that stage. A subsequent LEGAL transition that
+// actually lands must still upsert normally.
 func TestApplyReportGatesUsageUpsertOnTransitionLegality(t *testing.T) {
 	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
 	ctx := context.Background()
@@ -1043,7 +1046,29 @@ func TestApplyReportGatesUsageUpsertOnTransitionLegality(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// (a) ILLEGAL transition: epic is at "reviewing"; reviewing->planning is
+	// (a) pr_open report with NO PR number and no prior PR on the epic: this
+	// is the exact Fix #4 hazard — a legal reviewing->pr_open transition per
+	// ValidTransition, but dropped a few lines later by the missing-PR
+	// guard. Before Fix #4 this still upserted usage (the D1 gate ran
+	// before the PR-number check); it must NOT anymore.
+	prOpenNoPR := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicPROpen,
+		Session: "P-7", Ts: "2026-07-14T09:55:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 7}}}
+	if deferred := o.applyReport(ctx, p, prOpenNoPR); deferred {
+		t.Fatal("pr_open-without-PR report unexpectedly deferred")
+	}
+	if got, err := d.GetEpic(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	} else if got.Stage != "reviewing" {
+		t.Fatalf("pr_open without a PR number must not move the stage, got %q", got.Stage)
+	}
+	if rows, err := d.ListEpicUsage(ctx, p.ID, 7); err != nil {
+		t.Fatal(err)
+	} else if len(rows) != 0 {
+		t.Fatalf("pr_open report dropped for a missing PR number must NOT upsert usage, got %+v", rows)
+	}
+
+	// (b) ILLEGAL transition: epic is at "reviewing"; reviewing->planning is
 	// a backward jump (not the special reviewing->implementing fix loop), so
 	// ValidTransition rejects it. Its usage must NOT land.
 	illegal := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicPlanning,

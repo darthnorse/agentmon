@@ -141,11 +141,16 @@ func findStage(a UsageAttempt, name string) *UsageStage {
 	return nil
 }
 
-// TestDeriveClampsNegativeDeltaToZero guards Fix 5: a later boundary
-// reporting a LOWER cumulative than an earlier one (a source dropping out,
-// or any other non-monotonicity) must floor that interval's delta at 0, not
-// go negative — a negative delta would flow into UsageStage.Tokens and, via
-// CostUSD, into a negative dollar figure polluting by_stage/by_model/totals.
+// TestDeriveClampsNegativeDeltaToZero guards Fix 5 (and its Fix #2
+// high-water refinement): a later boundary reporting a LOWER cumulative than
+// the running high-water mark (a source dropping out, or any other
+// non-monotonicity) must floor that interval's delta at 0, not go negative —
+// a negative delta would flow into UsageStage.Tokens and, via CostUSD, into
+// a negative dollar figure polluting by_stage/by_model/totals. The decrease
+// must ALSO not lower the recorded high-water mark itself: the attempt total
+// stays at the true peak (500), not the last raw boundary value (200) — see
+// TestDeriveHighWaterReconciliation for the full reconciliation + no-double-
+// count property this enables.
 //
 // Three boundaries, not two: the interval carrying the decrease
 // (implementing@10:05 -> reviewing@10:10, cumulative 500->200) is attributed
@@ -182,6 +187,61 @@ func TestDeriveClampsNegativeDeltaToZero(t *testing.T) {
 	}
 	if got.Cost != nil && *got.Cost < 0 {
 		t.Fatalf("epic cost must never go negative, got %v", *got.Cost)
+	}
+	if a.Tokens.Input != 500 {
+		t.Fatalf("attempt total must be the HIGH-WATER mark (500), not the last raw boundary (200), got %d", a.Tokens.Input)
+	}
+}
+
+// TestDeriveHighWaterReconciliation guards Fix #2: clamping a negative
+// per-(provider,model) delta to zero must not also lower the running
+// cumulative that delta is measured against next time, or two hazards
+// follow: (1) by_stage sums silently diverge from the attempt/epic total
+// (stages keep every positive delta they ever recorded, but the total is
+// re-read off whatever the last boundary happened to report), and (2) a
+// later regrowth toward the old peak double-counts tokens already recorded
+// in an earlier interval. A monotonic high-water baseline per
+// (provider,model) — maxBuckets, never a plain replace — fixes both: the
+// attempt total is the high-water mark (the real peak spend), which by
+// construction always equals the sum of every interval's already-floored
+// delta.
+func TestDeriveHighWaterReconciliation(t *testing.T) {
+	rows := []db.UsageRow{
+		u("planning", "2026-07-14T10:00:00Z", 100),
+		u("implementing", "2026-07-14T10:05:00Z", 500),
+		u("reviewing", "2026-07-14T10:10:00Z", 200), // decrease: 500 -> 200
+	}
+	got := DeriveEpicUsage(rows, db.Epic{IssueNumber: 7, Attempt: 1, Stage: "merged"})
+	a := got.Attempts[0]
+
+	var stageSum int64
+	for _, st := range a.Stages {
+		if st.Tokens.Input < 0 || st.Tokens.Total < 0 {
+			t.Fatalf("stage %q has a negative token bucket: input=%d total=%d", st.Stage, st.Tokens.Input, st.Tokens.Total)
+		}
+		stageSum += st.Tokens.Input
+	}
+	if a.Tokens.Input < 0 {
+		t.Fatalf("attempt total must never go negative, got %d", a.Tokens.Input)
+	}
+	if a.Tokens.Input != 500 {
+		t.Fatalf("attempt total must be the high-water mark (500 = the real peak, planning 100 + implementing 400), got %d", a.Tokens.Input)
+	}
+	if stageSum != a.Tokens.Input {
+		t.Fatalf("by_stage sum (%d) must RECONCILE with the attempt total (%d)", stageSum, a.Tokens.Input)
+	}
+
+	// A follow-up boundary growing past the OLD high-water (500) must add
+	// only the real growth (600-500=100), never double-counting the 300
+	// tokens already recorded across the 100->500 climb.
+	rows = append(rows, u("pr_open", "2026-07-14T10:15:00Z", 600))
+	got2 := DeriveEpicUsage(rows, db.Epic{IssueNumber: 7, Attempt: 1, Stage: "merged"})
+	a2 := got2.Attempts[0]
+	if a2.Tokens.Input != 600 {
+		t.Fatalf("after growth to 600 the attempt total must be 600, got %d", a2.Tokens.Input)
+	}
+	if delta := a2.Tokens.Input - a.Tokens.Input; delta != 100 {
+		t.Fatalf("the follow-up boundary must add exactly 100 (no double-count), got delta %d", delta)
 	}
 }
 

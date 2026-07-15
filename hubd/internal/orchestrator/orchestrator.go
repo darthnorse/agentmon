@@ -400,24 +400,25 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		log.Printf("orchestrator[%s]: report session mismatch: %q != %q", p.Name, r.Session, e.SessionName)
 		return false
 	}
-	// Usage upsert is gated on the report's transition being legal — a
-	// genuinely ILLEGAL transition (e.g. a stale/out-of-order report) must
-	// not plant a phantom stage boundary that skews attribution, since the
-	// report is about to be dropped outright below and never applied. A
-	// SAME-STAGE redelivery (the epic already sits at r.Stage) is not
-	// illegal in that sense — it's the no-op-transition recovery case: a
-	// retry after a transient DB error must still land its usage snapshot,
-	// or the ledger entry is silently lost. Best-effort — never blocks or
-	// reverses the transition either way.
-	legalOrRedelivery := ValidTransition(shared.EpicStage(e.Stage), r.Stage) || r.Stage == shared.EpicStage(e.Stage)
-	if legalOrRedelivery {
+	// SAME-STAGE redelivery (the epic already sits at r.Stage) is the
+	// no-op-transition recovery case: a retry after a transient DB write
+	// failure must still land its usage snapshot, or the ledger entry is
+	// silently lost. It is not a transition at all — ValidTransition(x, x)
+	// is always false — so none of the transition-specific guards below
+	// (pr_open-without-PR, ValidTransition, branch persistence, SetEpicPR)
+	// apply to it; upsert directly and stop here.
+	if r.Stage == shared.EpicStage(e.Stage) {
 		o.upsertUsage(ctx, p, e, r)
+		return false
 	}
 	// A pr_open claim with no PR number would strand the epic in a stage no
 	// scanner revisits. Fail closed; the runner stays in reviewing where the
-	// stage timeout still applies. Usage above already recorded (this is a
-	// legal transition, just later dropped for a different reason), so its
-	// true spend isn't lost.
+	// stage timeout still applies. This report is dropped outright below, so
+	// — unlike the redelivery case above — its usage must NOT be recorded:
+	// see the upsert call at the bottom of this function, which only runs
+	// once the transition has actually landed. Upserting here (before this
+	// guard, as a prior fix did) would plant a phantom pr_open boundary for
+	// a stage the epic never actually entered.
 	if r.Stage == shared.EpicPROpen && r.PR <= 0 && e.PRNumber <= 0 {
 		log.Printf("orchestrator[%s]: dropped pr_open report without PR number for epic #%d", p.Name, r.Epic)
 		return false
@@ -445,17 +446,31 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 	if r.PR > 0 {
 		_, _ = o.d.DB.SetEpicPR(ctx, e.ID, r.PR, e.Branch)
 	}
-	o.transition(ctx, e, r.Stage, "report", r.Note)
+	// Usage is upserted only once the transition has actually landed —
+	// o.transition returns false if the transition is illegal (already
+	// checked above, so this is really the DB-CAS-loss / lost-race case: the
+	// epic moved out from under us between the ValidTransition check and the
+	// write) or the DB write itself errors. Either way, a report that never
+	// really lands its transition must not plant a usage boundary for a
+	// stage the epic never entered.
+	if o.transition(ctx, e, r.Stage, "report", r.Note) {
+		o.upsertUsage(ctx, p, e, r)
+	}
 	return false
 }
 
 // upsertUsage records every token snapshot a report carries into the epic
-// usage ledger. Attempt is read off the epic row (e.Attempt), stable under
-// tickMu, not tracked separately on the report. CapturedAt uses the report's
-// own Ts (not time.Now()) so an at-least-once redelivery of the same report
-// UPDATEs the same idempotent row (UsageRow's UNIQUE key includes captured_at)
-// instead of duplicating it. Best-effort: an upsert failure is logged and
-// swallowed — usage bookkeeping must never block or reverse a stage transition.
+// usage ledger. Callers must only invoke this for a report applyReport has
+// actually ACCEPTED — a same-stage redelivery, or a real transition that
+// ValidTransition allowed and o.transition then actually landed — never for
+// one dropped by a guard (missing PR, illegal transition, lost transition
+// race): a dropped report never entered the stage boundary it would plant.
+// Attempt is read off the epic row (e.Attempt), stable under tickMu, not
+// tracked separately on the report. CapturedAt uses the report's own Ts (not
+// time.Now()) so an at-least-once redelivery of the same report UPDATEs the
+// same idempotent row (UsageRow's UNIQUE key includes captured_at) instead
+// of duplicating it. Best-effort: an upsert failure is logged and swallowed
+// — usage bookkeeping must never block or reverse a stage transition.
 func (o *Orchestrator) upsertUsage(ctx context.Context, p db.Project, e db.Epic, r shared.OrchestratorReport) {
 	for _, u := range r.Usage {
 		row := db.UsageRow{
