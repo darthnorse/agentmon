@@ -396,6 +396,12 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		log.Printf("orchestrator[%s]: report session mismatch: %q != %q", p.Name, r.Session, e.SessionName)
 		return false
 	}
+	// Usage upsert is unconditional past provenance and independent of the
+	// transition outcome: a redelivered report whose transition is now a
+	// no-op (the epic already sits at that stage) must still land its usage
+	// snapshot, or a retry after a transient DB error would silently lose
+	// the ledger entry. Best-effort — never blocks or reverses the transition.
+	o.upsertUsage(ctx, p, e, r)
 	// A pr_open claim with no PR number would strand the epic in a stage no
 	// scanner revisits. Fail closed; the runner stays in reviewing where the
 	// stage timeout still applies.
@@ -428,6 +434,28 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 	}
 	o.transition(ctx, e, r.Stage, "report", r.Note)
 	return false
+}
+
+// upsertUsage records every token snapshot a report carries into the epic
+// usage ledger. Attempt is read off the epic row (e.Attempt), stable under
+// tickMu, not tracked separately on the report. CapturedAt uses the report's
+// own Ts (not time.Now()) so an at-least-once redelivery of the same report
+// UPDATEs the same idempotent row (UsageRow's UNIQUE key includes captured_at)
+// instead of duplicating it. Best-effort: an upsert failure is logged and
+// swallowed — usage bookkeeping must never block or reverse a stage transition.
+func (o *Orchestrator) upsertUsage(ctx context.Context, p db.Project, e db.Epic, r shared.OrchestratorReport) {
+	for _, u := range r.Usage {
+		row := db.UsageRow{
+			ProjectID: p.ID, ProjectName: p.Name, Repo: p.Repo,
+			IssueNumber: e.IssueNumber, Attempt: e.Attempt,
+			Stage: string(r.Stage), CapturedAt: r.Ts,
+			Provider: u.Provider, Model: u.Model,
+			Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite,
+		}
+		if err := o.d.DB.UpsertUsage(ctx, row); err != nil {
+			log.Printf("orchestrator[%s]: usage upsert epic #%d: %v", p.Name, e.IssueNumber, err)
+		}
+	}
 }
 
 func (o *Orchestrator) retryPending(ctx context.Context) {

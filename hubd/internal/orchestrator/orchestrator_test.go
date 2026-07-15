@@ -67,15 +67,15 @@ func (f *fakeGH) AddLabels(_ context.Context, _ string, n int, ls []string) erro
 }
 
 type fakeAgents struct {
-	created     []shared.CreateSessionRequest
-	reports     []shared.OrchestratorReport
-	drainAcks   [][2]any
-	killed      []string
-	killErr     error
-	spawnErr    error
+	created         []shared.CreateSessionRequest
+	reports         []shared.OrchestratorReport
+	drainAcks       [][2]any
+	killed          []string
+	killErr         error
+	spawnErr        error
 	sessions        []string // live tmux session names the agent would list
 	sessionsErr     error
-	sessionsTargets []string // target arg of every Sessions call, in order
+	sessionsTargets []string                         // target arg of every Sessions call, in order
 	tornDown        []shared.WorktreeTeardownRequest // worktree teardowns requested, in order
 	teardownErr     error
 }
@@ -576,7 +576,7 @@ func TestStallLivenessComesFromAgentSessionsNotHookState(t *testing.T) {
 	ag := &fakeAgents{}
 	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
-	o.Tick(ctx) // spawn
+	o.Tick(ctx)                             // spawn
 	ag.sessions = []string{sessionName(16)} // alive in tmux; NO hook state anywhere
 	o.Tick(ctx)
 	o.Tick(ctx)
@@ -862,5 +862,65 @@ func TestTickGateEnforcesPlatformRequirements(t *testing.T) {
 	// tests), so a plumbing regression can't hide behind an unrelated escalation.
 	if !strings.Contains(strings.Join(gh.comments, "\n"), "platform requirements not met: always-use-rls (missing)") {
 		t.Fatalf("escalation must name the missing requirement, comments = %v", gh.comments)
+	}
+}
+
+// TestApplyReportUpsertsUsageEvenOnNoopTransition covers redelivery recovery:
+// a report whose stage transition is a no-op (the epic is already at that
+// stage) must still upsert the usage it carries, because the ledger upsert
+// runs independently of ValidTransition. Provenance still gates it — the
+// epic is assigned a session and the report must claim that same session.
+func TestApplyReportUpsertsUsageEvenOnNoopTransition(t *testing.T) {
+	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
+	ctx := context.Background()
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{
+		ProjectID: "p1", IssueNumber: 7, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range [][3]string{
+		{"queued", "starting", "hub"},
+		{"starting", "planning", "report"},
+		{"planning", "implementing", "report"},
+		{"implementing", "reviewing", "report"},
+	} {
+		if ok, err := d.TransitionEpic(ctx, e.ID, tr[0], tr[1], tr[2], "", "t1"); err != nil || !ok {
+			t.Fatalf("%s->%s: ok=%v err=%v", tr[0], tr[1], ok, err)
+		}
+	}
+	if ok, err := d.SetEpicAssignment(ctx, e.ID, "P-7", 1); err != nil || !ok {
+		t.Fatalf("assign session: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rep := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicReviewing,
+		Session: "P-7", Ts: "2026-07-14T10:00:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 42}}}
+	if deferred := o.applyReport(ctx, p, rep); deferred {
+		t.Fatal("noop-transition report unexpectedly deferred")
+	}
+
+	got, err := d.GetEpic(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Stage != "reviewing" {
+		t.Fatalf("stage must remain unchanged (noop transition): %q", got.Stage)
+	}
+
+	rows, err := d.ListEpicUsage(ctx, p.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Output != 42 {
+		t.Fatalf("usage not upserted on noop transition: %+v", rows)
+	}
+	if rows[0].Attempt != 1 || rows[0].Stage != "reviewing" {
+		t.Fatalf("usage row must carry epic attempt + report stage: %+v", rows[0])
 	}
 }
