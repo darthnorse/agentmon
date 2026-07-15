@@ -110,4 +110,20 @@ describe("EpicCard", () => {
     render(<EpicCard epic={epic({ id: "e3" })} project={project} showProject onOpen={() => {}} />);
     expect(screen.getByText("school")).toBeInTheDocument();
   });
+
+  it("shows a compact usage line when epic.usage is present", () => {
+    render(
+      <EpicCard
+        epic={epic({ id: "e4", usage: { tokens: 1_240_000, cost: 3.4, duration_ms: 2_280_000 } })}
+        project={project}
+        onOpen={() => {}}
+      />,
+    );
+    expect(screen.getByText("1.24M tok · ~$3.40 · 38m")).toBeInTheDocument();
+  });
+
+  it("renders no usage line when epic.usage is undefined", () => {
+    render(<EpicCard epic={epic({ id: "e5" })} project={project} onOpen={() => {}} />);
+    expect(screen.queryByText(/tok ·/)).toBeNull();
+  });
 });
