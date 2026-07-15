@@ -2,6 +2,7 @@ package usage
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -21,6 +22,56 @@ func TestOpenTranscriptFDsFindsOpenJSONL(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected to find open %s in %v", p, got)
+	}
+}
+
+// TestDescendantsWalksFullSubtree spawns a real process tree two levels deep
+// (test process -> sh -> two sleep grandchildren) and asserts descendants()
+// finds the grandchildren, not just the direct child. This is a
+// behavior-preserving regression test for the single-pass /proc refactor
+// (the old doc comment claimed "one level ... is enough", but the code
+// always walked full-depth via recursion — both the old and new
+// implementation must find the grandchildren).
+func TestDescendantsWalksFullSubtree(t *testing.T) {
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	sleepPath, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("sleep not available")
+	}
+	cmd := exec.Command(shPath, "-c", sleepPath+" 30 & "+sleepPath+" 30 & wait")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	shPid := cmd.Process.Pid
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	var got []int
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got = descendants(os.Getpid())
+		if len(got) >= 3 { // sh + its two sleep grandchildren
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if len(got) < 3 {
+		t.Fatalf("want sh + 2 grandchild sleeps in descendants(self), got %v", got)
+	}
+	foundSh := false
+	for _, p := range got {
+		if p == shPid {
+			foundSh = true
+		}
+	}
+	if !foundSh {
+		t.Fatalf("want direct child sh pid %d in %v", shPid, got)
 	}
 }
 
@@ -73,6 +124,28 @@ func TestEnumerateChildTranscriptsFiltersByCwdEncoding(t *testing.T) {
 	got := enumerateChildTranscripts(root, "/root/agentmon", time.Time{})
 	if len(got) != 1 || got[0] != mine {
 		t.Fatalf("want only %s, got %v", mine, got)
+	}
+}
+
+func TestSubagentTranscriptsFindsNestedLensFiles(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent-uuid.jsonl")
+	os.WriteFile(parent, []byte("{}\n"), 0o644)
+
+	subDir := filepath.Join(dir, "parent-uuid", "subagents")
+	os.MkdirAll(subDir, 0o755)
+	sub := filepath.Join(subDir, "agent-x.jsonl")
+	os.WriteFile(sub, []byte("{}\n"), 0o644)
+
+	got := subagentTranscripts(parent)
+	if len(got) != 1 || got[0] != sub {
+		t.Fatalf("want only %s, got %v", sub, got)
+	}
+}
+
+func TestSubagentTranscriptsNonJSONLParent(t *testing.T) {
+	if got := subagentTranscripts("/some/dir/not-a-transcript"); got != nil {
+		t.Fatalf("want nil for non-.jsonl parent, got %v", got)
 	}
 }
 

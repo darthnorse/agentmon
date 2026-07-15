@@ -42,6 +42,11 @@ func NewCapturer(paneInfo func(ctx context.Context, socket, pane string) (pid in
 				s.Codex = append(s.Codex, f)
 			} else {
 				s.Claude = append(s.Claude, f)
+				// /multi-review lens subagent transcripts live nested under
+				// this parent session's own directory — bind them to THIS
+				// parent (not a directory-wide glob) to avoid cross-session
+				// contamination when concurrent attempts share a project cwd.
+				s.Claude = append(s.Claude, subagentTranscripts(f)...)
 			}
 		}
 		// Child sessions in the worktree (codex exec, subagents), scoped to

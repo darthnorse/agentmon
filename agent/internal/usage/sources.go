@@ -33,10 +33,12 @@ func openTranscriptFDs(pid int) []string {
 	return out
 }
 
-// descendants walks /proc for children of pid (one level of process tree is
-// enough: tmux pane_pid -> shell -> runner).
+// descendants returns every descendant of pid (children, grandchildren, and
+// so on) by walking the FULL process-tree subtree rooted at pid — not just
+// one level. /proc is read exactly once (not once per node, unlike a naive
+// recursive re-scan) into a pid->children map, which the walk then reuses.
 func descendants(pid int) []int {
-	var out []int
+	children := map[int][]int{}
 	procs, _ := os.ReadDir("/proc")
 	for _, pe := range procs {
 		cpid, err := strconv.Atoi(pe.Name())
@@ -48,12 +50,29 @@ func descendants(pid int) []int {
 			continue
 		}
 		// stat: "pid (comm) state ppid ..." — ppid is field 4, but comm may hold spaces.
-		if r := strings.LastIndex(string(b), ")"); r > 0 {
-			fields := strings.Fields(string(b)[r+1:])
-			if len(fields) >= 2 && fields[1] == strconv.Itoa(pid) {
-				out = append(out, cpid)
-				out = append(out, descendants(cpid)...)
-			}
+		r := strings.LastIndex(string(b), ")")
+		if r <= 0 {
+			continue
+		}
+		fields := strings.Fields(string(b)[r+1:])
+		if len(fields) < 2 {
+			continue
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		children[ppid] = append(children[ppid], cpid)
+	}
+
+	var out []int
+	queue := []int{pid}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		for _, c := range children[p] {
+			out = append(out, c)
+			queue = append(queue, c)
 		}
 	}
 	return out
@@ -110,6 +129,22 @@ func enumerateChildTranscripts(claudeRoot, cwd string, since time.Time) []string
 		out = append(out, p)
 	}
 	return out
+}
+
+// subagentTranscripts returns .jsonl transcripts under
+// <parentPath-without-.jsonl>/subagents/ — where /multi-review lens subagent
+// transcripts are nested on disk (verified: <claudeRoot>/<encoded-cwd>/
+// <parent-session-uuid>/subagents/agent-*.jsonl). Deriving the subagents dir
+// from the parent's own fd-bound path (rather than a directory-wide glob)
+// binds subagents to THIS session, avoiding cross-session contamination when
+// concurrent attempts share a project cwd.
+func subagentTranscripts(parentPath string) []string {
+	if !strings.HasSuffix(parentPath, ".jsonl") {
+		return nil
+	}
+	dir := strings.TrimSuffix(parentPath, ".jsonl")
+	matches, _ := filepath.Glob(filepath.Join(dir, "subagents", "*.jsonl"))
+	return matches
 }
 
 func rolloutCwd(path string) string {

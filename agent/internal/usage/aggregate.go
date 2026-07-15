@@ -2,14 +2,19 @@ package usage
 
 import (
 	"os"
+	"path/filepath"
 
 	"agentmon/shared"
 )
 
 // Aggregate sums usage across all of an attempt's sources into one entry per
-// (provider,model). Claude rows are deduped by message.id GLOBALLY (rows repeat,
-// and the same file may be enumerated twice); Codex rollouts are distinct
-// sessions summed by their cumulative totals.
+// (provider,model). Source PATHS are deduped first (the same file can be
+// discovered twice — e.g. a Codex rollout matching both the /proc-fd scan and
+// the cwd walk — so each path is parsed at most once). Claude rows are ALSO
+// deduped by message.id GLOBALLY, which additionally catches the same row
+// repeating within one file; Codex rollouts have no per-row id, so path dedup
+// is what prevents a re-discovered rollout's cumulative total from being
+// summed twice.
 func Aggregate(s Sources) []shared.Usage {
 	type key struct{ provider, model string }
 	acc := map[key]*shared.Usage{}
@@ -26,8 +31,14 @@ func Aggregate(s Sources) []shared.Usage {
 		u.CacheWrite += m.CacheWrite
 	}
 
-	seen := map[string]bool{} // global Claude message.id dedup
+	seenPath := map[string]bool{} // dedup source paths, regardless of how they were discovered
+	seenID := map[string]bool{}   // global Claude message.id dedup
 	for _, p := range s.Claude {
+		cp := filepath.Clean(p)
+		if seenPath[cp] {
+			continue
+		}
+		seenPath[cp] = true
 		f, err := os.Open(p)
 		if err != nil {
 			continue
@@ -35,16 +46,21 @@ func Aggregate(s Sources) []shared.Usage {
 		rows, _ := ParseClaude(f)
 		f.Close()
 		for _, r := range rows {
-			if r.ID != "" && seen[r.ID] {
+			if r.ID != "" && seenID[r.ID] {
 				continue
 			}
 			if r.ID != "" {
-				seen[r.ID] = true
+				seenID[r.ID] = true
 			}
 			add(r)
 		}
 	}
 	for _, p := range s.Codex {
+		cp := filepath.Clean(p)
+		if seenPath[cp] {
+			continue
+		}
+		seenPath[cp] = true
 		f, err := os.Open(p)
 		if err != nil {
 			continue
