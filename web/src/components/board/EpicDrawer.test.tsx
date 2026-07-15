@@ -178,4 +178,25 @@ describe("EpicDrawer", () => {
     await waitFor(() => expect(h.getEpicArtifact).toHaveBeenCalledWith("p1", "e1", "docs/reviews/epic-15-review.md"));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument());
   });
+
+  it("escape closes the artifact overlay first, leaving the drawer open", async () => {
+    h.getProjectBoard.mockResolvedValue({
+      project, epics: [],
+      events: { e1: [{ from: "reviewing", to: "escalated", source: "report",
+        note: "DISCUSS unresolved — see docs/reviews/epic-15-review.md", ts: "2026-07-11T09:00:00Z" }] },
+    });
+    h.getEpicArtifact.mockResolvedValue({ path: "docs/reviews/epic-15-review.md", ref: "epic/15-x", markdown: "# Review\n\n- finding one" });
+
+    const onClose = vi.fn();
+    render(<EpicDrawer epic={epic({})} project={project} onClose={onClose} />, { wrapper });
+
+    const link = await screen.findByRole("button", { name: "docs/reviews/epic-15-review.md" });
+    fireEvent.click(link);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Review" })).not.toBeInTheDocument());
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
