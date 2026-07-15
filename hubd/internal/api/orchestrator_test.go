@@ -131,6 +131,101 @@ func TestBoardEndpoint(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
+
+// TestBoardEpicUsageRollup: an epic with usage-ledger rows carries an inline
+// usage rollup (tokens = the summed final cumulative, cost priced from the
+// rate card); an epic with none omits the field entirely.
+func TestBoardEpicUsageRollup(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	eWithUsage, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	eNoUsage, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 8, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "claude-opus-4-8", Input: 100, Output: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
+	r, w := orchReq("GET", "/api/v1/orchestrator/projects/p1/board", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorBoardHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("board = %d %s", w.Code, w.Body.String())
+	}
+
+	var out struct {
+		Project projectDTO `json:"project"`
+		Epics   []epicDTO  `json:"epics"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+
+	var withUsage, noUsage *epicDTO
+	for i := range out.Epics {
+		switch out.Epics[i].ID {
+		case eWithUsage.ID:
+			withUsage = &out.Epics[i]
+		case eNoUsage.ID:
+			noUsage = &out.Epics[i]
+		}
+	}
+	if withUsage == nil {
+		t.Fatal("epic with usage rows missing from board")
+	}
+	if withUsage.Usage == nil {
+		t.Fatalf("epic with usage rows must carry a rollup, got %+v", withUsage)
+	}
+	if withUsage.Usage.Tokens != 150 { // summed final cumulative: Input 100 + Output 50
+		t.Fatalf("tokens = 150, got %d", withUsage.Usage.Tokens)
+	}
+	wantCost := (100*5.0 + 50*25.0) / 1e6 // claude-opus-4-8 rate card
+	if withUsage.Usage.Cost == nil || *withUsage.Usage.Cost != wantCost {
+		t.Fatalf("cost = %v, got %v", wantCost, withUsage.Usage.Cost)
+	}
+
+	if noUsage == nil {
+		t.Fatal("epic without usage rows missing from board")
+	}
+	if noUsage.Usage != nil {
+		t.Fatalf("epic with no usage rows must omit usage, got %+v", noUsage.Usage)
+	}
+
+	// omitempty must actually drop the key from the wire payload, not just
+	// round-trip as a Go nil pointer.
+	var raw struct {
+		Epics []map[string]json.RawMessage `json:"epics"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range raw.Epics {
+		var id string
+		json.Unmarshal(e["id"], &id)
+		_, hasUsage := e["usage"]
+		switch id {
+		case eWithUsage.ID:
+			if !hasUsage {
+				t.Fatalf("epic with usage rows must include the usage key: %s", w.Body.String())
+			}
+		case eNoUsage.ID:
+			if hasUsage {
+				t.Fatalf("epic with no usage rows must omit the usage key entirely: %s", w.Body.String())
+			}
+		}
+	}
+
+	// The project-level rollup sums its epics' usage.
+	if out.Project.Usage == nil || out.Project.Usage.Tokens != 150 {
+		t.Fatalf("project rollup = sum of epic rollups (150), got %+v", out.Project.Usage)
+	}
+}
+
 func TestActionsDispatch(t *testing.T) {
 	database := orchDB(t)
 	ctx := context.Background()

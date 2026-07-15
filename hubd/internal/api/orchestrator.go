@@ -29,34 +29,110 @@ const (
 var errServerNotFound = errors.New("server not found")
 
 type epicDTO struct {
-	ID             string   `json:"id"`
-	ProjectID      string   `json:"project_id"`
-	Issue          int      `json:"issue"`
-	Title          string   `json:"title"`
-	Labels         []string `json:"labels"`
-	BlockedBy      []int    `json:"blocked_by"`
-	Stage          string   `json:"stage"`
-	Attempt        int      `json:"attempt"`
-	Session        string   `json:"session"`
-	Branch         string   `json:"branch"`
-	PR             int      `json:"pr"`
-	Verdict        string   `json:"verdict,omitempty"`
-	Needs          string   `json:"needs"`
-	IssueState     string   `json:"issue_state"`
-	QueuedAt       string   `json:"queued_at"`
-	StartedAt      string   `json:"started_at"`
-	StageUpdatedAt string   `json:"stage_updated_at"`
-	MergedAt       string   `json:"merged_at"`
+	ID             string          `json:"id"`
+	ProjectID      string          `json:"project_id"`
+	Issue          int             `json:"issue"`
+	Title          string          `json:"title"`
+	Labels         []string        `json:"labels"`
+	BlockedBy      []int           `json:"blocked_by"`
+	Stage          string          `json:"stage"`
+	Attempt        int             `json:"attempt"`
+	Session        string          `json:"session"`
+	Branch         string          `json:"branch"`
+	PR             int             `json:"pr"`
+	Verdict        string          `json:"verdict,omitempty"`
+	Needs          string          `json:"needs"`
+	IssueState     string          `json:"issue_state"`
+	QueuedAt       string          `json:"queued_at"`
+	StartedAt      string          `json:"started_at"`
+	StageUpdatedAt string          `json:"stage_updated_at"`
+	MergedAt       string          `json:"merged_at"`
+	Usage          *usageRollupDTO `json:"usage,omitempty"`
 }
 
-func toEpicDTO(e db.Epic) epicDTO {
+// usageRollupDTO is a light token/cost/duration summary — the board's inline
+// figure, not the full per-attempt/per-stage breakdown (that's the drawer's
+// detail view, Task 14). Cost is a pointer so an unpriced model can fail
+// closed to "$—" (nil) instead of a misleading low number, matching
+// orchestrator.aggregateCost.
+type usageRollupDTO struct {
+	Tokens     int64    `json:"tokens"`
+	Cost       *float64 `json:"cost"`
+	DurationMs int64    `json:"duration_ms"`
+}
+
+func toEpicDTO(e db.Epic, usage *usageRollupDTO) epicDTO {
 	return epicDTO{
 		ID: e.ID, ProjectID: e.ProjectID, Issue: e.IssueNumber, Title: e.Title,
 		Labels: e.Labels, BlockedBy: e.BlockedBy, Stage: e.Stage, Attempt: e.Attempt,
 		Session: e.SessionName, Branch: e.Branch, PR: e.PRNumber, Verdict: e.Verdict,
 		Needs: e.Needs, IssueState: e.IssueState, QueuedAt: e.QueuedAt,
 		StartedAt: e.StartedAt, StageUpdatedAt: e.StageUpdatedAt, MergedAt: e.MergedAt,
+		Usage: usage,
 	}
+}
+
+// epicUsageRollups computes each epic's light usage rollup with ONE grouped
+// read of the project's usage ledger (never one query per epic). Rows are
+// grouped by issue number and handed to orchestrator.DeriveEpicUsage per
+// epic — reusing that derivation keeps this inline figure identical to the
+// drawer's detail breakdown (Task 14) rather than a second, divergent sum.
+// An epic with no ledger rows is simply absent from the returned map, so a
+// lookup miss (nil) is exactly "no usage yet". Best-effort: a ledger read
+// failure logs and yields no rollups rather than failing the board.
+func (d Deps) epicUsageRollups(ctx context.Context, projectID string, epics []db.Epic) map[string]*usageRollupDTO {
+	rows, err := d.DB.ListProjectUsage(ctx, projectID)
+	if err != nil {
+		log.Printf("api: project %s usage rollup: %v", projectID, err)
+		return nil
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	byIssue := map[int][]db.UsageRow{}
+	for _, r := range rows {
+		byIssue[r.IssueNumber] = append(byIssue[r.IssueNumber], r)
+	}
+	out := map[string]*usageRollupDTO{}
+	for _, e := range epics {
+		issueRows := byIssue[e.IssueNumber]
+		if len(issueRows) == 0 {
+			continue
+		}
+		u := orchestrator.DeriveEpicUsage(issueRows, e)
+		out[e.ID] = &usageRollupDTO{Tokens: u.Tokens.Total, Cost: u.Cost, DurationMs: u.DurationMs}
+	}
+	return out
+}
+
+// projectUsageRollup sums a project's per-epic rollups (from epicUsageRollups)
+// into one project-level figure: nil when no epic has any usage. Cost is nil
+// only when EVERY epic's cost is nil (unpriced/no data) — otherwise it sums
+// whichever epics do have a priced cost, same fail-closed-per-model but
+// sum-what-you-know-at-the-project-level rule as the rollup itself.
+func projectUsageRollup(perEpic map[string]*usageRollupDTO) *usageRollupDTO {
+	if len(perEpic) == 0 {
+		return nil
+	}
+	var tokens, durationMs int64
+	var costSum float64
+	haveCost := false
+	for _, u := range perEpic {
+		if u == nil {
+			continue
+		}
+		tokens += u.Tokens
+		durationMs += u.DurationMs
+		if u.Cost != nil {
+			costSum += *u.Cost
+			haveCost = true
+		}
+	}
+	var cost *float64
+	if haveCost {
+		cost = &costSum
+	}
+	return &usageRollupDTO{Tokens: tokens, Cost: cost, DurationMs: durationMs}
 }
 
 type projectDTO struct {
@@ -75,10 +151,11 @@ type projectDTO struct {
 	Pinned          bool             `json:"pinned"`
 	Requirements    []db.Requirement `json:"requirements"`
 	Counts          map[string]int   `json:"counts,omitempty"`
+	Usage           *usageRollupDTO  `json:"usage,omitempty"`
 }
 
-func projectOut(p db.Project, counts map[string]int) projectDTO {
-	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, p.Pinned, p.Requirements, counts}
+func projectOut(p db.Project, counts map[string]int, usage *usageRollupDTO) projectDTO {
+	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, p.Pinned, p.Requirements, counts, usage}
 }
 
 type eventDTO struct {
@@ -110,7 +187,8 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 				for _, e := range es {
 					counts[e.Stage]++
 				}
-				out = append(out, projectOut(p, counts))
+				rollups := d.epicUsageRollups(r.Context(), p.ID, es)
+				out = append(out, projectOut(p, counts, projectUsageRollup(rollups)))
 			}
 			writeJSON(w, http.StatusOK, out)
 			return
@@ -190,7 +268,7 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 		if d.Audit != nil {
 			d.Audit.ProjectRegister(r.Context(), p.ID, "project:"+pr.ID, pr.Repo, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		}
-		writeJSON(w, http.StatusCreated, projectOut(pr, nil))
+		writeJSON(w, http.StatusCreated, projectOut(pr, nil, nil))
 	}
 }
 
@@ -210,10 +288,11 @@ func (d Deps) OrchestratorBoardHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		rollups := d.epicUsageRollups(r.Context(), id, es)
 		dto := make([]epicDTO, 0, len(es))
 		events := map[string][]eventDTO{}
 		for _, e := range es {
-			dto = append(dto, toEpicDTO(e))
+			dto = append(dto, toEpicDTO(e, rollups[e.ID]))
 			evs, err := d.DB.ListEpicEvents(r.Context(), e.ID, 20)
 			if err != nil {
 				continue
@@ -224,7 +303,7 @@ func (d Deps) OrchestratorBoardHandler() http.HandlerFunc {
 			}
 			events[e.ID] = out
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"project": projectOut(p, nil), "epics": dto, "events": events})
+		writeJSON(w, http.StatusOK, map[string]any{"project": projectOut(p, nil, projectUsageRollup(rollups)), "epics": dto, "events": events})
 	}
 }
 
@@ -540,7 +619,7 @@ func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
 		if d.Audit != nil {
 			d.Audit.ProjectUpdate(r.Context(), p.ID, "project:"+id, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		}
-		writeJSON(w, http.StatusOK, projectOut(pr, nil))
+		writeJSON(w, http.StatusOK, projectOut(pr, nil, nil))
 	}
 }
 
@@ -602,13 +681,14 @@ func (d Deps) boardSnapshot(ctx context.Context) ([]projectDTO, []epicDTO, error
 	projDTOs := make([]projectDTO, 0, len(projects))
 	epics := make([]epicDTO, 0, 64)
 	for _, pr := range projects {
-		projDTOs = append(projDTOs, projectOut(pr, nil))
 		es, err := d.DB.ListBoardEpics(ctx, pr.ID)
 		if err != nil {
 			return nil, nil, err
 		}
+		rollups := d.epicUsageRollups(ctx, pr.ID, es)
+		projDTOs = append(projDTOs, projectOut(pr, nil, projectUsageRollup(rollups)))
 		for _, e := range es {
-			epics = append(epics, toEpicDTO(e))
+			epics = append(epics, toEpicDTO(e, rollups[e.ID]))
 		}
 	}
 	return projDTOs, epics, nil
