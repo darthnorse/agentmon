@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ArtifactPanel } from "@/components/board/ArtifactPanel";
 import { ConfirmButton } from "@/components/board/ConfirmButton";
 import { PlanPanel } from "@/components/board/PlanPanel";
 import { StageChip } from "@/components/board/StageChip";
@@ -10,7 +11,8 @@ import { TerminalPreview } from "@/components/board/TerminalPreview";
 import { openOrFocusSession } from "@/components/board/open-session";
 import { useEpicActions } from "@/hooks/useEpicActions";
 import {
-  boardSessionsKey, epicUsageKey, getEpicUsage, getProjectBoard, listServers, listSessions, projectBoardKey, serversKey,
+  boardSessionsKey, epicArtifactKey, epicUsageKey, getEpicArtifact, getEpicUsage, getProjectBoard, listServers, listSessions,
+  projectBoardKey, serversKey,
 } from "@/lib/api-client";
 import { canApprove, findRunnerSession, isPlanGate, isTerminalStage, mergeMode, parseVerdict, stageMeta } from "@/lib/board";
 import type { EpicDTO, EpicUsage, ProjectDTO, UsageStage } from "@/lib/contracts";
@@ -80,6 +82,30 @@ function UsageBreakdown({ epic }: { epic: EpicDTO }) {
   );
 }
 
+// Recognized runner artifacts committed under docs/plans|reviews. Matches the
+// hub allowlist (artifactDirs) so a clicked path always validates server-side.
+const ARTIFACT_PATH_RE = /docs\/(?:plans|reviews)\/[\w./-]+\.md/g;
+
+// Renders an escalation note, turning any recognized artifact path into a
+// clickable control that opens the in-app viewer (spec §3).
+function EventNote({ note, onOpen }: { note: string; onOpen(path: string): void }) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of note.matchAll(ARTIFACT_PATH_RE)) {
+    const start = m.index ?? 0;
+    if (start > last) parts.push(note.slice(last, start));
+    parts.push(
+      <button key={start} type="button" onClick={() => onOpen(m[0])}
+        className="text-primary underline underline-offset-2 hover:no-underline">
+        {m[0]}
+      </button>,
+    );
+    last = start + m[0].length;
+  }
+  if (last < note.length) parts.push(note.slice(last));
+  return <span className="text-muted-foreground">· {parts}</span>;
+}
+
 export function EpicDrawer({ epic, project, onClose }: {
   epic: EpicDTO; project: ProjectDTO; onClose(): void;
 }) {
@@ -93,6 +119,7 @@ export function EpicDrawer({ epic, project, onClose }: {
   const hasTerminal = running && Boolean(epic.session);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const [guidance, setGuidance] = React.useState("");
+  const [selectedArtifact, setSelectedArtifact] = React.useState<string | null>(null);
   const navigate = useNavigate();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const serversQ = useQuery({ queryKey: serversKey(), queryFn: listServers });
@@ -123,10 +150,14 @@ export function EpicDrawer({ epic, project, onClose }: {
   const events = detailQ.data?.events[epic.id] ?? [];
 
   React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (selectedArtifact) setSelectedArtifact(null);
+      else onClose();
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, selectedArtifact]);
 
   const gh = `https://github.com/${project.repo}`;
 
@@ -237,7 +268,7 @@ export function EpicDrawer({ epic, project, onClose }: {
                   <div key={i} className="flex items-center gap-2">
                     <span className={cn("inline-block size-1.5 flex-none rounded-full", stageMeta(ev.to).dotClass)} />
                     <span>{ev.from} → {ev.to}</span>
-                    {ev.note && <span className="truncate text-muted-foreground" title={ev.note}>· {ev.note}</span>}
+                    {ev.note && <EventNote note={ev.note} onOpen={setSelectedArtifact} />}
                     <span className="ml-auto flex-none text-muted-foreground">{ev.source} · {ev.ts.slice(11, 16)}</span>
                   </div>
                 ))}
@@ -263,6 +294,25 @@ export function EpicDrawer({ epic, project, onClose }: {
           </div>
         </div>
       </aside>
+
+      {selectedArtifact && (
+        <aside className="absolute inset-y-0 right-0 z-20 flex w-full flex-col border-l border-border bg-background sm:max-w-[560px] lg:max-w-[50vw]"
+          role="dialog" aria-modal="true" aria-label={`Artifact ${selectedArtifact}`}>
+          <div className="flex items-center gap-2 border-b border-border p-4">
+            <Button variant="ghost" size="sm" className="-ml-2 flex-none" onClick={() => setSelectedArtifact(null)} aria-label="back">←</Button>
+            <span className="truncate font-mono text-xs text-muted-foreground">{selectedArtifact}</span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <section className="flex flex-col gap-2">
+              <ArtifactPanel
+                queryKey={epicArtifactKey(epic.project_id, epic.id, selectedArtifact)}
+                queryFn={() => getEpicArtifact(epic.project_id, epic.id, selectedArtifact)}
+                branchUrl={epic.branch ? `https://github.com/${project.repo}/tree/${epic.branch}` : `https://github.com/${project.repo}`}
+              />
+            </section>
+          </div>
+        </aside>
+      )}
 
       {confirmCancel && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirmCancel(false)}>
