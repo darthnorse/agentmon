@@ -374,18 +374,16 @@ this host:
 files 74 isSidechain rows 0
 ```
 
-74 `.jsonl` files under `~/.claude/projects/*agentmon*/`, **zero** rows
-contain `"isSidechain":true`. This is consistent with (not a live-confirmation
-of) the hypothesis that `/multi-review` lens subagents write their own
-separate transcript files rather than inlining usage into the parent's
-transcript — across 74 files from real prior sessions (including epic-01/02
-runs that invoked `/multi-review`), none show sidechain-inlined usage.
+`.jsonl` files under `~/.claude/projects/*agentmon*/` contain **zero** rows
+with `"isSidechain":true` — subagent usage is not inlined into the parent
+transcript; lens subagents write their own separate files.
 
-**This does not by itself pin down where those separate subagent files land**
-(same project dir vs. elsewhere) or their exact naming/lineage — that requires
-observing file creation *during* a live pipeline run, which did not happen
-here. Confirming subagent transcript placement live remains a **follow-up**
-for the next real runner execution (e.g. during epic-03's implementation).
+**RESOLVED during the cross-model review (2026-07-14):** subagent transcripts
+land at `<project-dir>/<parent-session-uuid>/subagents/agent-*.jsonl` (verified
+on disk). The first-draft flat glob missed them, so the capturer now also
+enumerates the `subagents/` dir derived from each fd-bound parent transcript's
+own path (binding subagents to that session); global `message.id` dedup keeps
+any overlap safe.
 
 **Why this is non-blocking regardless:** the aggregator's dedup in Task 6 is
 **global by `message.id`**, not scoped to a single expected file. Any Claude
