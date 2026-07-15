@@ -727,6 +727,34 @@ func planDocPath(needs string, issue int) string {
 	return p
 }
 
+// fetchArtifact resolves a repo-relative .md doc for an epic and writes the
+// {path,ref,markdown} JSON response (or the mapped error status). It tries the
+// epic branch first, then falls back to the project base branch on ErrNotFound:
+// in-flight artifacts live on the branch; a merged epic's live on the base
+// branch (the branch is often deleted post-merge). Callers must have validated
+// `path`, confirmed branch != "" and d.Contents != nil.
+func (d Deps) fetchArtifact(ctx context.Context, w http.ResponseWriter, repo, baseBranch, branch, path string) {
+	b, err := d.Contents.GetContents(ctx, repo, path, branch)
+	ref := branch
+	if errors.Is(err, github.ErrNotFound) && baseBranch != "" && baseBranch != branch {
+		if b2, err2 := d.Contents.GetContents(ctx, repo, path, baseBranch); err2 == nil {
+			b, err, ref = b2, nil, baseBranch
+		}
+	}
+	switch {
+	case errors.Is(err, github.ErrNotFound):
+		writeJSONError(w, http.StatusNotFound, fmt.Sprintf("artifact not available at %s (may not be pushed yet)", path))
+	case errors.Is(err, github.ErrTooLarge):
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "artifact exceeds 256 KiB — open it on GitHub")
+	case err != nil:
+		log.Printf("api: epic artifact fetch: %v", err)
+		writeJSONError(w, http.StatusBadGateway, "artifact fetch failed")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]string{"path": path, "ref": ref, "markdown": string(b)})
+	}
+}
+
 // OrchestratorEpicPlanHandler proxies the epic's committed plan doc off its
 // branch (spec §5.2). Hub-side because the PAT never reaches the browser; it
 // can only ever read from the project's registered repo.
@@ -758,20 +786,7 @@ func (d Deps) OrchestratorEpicPlanHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		path := planDocPath(e.Needs, e.IssueNumber)
-		b, err := d.Contents.GetContents(r.Context(), p.Repo, path, e.Branch)
-		switch {
-		case errors.Is(err, github.ErrNotFound):
-			writeJSONError(w, http.StatusNotFound, fmt.Sprintf("no plan doc found at %s on %s", path, e.Branch))
-		case errors.Is(err, github.ErrTooLarge):
-			writeJSONError(w, http.StatusRequestEntityTooLarge, "plan doc exceeds 256 KiB — open it on GitHub")
-		case err != nil:
-			log.Printf("api: epic plan fetch: %v", err)
-			writeJSONError(w, http.StatusBadGateway, "plan fetch failed")
-		default:
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, http.StatusOK, map[string]string{"path": path, "ref": e.Branch, "markdown": string(b)})
-		}
+		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, planDocPath(e.Needs, e.IssueNumber))
 	}
 }
 

@@ -621,14 +621,27 @@ func TestBoardEventsDormant(t *testing.T) {
 	}
 }
 
+type refResp struct {
+	body []byte
+	err  error
+}
+
 type fakeContents struct {
 	body            []byte
 	err             error
 	repo, path, ref string
+	byRef           map[string]refResp // optional per-ref override; nil → use flat body/err
+	refsSeen        []string           // every ref GetContents was called with, in order
 }
 
 func (f *fakeContents) GetContents(_ context.Context, repo, path, ref string) ([]byte, error) {
 	f.repo, f.path, f.ref = repo, path, ref
+	f.refsSeen = append(f.refsSeen, ref)
+	if f.byRef != nil {
+		if r, ok := f.byRef[ref]; ok {
+			return r.body, r.err
+		}
+	}
 	return f.body, f.err
 }
 
@@ -717,6 +730,38 @@ func TestEpicPlanHandler(t *testing.T) {
 	d.OrchestratorEpicPlanHandler()(w, r)
 	if w.Code != 503 {
 		t.Fatalf("dormant = %d", w.Code)
+	}
+}
+
+// A completed epic's branch is deleted post-merge, so the plan 404s on
+// e.Branch but exists on the base branch — the handler must fall back.
+func TestEpicPlanHandlerBaseBranchFallback(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	if ok, err := database.SetEpicPR(ctx, e.ID, 0, "epic/7-x"); err != nil || !ok {
+		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
+	}
+
+	fc := &fakeContents{byRef: map[string]refResp{
+		"epic/7-x": {err: github.ErrNotFound},
+		"main":     {body: []byte("# Merged Plan")},
+	}}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Contents: fc}
+
+	r, w := orchReq("GET", "/api/v1/orchestrator/projects/p1/epics/"+e.ID+"/plan", "")
+	r.SetPathValue("id", "p1")
+	r.SetPathValue("epicID", e.ID)
+	d.OrchestratorEpicPlanHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("fallback = %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"markdown":"# Merged Plan"`) || !strings.Contains(w.Body.String(), `"ref":"main"`) {
+		t.Fatalf("expected base-branch plan, got %s", w.Body.String())
+	}
+	if len(fc.refsSeen) != 2 || fc.refsSeen[0] != "epic/7-x" || fc.refsSeen[1] != "main" {
+		t.Fatalf("expected branch-then-base fetch order, got %v", fc.refsSeen)
 	}
 }
 
