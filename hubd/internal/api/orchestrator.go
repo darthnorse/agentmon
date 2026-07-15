@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -55,7 +54,7 @@ type epicDTO struct {
 // figure, not the full per-attempt/per-stage breakdown (that's the drawer's
 // detail view, Task 14). Cost is a pointer so an unpriced model can fail
 // closed to "$—" (nil) instead of a misleading low number, matching
-// orchestrator.aggregateCost.
+// orchestrator.AggregateCost.
 type usageRollupDTO struct {
 	Tokens     int64    `json:"tokens"`
 	Cost       *float64 `json:"cost"`
@@ -106,42 +105,6 @@ func (d Deps) epicUsageRollups(ctx context.Context, projectID string, epics []db
 	return out
 }
 
-// projectUsageRollup sums a project's per-epic rollups (from epicUsageRollups)
-// into one project-level figure: nil when no epic has any usage. Cost is
-// fail-closed at the project level, same as DeriveEpicUsage is fail-closed at
-// the epic level: nil the moment ANY epic's own cost is nil (that epic mixed
-// a priced model with one the rate card doesn't know), because a partial sum
-// would understate the true total and render as a misleadingly low dollar
-// figure. Only when every epic's cost is known does this sum them. This must
-// stay in lockstep with aggregateProjectUsage's project-total and by_stage
-// cost below — same rule, so the board and the project-usage endpoint never
-// disagree on the same project's total dollars.
-func projectUsageRollup(perEpic map[string]*usageRollupDTO) *usageRollupDTO {
-	if len(perEpic) == 0 {
-		return nil
-	}
-	var tokens, durationMs int64
-	var costSum float64
-	allPriced := true
-	for _, u := range perEpic {
-		if u == nil {
-			continue
-		}
-		tokens += u.Tokens
-		durationMs += u.DurationMs
-		if u.Cost == nil {
-			allPriced = false
-			continue
-		}
-		costSum += *u.Cost
-	}
-	var cost *float64
-	if allPriced {
-		cost = &costSum
-	}
-	return &usageRollupDTO{Tokens: tokens, Cost: cost, DurationMs: durationMs}
-}
-
 type projectDTO struct {
 	ID              string           `json:"id"`
 	Name            string           `json:"name"`
@@ -158,11 +121,18 @@ type projectDTO struct {
 	Pinned          bool             `json:"pinned"`
 	Requirements    []db.Requirement `json:"requirements"`
 	Counts          map[string]int   `json:"counts,omitempty"`
-	Usage           *usageRollupDTO  `json:"usage,omitempty"`
 }
 
-func projectOut(p db.Project, counts map[string]int, usage *usageRollupDTO) projectDTO {
-	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, p.Pinned, p.Requirements, counts, usage}
+// projectOut builds the wire DTO. There is deliberately no project-level
+// usage rollup here: it was never rendered (ProjectHeader fetches the full
+// breakdown from GET /projects/{id}/usage instead) and diverged from that
+// endpoint past 50 epics (this board path's ListBoardEpics is capped;
+// GET .../usage's ListEpicsByProject isn't) — a field nothing reads that can
+// disagree with the real number is worse than no field. The epic-level
+// rollup (epicDTO.Usage, from epicUsageRollups) is unaffected: EpicCard does
+// render that one.
+func projectOut(p db.Project, counts map[string]int) projectDTO {
+	return projectDTO{p.ID, p.Name, p.Repo, p.ServerID, p.Target, p.Workdir, p.BaseBranch, p.Provider, p.RequiredReviews, p.MaxParallel, p.Paused, p.RequireCI, p.Pinned, p.Requirements, counts}
 }
 
 type eventDTO struct {
@@ -194,8 +164,7 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 				for _, e := range es {
 					counts[e.Stage]++
 				}
-				rollups := d.epicUsageRollups(r.Context(), p.ID, es)
-				out = append(out, projectOut(p, counts, projectUsageRollup(rollups)))
+				out = append(out, projectOut(p, counts))
 			}
 			writeJSON(w, http.StatusOK, out)
 			return
@@ -275,7 +244,7 @@ func (d Deps) OrchestratorProjectsHandler() http.HandlerFunc {
 		if d.Audit != nil {
 			d.Audit.ProjectRegister(r.Context(), p.ID, "project:"+pr.ID, pr.Repo, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		}
-		writeJSON(w, http.StatusCreated, projectOut(pr, nil, nil))
+		writeJSON(w, http.StatusCreated, projectOut(pr, nil))
 	}
 }
 
@@ -310,7 +279,7 @@ func (d Deps) OrchestratorBoardHandler() http.HandlerFunc {
 			}
 			events[e.ID] = out
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"project": projectOut(p, nil, projectUsageRollup(rollups)), "epics": dto, "events": events})
+		writeJSON(w, http.StatusOK, map[string]any{"project": projectOut(p, nil), "epics": dto, "events": events})
 	}
 }
 
@@ -626,7 +595,7 @@ func (d Deps) OrchestratorProjectPatchHandler() http.HandlerFunc {
 		if d.Audit != nil {
 			d.Audit.ProjectUpdate(r.Context(), p.ID, "project:"+id, authn.ClientIP(r, d.TrustForwardedProto), r.UserAgent())
 		}
-		writeJSON(w, http.StatusOK, projectOut(pr, nil, nil))
+		writeJSON(w, http.StatusOK, projectOut(pr, nil))
 	}
 }
 
@@ -693,7 +662,7 @@ func (d Deps) boardSnapshot(ctx context.Context) ([]projectDTO, []epicDTO, error
 			return nil, nil, err
 		}
 		rollups := d.epicUsageRollups(ctx, pr.ID, es)
-		projDTOs = append(projDTOs, projectOut(pr, nil, projectUsageRollup(rollups)))
+		projDTOs = append(projDTOs, projectOut(pr, nil))
 		for _, e := range es {
 			epics = append(epics, toEpicDTO(e, rollups[e.ID]))
 		}
@@ -882,32 +851,29 @@ func (d Deps) OrchestratorProjectUsageHandler() http.HandlerFunc {
 	}
 }
 
-// usageModelKey identifies a (provider, model) bucket while folding token
-// totals across epics — a local equivalent of orchestrator's unexported
-// modelKey, needed here because the fold itself happens in this package.
-type usageModelKey struct {
-	Provider string
-	Model    string
-}
-
 // aggregateProjectUsage groups the project's usage ledger by epic (issue
 // number), derives each epic's usage via orchestrator.DeriveEpicUsage — the
 // same per-attempt/stage/model logic that powers the epic detail endpoint
-// and the board's inline rollup — then folds every epic's attempts/stages
-// into one project-wide summary: by_stage sums every attempt's UsageStage
-// entries by stage name across epics, by_model sums every stage's ByModel
-// entries by (provider,model) across epics.
+// and the board's inline per-epic rollup — then folds every epic's
+// attempts/stages into one project-wide summary: by_stage sums every
+// attempt's UsageStage entries by stage name across epics, by_model sums
+// every stage's ByModel entries by (provider,model) across epics.
 //
-// Cost aggregation mirrors orchestrator.aggregateCost's fail-closed rule at
-// every scope except by_model: project-total and per-stage cost (via
-// sumKnownCosts) are nil the moment ANY contributing model in that scope is
-// unpriced, and are the real sum only when every contributing model is
-// known — same rule projectUsageRollup applies at the epic level, so the
-// board and this endpoint never disagree on the same project's total
-// dollars. by_model rows have no such ambiguity: each is priced directly
-// from its own aggregated token bucket via orchestrator.CostUSD, independent
-// of whatever else shares its scope, and is left as "sum/blank what you
-// know" — a lone (provider,model) row is unambiguously priced-or-null.
+// The (provider,model) folding and final pricing reuse orchestrator's own
+// exported helpers (orchestrator.ModelKey/ModelUsageList/AggregateCost)
+// rather than a local copy of the same logic — this package's only job is
+// the epic→project fold; the model-bucket→priced-breakdown step is
+// identical to what DeriveEpicUsage already does internally, so it's built
+// once there and called from here.
+//
+// Cost aggregation mirrors orchestrator.AggregateCost's fail-closed rule at
+// every scope except by_model: project-total and per-stage cost are nil the
+// moment ANY contributing model in that scope is unpriced, and are the real
+// sum only when every contributing model is known. by_model rows have no
+// such ambiguity: each is priced directly from its own aggregated token
+// bucket via orchestrator.CostUSD, independent of whatever else shares its
+// scope, and is left as "sum/blank what you know" — a lone (provider,model)
+// row is unambiguously priced-or-null.
 func aggregateProjectUsage(rows []db.UsageRow, epics []db.Epic) projectUsageDTO {
 	byIssue := map[int][]db.UsageRow{}
 	for _, r := range rows {
@@ -921,8 +887,8 @@ func aggregateProjectUsage(rows []db.UsageRow, epics []db.Epic) projectUsageDTO 
 	stageSeen := map[string]bool{}
 	stageTokens := map[string]orchestrator.TokenTotals{}
 	stageDurationMs := map[string]int64{}
-	stageModelTokens := map[string]map[usageModelKey]orchestrator.TokenTotals{}
-	projectModelTokens := map[usageModelKey]orchestrator.TokenTotals{}
+	stageModelTokens := map[string]map[orchestrator.ModelKey]orchestrator.TokenTotals{}
+	projectModelTokens := map[orchestrator.ModelKey]orchestrator.TokenTotals{}
 
 	for _, e := range epics {
 		issueRows := byIssue[e.IssueNumber]
@@ -938,12 +904,12 @@ func aggregateProjectUsage(rows []db.UsageRow, epics []db.Epic) projectUsageDTO 
 				if !stageSeen[st.Stage] {
 					stageSeen[st.Stage] = true
 					stageOrder = append(stageOrder, st.Stage)
-					stageModelTokens[st.Stage] = map[usageModelKey]orchestrator.TokenTotals{}
+					stageModelTokens[st.Stage] = map[orchestrator.ModelKey]orchestrator.TokenTotals{}
 				}
 				stageTokens[st.Stage] = orchestrator.AddTokens(stageTokens[st.Stage], st.Tokens)
 				stageDurationMs[st.Stage] += st.DurationMs
 				for _, m := range st.ByModel {
-					k := usageModelKey{Provider: m.Provider, Model: m.Model}
+					k := orchestrator.ModelKey{Provider: m.Provider, Model: m.Model}
 					stageModelTokens[st.Stage][k] = orchestrator.AddTokens(stageModelTokens[st.Stage][k], m.Tokens)
 					projectModelTokens[k] = orchestrator.AddTokens(projectModelTokens[k], m.Tokens)
 				}
@@ -951,76 +917,24 @@ func aggregateProjectUsage(rows []db.UsageRow, epics []db.Epic) projectUsageDTO 
 		}
 	}
 
-	byModel := modelUsageRows(projectModelTokens)
+	byModel := orchestrator.ModelUsageList(projectModelTokens)
 
 	byStage := make([]projectStageUsageDTO, 0, len(stageOrder))
 	for _, stage := range stageOrder {
-		models := modelUsageRows(stageModelTokens[stage])
+		models := orchestrator.ModelUsageList(stageModelTokens[stage])
 		byStage = append(byStage, projectStageUsageDTO{
 			Stage:      stage,
 			Tokens:     stageTokens[stage],
-			Cost:       sumKnownCosts(models),
+			Cost:       orchestrator.AggregateCost(models),
 			DurationMs: stageDurationMs[stage],
 		})
 	}
 
 	return projectUsageDTO{
 		Tokens:     tokens,
-		Cost:       sumKnownCosts(byModel),
+		Cost:       orchestrator.AggregateCost(byModel),
 		DurationMs: durationMs,
 		ByStage:    byStage,
 		ByModel:    byModel,
 	}
-}
-
-// modelUsageRows turns a (provider,model) → token-total map into a sorted,
-// freshly priced breakdown (provider, then model, ascending) — mirroring
-// orchestrator's unexported modelUsageList, reimplemented here because the
-// fold across epics happens in this package.
-func modelUsageRows(byModel map[usageModelKey]orchestrator.TokenTotals) []orchestrator.ModelUsage {
-	keys := make([]usageModelKey, 0, len(byModel))
-	for k, t := range byModel {
-		if t.Total == 0 {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Provider != keys[j].Provider {
-			return keys[i].Provider < keys[j].Provider
-		}
-		return keys[i].Model < keys[j].Model
-	})
-	out := make([]orchestrator.ModelUsage, 0, len(keys))
-	for _, k := range keys {
-		t := byModel[k]
-		out = append(out, orchestrator.ModelUsage{
-			Provider: k.Provider,
-			Model:    k.Model,
-			Tokens:   t,
-			Cost:     orchestrator.CostUSD(t.Input, t.Output, t.CacheRead, t.CacheWrite, k.Model),
-		})
-	}
-	return out
-}
-
-// sumKnownCosts fails a scope's cost closed to nil: empty, or ANY model in
-// it unpriced (unknown to the rate card) — a partial sum would understate
-// the real total and render as a misleadingly low dollar figure, so this
-// blanks to "$—" rather than quietly dropping the unknown model's share.
-// Same rule as orchestrator.aggregateCost, reimplemented here because the
-// project-wide fold happens in this package — see aggregateProjectUsage's
-// doc comment.
-func sumKnownCosts(models []orchestrator.ModelUsage) *float64 {
-	if len(models) == 0 {
-		return nil
-	}
-	var sum float64
-	for _, m := range models {
-		if m.Cost == nil {
-			return nil
-		}
-		sum += *m.Cost
-	}
-	return &sum
 }

@@ -130,3 +130,113 @@ func TestDeriveIsLowerBoundNonTerminal(t *testing.T) {
 		t.Fatalf("current attempt on a non-terminal epic stage should be is_lower_bound=true")
 	}
 }
+
+// findStage returns the named UsageStage from an attempt, or nil.
+func findStage(a UsageAttempt, name string) *UsageStage {
+	for i := range a.Stages {
+		if a.Stages[i].Stage == name {
+			return &a.Stages[i]
+		}
+	}
+	return nil
+}
+
+// TestDeriveClampsNegativeDeltaToZero guards Fix 5: a later boundary
+// reporting a LOWER cumulative than an earlier one (a source dropping out,
+// or any other non-monotonicity) must floor that interval's delta at 0, not
+// go negative — a negative delta would flow into UsageStage.Tokens and, via
+// CostUSD, into a negative dollar figure polluting by_stage/by_model/totals.
+//
+// Three boundaries, not two: the interval carrying the decrease
+// (implementing@10:05 -> reviewing@10:10, cumulative 500->200) is attributed
+// to its STARTING boundary's stage ("implementing", the attribution rule
+// used throughout this file) — and a trailing boundary is required so
+// "implementing" is a starting boundary at all, rather than the (always
+// inert) last one.
+func TestDeriveClampsNegativeDeltaToZero(t *testing.T) {
+	rows := []db.UsageRow{
+		u("planning", "2026-07-14T10:00:00Z", 100),
+		u("implementing", "2026-07-14T10:05:00Z", 500),
+		// cumulative DECREASES 500 -> 200: without the clamp the naive delta
+		// for the implementing->reviewing interval is 200-500 = -300.
+		u("reviewing", "2026-07-14T10:10:00Z", 200),
+	}
+	got := DeriveEpicUsage(rows, db.Epic{IssueNumber: 7, Attempt: 1, Stage: "merged"})
+	a := got.Attempts[0]
+
+	if stageInput(a, "planning") != 500 {
+		t.Fatalf("planning (lead-in 100 + 500-100=400) unaffected by the later decrease: want 500 got %d", stageInput(a, "planning"))
+	}
+	impl := findStage(a, "implementing")
+	if impl == nil {
+		t.Fatal("implementing stage missing from output")
+	}
+	if impl.Tokens.Input != 0 {
+		t.Fatalf("decreasing cumulative must floor the interval's delta at 0 (not -300), got %d", impl.Tokens.Input)
+	}
+	if impl.Tokens.Total < 0 {
+		t.Fatalf("stage Tokens.Total must never go negative, got %d", impl.Tokens.Total)
+	}
+	if impl.Cost != nil && *impl.Cost < 0 {
+		t.Fatalf("stage cost must never go negative, got %v", *impl.Cost)
+	}
+	if got.Cost != nil && *got.Cost < 0 {
+		t.Fatalf("epic cost must never go negative, got %v", *got.Cost)
+	}
+}
+
+// TestDeriveSameSecondDifferentStageBoundaries guards Fix 7: two reports
+// landing in the same captured_at second but naming DIFFERENT stages must
+// become two distinct boundaries (in row/insertion order), not collapse into
+// one boundary keyed on captured_at alone — which would silently pick
+// whichever row's Stage was encountered first and attribute all of that
+// second's later work to it.
+func TestDeriveSameSecondDifferentStageBoundaries(t *testing.T) {
+	rows := []db.UsageRow{
+		u("reviewing", "2026-07-14T10:00:00Z", 100),    // B0
+		u("implementing", "2026-07-14T10:00:00Z", 250), // B1: SAME second, different stage
+		u("pr_open", "2026-07-14T10:05:00Z", 400),      // B2
+	}
+	got := DeriveEpicUsage(rows, db.Epic{IssueNumber: 7, Attempt: 1, Stage: "merged"})
+	a := got.Attempts[0]
+
+	// Correct (two boundaries at :00): interval B0->B1 attributed to B0's
+	// stage (reviewing) = 250-100=150, plus the B0 lead-in 100-0=100 -> 250.
+	// interval B1->B2 attributed to B1's stage (implementing) = 400-250=150.
+	// pr_open is the last boundary and is therefore inert (0).
+	//
+	// The old bug (one merged boundary at :00, stage=first-iterated
+	// "reviewing", cum=last-write 250) would instead produce
+	// reviewing=250-0=250 for the FIRST interval and then B_T->B2 also
+	// attributed to "reviewing" (400-250=150) -> reviewing=400,
+	// implementing=0 (never a starting boundary at all). The two outcomes are
+	// distinguishable, which is what this test checks.
+	if stageInput(a, "reviewing") != 250 {
+		t.Fatalf("reviewing = 250 (two distinct same-second boundaries), got %d", stageInput(a, "reviewing"))
+	}
+	if stageInput(a, "implementing") != 150 {
+		t.Fatalf("implementing = 150 (its own same-second boundary started an interval), got %d", stageInput(a, "implementing"))
+	}
+	if len(a.Stages) != 2 {
+		t.Fatalf("want 2 distinct stages (reviewing, implementing) — pr_open is the inert last boundary, got %d: %+v", len(a.Stages), a.Stages)
+	}
+}
+
+// TestEpicDurationFallsBackToBoundarySpanForLiveEpic guards Fix L: an epic
+// with no MergedAt yet (still running/escalated) must report real elapsed
+// time from its usage rows' captured_at span, not always 0 — matching the
+// drawer's own duration derivation instead of contradicting it on the same
+// card.
+func TestEpicDurationFallsBackToBoundarySpanForLiveEpic(t *testing.T) {
+	rows := []db.UsageRow{
+		u("planning", "2026-07-14T10:00:00Z", 100),
+		u("implementing", "2026-07-14T10:20:00Z", 300),
+	}
+	got := DeriveEpicUsage(rows, db.Epic{
+		IssueNumber: 7, Attempt: 1, Stage: "implementing", StartedAt: "2026-07-14T10:00:00Z",
+	})
+	want := int64(20 * 60 * 1000)
+	if got.DurationMs != want {
+		t.Fatalf("live-epic duration = boundary span (20m = %dms), got %d", want, got.DurationMs)
+	}
+}

@@ -219,11 +219,6 @@ func TestBoardEpicUsageRollup(t *testing.T) {
 			}
 		}
 	}
-
-	// The project-level rollup sums its epics' usage.
-	if out.Project.Usage == nil || out.Project.Usage.Tokens != 150 {
-		t.Fatalf("project rollup = sum of epic rollups (150), got %+v", out.Project.Usage)
-	}
 }
 
 func TestActionsDispatch(t *testing.T) {
@@ -900,8 +895,8 @@ func TestProjectUsageHandler(t *testing.T) {
 }
 
 // TestProjectUsageMixedModelCostFailsClosed guards the Should-Fix finding:
-// projectUsageRollup (board) summed non-nil PER-EPIC costs, skipping any nil
-// one, while aggregateProjectUsage/sumKnownCosts (project endpoint) summed
+// the (since-removed) board rollup summed non-nil PER-EPIC costs, skipping
+// any nil one, while aggregateProjectUsage (project endpoint) summed
 // non-nil PER-MODEL costs across the whole project. When a single epic mixes
 // a priced model with an unpriced one in the same stage, DeriveEpicUsage
 // already fails that epic's own Cost closed to nil — so the OLD board rollup
@@ -938,35 +933,11 @@ func TestProjectUsageMixedModelCostFailsClosed(t *testing.T) {
 
 	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
 
-	// GET /projects (board rollup) — project usage.cost must be null.
-	r, w := orchReq("GET", "/api/v1/orchestrator/projects", "")
-	d.OrchestratorProjectsHandler()(w, r)
-	if w.Code != 200 {
-		t.Fatalf("list projects = %d %s", w.Code, w.Body.String())
-	}
-	var list []projectDTO
-	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
-		t.Fatal(err)
-	}
-	var p1 *projectDTO
-	for i := range list {
-		if list[i].ID == "p1" {
-			p1 = &list[i]
-		}
-	}
-	if p1 == nil {
-		t.Fatal("p1 missing from project list")
-	}
-	if p1.Usage == nil {
-		t.Fatalf("p1 usage must be present (it has ledger rows), got nil")
-	}
-	if p1.Usage.Cost != nil {
-		t.Fatalf("board rollup cost must be nil when the project mixes an unpriced model, got %v", *p1.Usage.Cost)
-	}
-
 	// GET /projects/{id}/usage — project total AND the mixed stage must be
-	// null; by_model stays independently priced per model.
-	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/usage", "")
+	// null; by_model stays independently priced per model. (projectDTO
+	// itself carries no project-level usage rollup — see the dead-board-
+	// rollup removal — so there is nothing to assert on GET /projects here.)
+	r, w := orchReq("GET", "/api/v1/orchestrator/projects/p1/usage", "")
 	r.SetPathValue("id", "p1")
 	d.OrchestratorProjectUsageHandler()(w, r)
 	if w.Code != 200 {

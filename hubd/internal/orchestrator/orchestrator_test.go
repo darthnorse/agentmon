@@ -947,8 +947,10 @@ func TestTickGateEnforcesPlatformRequirements(t *testing.T) {
 
 // TestApplyReportUpsertsUsageEvenOnNoopTransition covers redelivery recovery:
 // a report whose stage transition is a no-op (the epic is already at that
-// stage) must still upsert the usage it carries, because the ledger upsert
-// runs independently of ValidTransition. Provenance still gates it — the
+// stage) must still upsert the usage it carries — the same-stage case is
+// explicitly treated as legal-for-usage-purposes by applyReport's gate (see
+// TestApplyReportGatesUsageUpsertOnTransitionLegality for the genuinely
+// illegal case, which must NOT upsert). Provenance still gates it — the
 // epic is assigned a session and the report must claim that same session.
 func TestApplyReportUpsertsUsageEvenOnNoopTransition(t *testing.T) {
 	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
@@ -1002,5 +1004,85 @@ func TestApplyReportUpsertsUsageEvenOnNoopTransition(t *testing.T) {
 	}
 	if rows[0].Attempt != 1 || rows[0].Stage != "reviewing" {
 		t.Fatalf("usage row must carry epic attempt + report stage: %+v", rows[0])
+	}
+}
+
+// TestApplyReportGatesUsageUpsertOnTransitionLegality guards Fix D1: usage
+// upsert must be gated on the report's transition being legal (or a
+// same-stage redelivery — see TestApplyReportUpsertsUsageEvenOnNoopTransition),
+// never for a genuinely ILLEGAL transition. An illegal report is dropped
+// outright a few lines later anyway; upserting its usage first would plant a
+// phantom stage boundary that skews attribution for work that was never
+// really attributed to that stage. A subsequent LEGAL transition must still
+// upsert normally.
+func TestApplyReportGatesUsageUpsertOnTransitionLegality(t *testing.T) {
+	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
+	ctx := context.Background()
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{
+		ProjectID: "p1", IssueNumber: 7, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range [][3]string{
+		{"queued", "starting", "hub"},
+		{"starting", "planning", "report"},
+		{"planning", "implementing", "report"},
+		{"implementing", "reviewing", "report"},
+	} {
+		if ok, err := d.TransitionEpic(ctx, e.ID, tr[0], tr[1], tr[2], "", "t1"); err != nil || !ok {
+			t.Fatalf("%s->%s: ok=%v err=%v", tr[0], tr[1], ok, err)
+		}
+	}
+	if ok, err := d.SetEpicAssignment(ctx, e.ID, "P-7", 1); err != nil || !ok {
+		t.Fatalf("assign session: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// (a) ILLEGAL transition: epic is at "reviewing"; reviewing->planning is
+	// a backward jump (not the special reviewing->implementing fix loop), so
+	// ValidTransition rejects it. Its usage must NOT land.
+	illegal := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicPlanning,
+		Session: "P-7", Ts: "2026-07-14T10:00:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 999}}}
+	if deferred := o.applyReport(ctx, p, illegal); deferred {
+		t.Fatal("illegal-transition report unexpectedly deferred")
+	}
+	if got, err := d.GetEpic(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	} else if got.Stage != "reviewing" {
+		t.Fatalf("illegal transition must not move the stage, got %q", got.Stage)
+	}
+	rows, err := d.ListEpicUsage(ctx, p.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("illegal transition must NOT upsert usage, got %+v", rows)
+	}
+
+	// (c) LEGAL transition: reviewing -> pr_open is a forward move. Its usage
+	// must land.
+	legal := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicPROpen, PR: 42,
+		Session: "P-7", Ts: "2026-07-14T10:05:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 111}}}
+	if deferred := o.applyReport(ctx, p, legal); deferred {
+		t.Fatal("legal-transition report unexpectedly deferred")
+	}
+	if got, err := d.GetEpic(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	} else if got.Stage != "pr_open" {
+		t.Fatalf("legal transition must actually transition the epic, got %q", got.Stage)
+	}
+	rows, err = d.ListEpicUsage(ctx, p.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Output != 111 || rows[0].Stage != "pr_open" {
+		t.Fatalf("legal transition must upsert its usage, got %+v", rows)
 	}
 }

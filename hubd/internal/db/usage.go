@@ -56,18 +56,27 @@ func (d *DB) UpsertUsage(ctx context.Context, row UsageRow) error {
 }
 
 // ListEpicUsage returns every token snapshot recorded for one epic, in the
-// order they accrued.
+// order they accrued. The final `rowid` tie-break is SQLite's implicit
+// monotonic insertion order (epic_usage has a TEXT PRIMARY KEY, not
+// WITHOUT ROWID, so rowid always exists) — it disambiguates two rows that
+// share a captured_at second (e.g. a stage report and a reap landing in the
+// same second): the row inserted later (a reap, always last) sorts last
+// within that second, and same-second same-stage/different-stage reports
+// keep a deterministic, reproducible order instead of one that depends on
+// SQLite's unspecified tie order. usage_derive.go's buildBoundaries relies
+// on this ordering to sequence same-second boundaries correctly.
 func (d *DB) ListEpicUsage(ctx context.Context, projectID string, issue int) ([]UsageRow, error) {
 	return d.listUsage(ctx,
-		`SELECT `+usageCols+` FROM epic_usage WHERE project_id = ? AND issue_number = ? ORDER BY attempt, captured_at`,
+		`SELECT `+usageCols+` FROM epic_usage WHERE project_id = ? AND issue_number = ? ORDER BY attempt, captured_at, rowid`,
 		projectID, issue)
 }
 
 // ListProjectUsage returns every token snapshot recorded for a project across
-// all its epics, grouped by epic via the ORDER BY.
+// all its epics, grouped by epic via the ORDER BY. See ListEpicUsage's
+// doc comment for why the trailing `rowid` tie-break matters.
 func (d *DB) ListProjectUsage(ctx context.Context, projectID string) ([]UsageRow, error) {
 	return d.listUsage(ctx,
-		`SELECT `+usageCols+` FROM epic_usage WHERE project_id = ? ORDER BY issue_number, attempt, captured_at`,
+		`SELECT `+usageCols+` FROM epic_usage WHERE project_id = ? ORDER BY issue_number, attempt, captured_at, rowid`,
 		projectID)
 }
 

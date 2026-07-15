@@ -400,15 +400,24 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		log.Printf("orchestrator[%s]: report session mismatch: %q != %q", p.Name, r.Session, e.SessionName)
 		return false
 	}
-	// Usage upsert is unconditional past provenance and independent of the
-	// transition outcome: a redelivered report whose transition is now a
-	// no-op (the epic already sits at that stage) must still land its usage
-	// snapshot, or a retry after a transient DB error would silently lose
-	// the ledger entry. Best-effort — never blocks or reverses the transition.
-	o.upsertUsage(ctx, p, e, r)
+	// Usage upsert is gated on the report's transition being legal — a
+	// genuinely ILLEGAL transition (e.g. a stale/out-of-order report) must
+	// not plant a phantom stage boundary that skews attribution, since the
+	// report is about to be dropped outright below and never applied. A
+	// SAME-STAGE redelivery (the epic already sits at r.Stage) is not
+	// illegal in that sense — it's the no-op-transition recovery case: a
+	// retry after a transient DB error must still land its usage snapshot,
+	// or the ledger entry is silently lost. Best-effort — never blocks or
+	// reverses the transition either way.
+	legalOrRedelivery := ValidTransition(shared.EpicStage(e.Stage), r.Stage) || r.Stage == shared.EpicStage(e.Stage)
+	if legalOrRedelivery {
+		o.upsertUsage(ctx, p, e, r)
+	}
 	// A pr_open claim with no PR number would strand the epic in a stage no
 	// scanner revisits. Fail closed; the runner stays in reviewing where the
-	// stage timeout still applies.
+	// stage timeout still applies. Usage above already recorded (this is a
+	// legal transition, just later dropped for a different reason), so its
+	// true spend isn't lost.
 	if r.Stage == shared.EpicPROpen && r.PR <= 0 && e.PRNumber <= 0 {
 		log.Printf("orchestrator[%s]: dropped pr_open report without PR number for epic #%d", p.Name, r.Epic)
 		return false

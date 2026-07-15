@@ -55,7 +55,7 @@ export interface ProjectDTO {
   workdir: string; base_branch: string; provider: string;
   required_reviews: string[] | null; max_parallel: number; paused: boolean;
   require_ci: boolean; pinned: boolean; requirements: Requirement[];
-  counts?: Record<string, number>; usage?: UsageRollup;
+  counts?: Record<string, number>;
 }
 
 export interface EpicDTO {

@@ -43,6 +43,25 @@ func (t TokenTotals) sub(o TokenTotals) TokenTotals {
 	return newTokenTotals(t.Input-o.Input, t.Output-o.Output, t.CacheRead-o.CacheRead, t.CacheWrite-o.CacheWrite)
 }
 
+// clampNonNeg floors each bucket at 0, recomputing Total from the floored
+// parts (never independently derived, same invariant as every other
+// TokenTotals constructor). Used on a per-interval delta: if a later
+// boundary reports a LOWER cumulative than an earlier one for the same
+// (provider,model) — a source dropping out mid-run, or any other
+// non-monotonicity — the naive delta goes negative. A decreasing cumulative
+// must contribute 0 to that interval, never subtract from it; subtracting
+// would produce negative stage tokens and, downstream, a negative CostUSD
+// polluting by_stage/by_model/totals.
+func (t TokenTotals) clampNonNeg() TokenTotals {
+	clamp := func(v int64) int64 {
+		if v < 0 {
+			return 0
+		}
+		return v
+	}
+	return newTokenTotals(clamp(t.Input), clamp(t.Output), clamp(t.CacheRead), clamp(t.CacheWrite))
+}
+
 // ModelUsage is one (provider, model)'s token/cost contribution within some
 // scope (a stage, or the whole epic).
 type ModelUsage struct {
@@ -85,7 +104,12 @@ type EpicUsage struct {
 	Attempts   []UsageAttempt `json:"attempts"`
 }
 
-type modelKey struct {
+// ModelKey identifies a (provider, model) bucket used to fold token totals
+// while deriving usage. Exported so the API layer's project-wide aggregation
+// (which folds usage across many epics from outside this package) can build
+// the same map keys ModelUsageList/AggregateCost expect, instead of keeping
+// its own near-identical copy.
+type ModelKey struct {
 	Provider string
 	Model    string
 }
@@ -98,7 +122,7 @@ type usageBoundary struct {
 	ts    time.Time
 	tsOK  bool
 	stage string
-	cum   map[modelKey]TokenTotals
+	cum   map[ModelKey]TokenTotals
 }
 
 // DeriveEpicUsage turns the raw cumulative token snapshots recorded for one
@@ -128,7 +152,7 @@ func DeriveEpicUsage(rows []db.UsageRow, e db.Epic) EpicUsage {
 
 	attempts := make([]UsageAttempt, 0, len(attemptNums))
 	epicTokens := TokenTotals{}
-	epicModelTokens := map[modelKey]TokenTotals{}
+	epicModelTokens := map[ModelKey]TokenTotals{}
 
 	for _, n := range attemptNums {
 		// The "current" attempt is the one matching e.Attempt — NOT necessarily
@@ -145,32 +169,66 @@ func DeriveEpicUsage(rows []db.UsageRow, e db.Epic) EpicUsage {
 		}
 	}
 
-	epicModels := modelUsageList(epicModelTokens)
+	epicModels := ModelUsageList(epicModelTokens)
 
 	return EpicUsage{
 		Tokens:     epicTokens,
-		Cost:       aggregateCost(epicModels),
-		DurationMs: epicDurationMs(e),
+		Cost:       AggregateCost(epicModels),
+		DurationMs: epicDurationMs(e, rows),
 		ByModel:    epicModels,
 		Attempts:   attempts,
 	}
 }
 
-// epicDurationMs is the epic's wall-clock span, best-effort: 0 unless both
-// timestamps are present and parse.
-func epicDurationMs(e db.Epic) int64 {
-	if e.StartedAt == "" || e.MergedAt == "" {
+// epicDurationMs is the epic's wall-clock span, best-effort. Prefers
+// MergedAt−StartedAt when both are present and parse. A running/escalated
+// epic has no MergedAt yet — without a fallback the inline rollup would
+// always show 0m while the drawer (which derives duration from the same
+// boundaries) shows real elapsed time, a visible contradiction on the same
+// card. So when MergedAt is empty or fails to parse, fall back to the
+// boundary span across the epic's own usage rows: max(captured_at) −
+// min(captured_at), best-effort parsed, 0 on failure/absence.
+func epicDurationMs(e db.Epic, rows []db.UsageRow) int64 {
+	if e.StartedAt != "" && e.MergedAt != "" {
+		if start, err := time.Parse(time.RFC3339, e.StartedAt); err == nil {
+			if end, err := time.Parse(time.RFC3339, e.MergedAt); err == nil {
+				if d := end.Sub(start).Milliseconds(); d > 0 {
+					return d
+				}
+				return 0
+			}
+		}
+	}
+	return boundarySpanMs(rows)
+}
+
+// boundarySpanMs is the best-effort wall-clock span (max − min) across a set
+// of usage rows' captured_at timestamps. 0 if fewer than one timestamp
+// parses.
+func boundarySpanMs(rows []db.UsageRow) int64 {
+	var min, max time.Time
+	have := false
+	for _, r := range rows {
+		t, err := time.Parse(time.RFC3339, r.CapturedAt)
+		if err != nil {
+			continue
+		}
+		if !have {
+			min, max = t, t
+			have = true
+			continue
+		}
+		if t.Before(min) {
+			min = t
+		}
+		if t.After(max) {
+			max = t
+		}
+	}
+	if !have {
 		return 0
 	}
-	start, err := time.Parse(time.RFC3339, e.StartedAt)
-	if err != nil {
-		return 0
-	}
-	end, err := time.Parse(time.RFC3339, e.MergedAt)
-	if err != nil {
-		return 0
-	}
-	if d := end.Sub(start).Milliseconds(); d > 0 {
+	if d := max.Sub(min).Milliseconds(); d > 0 {
 		return d
 	}
 	return 0
@@ -182,21 +240,21 @@ func epicDurationMs(e db.Epic) int64 {
 // number equals e.Attempt (the live attempt, which may still be running or
 // may not have reported any usage rows yet); every other attempt is a
 // prior/superseded one.
-func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic) (UsageAttempt, map[modelKey]TokenTotals) {
+func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic) (UsageAttempt, map[ModelKey]TokenTotals) {
 	boundaries := buildBoundaries(rows)
 	sortBoundaries(boundaries)
 
-	seen := map[modelKey]bool{}
+	seen := map[ModelKey]bool{}
 	for _, b := range boundaries {
 		for k := range b.cum {
 			seen[k] = true
 		}
 	}
 
-	cum := map[modelKey]TokenTotals{} // carried-forward cumulative, keyed by model; a missing key reads as the zero value (0), which is exactly the "never seen yet" baseline.
+	cum := map[ModelKey]TokenTotals{} // carried-forward cumulative, keyed by model; a missing key reads as the zero value (0), which is exactly the "never seen yet" baseline.
 	stageOrder := []string{}
 	stageSeen := map[string]bool{}
-	stageTokens := map[string]map[modelKey]TokenTotals{}
+	stageTokens := map[string]map[ModelKey]TokenTotals{}
 	stageDurationMs := map[string]int64{}
 	var attemptDurationMs int64
 
@@ -214,7 +272,7 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 		if !stageSeen[stage] {
 			stageSeen[stage] = true
 			stageOrder = append(stageOrder, stage)
-			stageTokens[stage] = map[modelKey]TokenTotals{}
+			stageTokens[stage] = map[ModelKey]TokenTotals{}
 		}
 
 		for k := range seen {
@@ -222,7 +280,7 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 			if v, ok := b.cum[k]; ok {
 				target = v
 			}
-			delta := target.sub(cum[k])
+			delta := target.sub(cum[k]).clampNonNeg()
 			stageTokens[stage][k] = stageTokens[stage][k].add(delta)
 		}
 
@@ -245,7 +303,7 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 
 	stages := make([]UsageStage, 0, len(stageOrder))
 	for _, stage := range stageOrder {
-		models := modelUsageList(stageTokens[stage])
+		models := ModelUsageList(stageTokens[stage])
 		t := TokenTotals{}
 		for _, m := range models {
 			t = t.add(m.Tokens)
@@ -254,12 +312,12 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 			Stage:      stage,
 			DurationMs: stageDurationMs[stage],
 			Tokens:     t,
-			Cost:       aggregateCost(models),
+			Cost:       AggregateCost(models),
 			ByModel:    models,
 		})
 	}
 
-	finalModels := modelUsageList(cum)
+	finalModels := ModelUsageList(cum)
 	attemptTokens := TokenTotals{}
 	for _, m := range finalModels {
 		attemptTokens = attemptTokens.add(m.Tokens)
@@ -277,29 +335,54 @@ func deriveAttempt(rows []db.UsageRow, attemptNum int, isCurrent bool, e db.Epic
 		Outcome:      outcome,
 		DurationMs:   attemptDurationMs,
 		Tokens:       attemptTokens,
-		Cost:         aggregateCost(finalModels),
+		Cost:         AggregateCost(finalModels),
 		IsLowerBound: lowerBound,
 		Stages:       stages,
 	}, cum
 }
 
-// buildBoundaries groups one attempt's rows by their exact captured_at value:
-// every row sharing a captured_at came from one runner report (same Stage),
-// each contributing its own (provider,model) cumulative snapshot.
+// boundaryKey identifies one runner report within an attempt: the
+// (captured_at, stage) pair. Keying on captured_at alone would collapse two
+// DIFFERENT-stage reports landed in the same second (a same-second reap
+// alongside a stage report, or two rapid reports) into one boundary whose
+// stage is whichever row is iterated first and whose same-(provider,model)
+// cumulatives silently overwrite each other. Seconds precision is
+// intentional — do NOT widen captured_at to nanoseconds to disambiguate:
+// nanosecond-width timestamps are variable-length and break the lexicographic/
+// SQL ordering the ledger and its ORDER BY rely on. Two reports that
+// genuinely share both captured_at AND stage are covered by UpsertUsage's
+// UNIQUE key (idempotent redelivery), not a real collision here.
+type boundaryKey struct {
+	capturedAt string
+	stage      string
+}
+
+// buildBoundaries groups one attempt's rows by (captured_at, stage) — see
+// boundaryKey — each contributing its own (provider,model) cumulative
+// snapshot. The boundary sequence preserves row iteration order: callers
+// must pass rows already ordered captured_at, then insertion (rowid) —
+// exactly what ListEpicUsage/ListProjectUsage now return — so that two
+// same-second different-stage reports become two distinct boundaries in the
+// order they actually landed (a reap inserted last after its stage's own
+// report sorts last within their shared second).
 func buildBoundaries(rows []db.UsageRow) []*usageBoundary {
-	idx := map[string]*usageBoundary{}
+	idx := map[boundaryKey]*usageBoundary{}
 	var boundaries []*usageBoundary
 	for _, r := range rows {
-		b, ok := idx[r.CapturedAt]
+		k := boundaryKey{capturedAt: r.CapturedAt, stage: r.Stage}
+		b, ok := idx[k]
 		if !ok {
-			b = &usageBoundary{raw: r.CapturedAt, stage: r.Stage, cum: map[modelKey]TokenTotals{}}
+			b = &usageBoundary{raw: r.CapturedAt, stage: r.Stage, cum: map[ModelKey]TokenTotals{}}
 			if t, err := time.Parse(time.RFC3339, r.CapturedAt); err == nil {
 				b.ts, b.tsOK = t, true
 			}
-			idx[r.CapturedAt] = b
+			idx[k] = b
 			boundaries = append(boundaries, b)
 		}
-		b.cum[modelKey{Provider: r.Provider, Model: r.Model}] = newTokenTotals(r.Input, r.Output, r.CacheRead, r.CacheWrite)
+		// Within one (captured_at, stage) boundary, UpsertUsage's UNIQUE key
+		// guarantees at most one row per (provider,model) — no overwrite
+		// concern here, just a plain assignment.
+		b.cum[ModelKey{Provider: r.Provider, Model: r.Model}] = newTokenTotals(r.Input, r.Output, r.CacheRead, r.CacheWrite)
 	}
 	return boundaries
 }
@@ -307,8 +390,12 @@ func buildBoundaries(rows []db.UsageRow) []*usageBoundary {
 // sortBoundaries orders boundaries ascending by captured_at. Timestamps are
 // RFC3339 and parsed for a correct chronological sort; if either side fails
 // to parse (malformed data — never expected from an agent-stamped report,
-// but this must never panic), it falls back to a raw string compare so the
-// order stays deterministic.
+// but this must never panic), it falls back to a raw string compare. Two
+// boundaries can now legitimately share the same captured_at (different
+// stages, same second — see boundaryKey): in that case raw is identical too,
+// so the comparator reports neither as "less", and sort.SliceStable leaves
+// them in their original (row-iteration = insertion) order rather than
+// reordering them arbitrarily.
 func sortBoundaries(boundaries []*usageBoundary) {
 	sort.SliceStable(boundaries, func(i, j int) bool {
 		bi, bj := boundaries[i], boundaries[j]
@@ -330,14 +417,14 @@ func isTerminalEpicStage(stage string) bool {
 	}
 }
 
-// modelUsageList turns a (provider,model) → cumulative-delta map into a
+// ModelUsageList turns a (provider,model) → cumulative-delta map into a
 // sorted, priced breakdown. Zero-total entries are dropped: a (provider,model)
 // that never actually contributed to this scope (e.g. a global-union member
 // carried forward at 0 through an interval before it first appeared) is not
 // "present" there, and a zero-token model can never affect cost regardless of
 // whether its rate is known.
-func modelUsageList(byModel map[modelKey]TokenTotals) []ModelUsage {
-	keys := make([]modelKey, 0, len(byModel))
+func ModelUsageList(byModel map[ModelKey]TokenTotals) []ModelUsage {
+	keys := make([]ModelKey, 0, len(byModel))
 	for k, t := range byModel {
 		if t.Total == 0 {
 			continue
@@ -363,12 +450,12 @@ func modelUsageList(byModel map[modelKey]TokenTotals) []ModelUsage {
 	return out
 }
 
-// aggregateCost sums a scope's already-priced model breakdown: nil if the
+// AggregateCost sums a scope's already-priced model breakdown: nil if the
 // scope has no priced models (no data), or if ANY model in it is unpriced
 // (unknown to the rate card) — a partial total would understate real cost
 // and render as a misleadingly low dollar figure, so this fails closed to
 // "$—" rather than quietly dropping the unknown model's share.
-func aggregateCost(models []ModelUsage) *float64 {
+func AggregateCost(models []ModelUsage) *float64 {
 	if len(models) == 0 {
 		return nil
 	}
