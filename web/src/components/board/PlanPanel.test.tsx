@@ -42,9 +42,9 @@ describe("PlanPanel", () => {
   });
 
   it("shows the hub's 404 message verbatim with a GitHub fallback link", async () => {
-    h.getEpicPlan.mockRejectedValue(new ApiError(404, "no plan doc found at docs/plans/epic-7.md on epic/7-x"));
+    h.getEpicPlan.mockRejectedValue(new ApiError(404, "artifact not available at docs/plans/epic-7.md (may not be pushed yet)"));
     render(<PlanPanel epic={epic} project={project} />, { wrapper });
-    await waitFor(() => expect(screen.getByText(/no plan doc found/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/artifact not available/)).toBeInTheDocument());
     expect(screen.getByRole("link", { name: /View the branch on GitHub/ })).toHaveAttribute("href", "https://github.com/o/r/tree/epic/7-x");
   });
 });

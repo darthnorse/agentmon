@@ -705,6 +705,28 @@ var (
 // falls back to the default so the proxy can only ever serve a plan doc.
 const planDirPrefix = "docs/plans/"
 
+// artifactDirs is the fail-closed allowlist for the generic artifact proxy.
+// The endpoint can only ever serve a doc under one of these dirs, via the
+// GitHub Contents API — never the host filesystem. Extensible.
+var artifactDirs = []string{"docs/plans/", "docs/reviews/"}
+
+// validateArtifactPath applies the plan-proxy's fail-closed rules to a
+// user-supplied path: bounded length, no leading slash, no traversal, safe
+// chars (planPathRe), .md only, and under an allowlisted artifact dir. This is
+// the security boundary (spec §Security) — false → 400.
+func validateArtifactPath(p string) bool {
+	if p == "" || len(p) > 512 || strings.HasPrefix(p, "/") || strings.Contains(p, "..") ||
+		!strings.HasSuffix(p, ".md") || !planPathRe.MatchString(p) {
+		return false
+	}
+	for _, dir := range artifactDirs {
+		if strings.HasPrefix(p, dir) {
+			return true
+		}
+	}
+	return false
+}
+
 // planDocPath resolves the plan document path from the escalation note
 // (runner-skill convention: "plan-gate: plan ready at <path>"), falling back
 // to the docs/plans convention. The note is runner-controlled text, so
@@ -725,6 +747,34 @@ func planDocPath(needs string, issue int) string {
 		return def
 	}
 	return p
+}
+
+// fetchArtifact resolves a repo-relative .md doc for an epic and writes the
+// {path,ref,markdown} JSON response (or the mapped error status). It tries the
+// epic branch first, then falls back to the project base branch on ErrNotFound:
+// in-flight artifacts live on the branch; a merged epic's live on the base
+// branch (the branch is often deleted post-merge). Callers must have validated
+// `path`, confirmed branch != "" and d.Contents != nil.
+func (d Deps) fetchArtifact(ctx context.Context, w http.ResponseWriter, repo, baseBranch, branch, path string) {
+	b, err := d.Contents.GetContents(ctx, repo, path, branch)
+	ref := branch
+	if errors.Is(err, github.ErrNotFound) && baseBranch != "" && baseBranch != branch {
+		if b2, err2 := d.Contents.GetContents(ctx, repo, path, baseBranch); err2 == nil || !errors.Is(err2, github.ErrNotFound) {
+			b, err, ref = b2, err2, baseBranch
+		}
+	}
+	switch {
+	case errors.Is(err, github.ErrNotFound):
+		writeJSONError(w, http.StatusNotFound, fmt.Sprintf("artifact not available at %s (may not be pushed yet)", path))
+	case errors.Is(err, github.ErrTooLarge):
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "artifact exceeds 256 KiB — open it on GitHub")
+	case err != nil:
+		log.Printf("api: epic artifact fetch: %v", err)
+		writeJSONError(w, http.StatusBadGateway, "artifact fetch failed")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]string{"path": path, "ref": ref, "markdown": string(b)})
+	}
 }
 
 // OrchestratorEpicPlanHandler proxies the epic's committed plan doc off its
@@ -758,20 +808,49 @@ func (d Deps) OrchestratorEpicPlanHandler() http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		path := planDocPath(e.Needs, e.IssueNumber)
-		b, err := d.Contents.GetContents(r.Context(), p.Repo, path, e.Branch)
-		switch {
-		case errors.Is(err, github.ErrNotFound):
-			writeJSONError(w, http.StatusNotFound, fmt.Sprintf("no plan doc found at %s on %s", path, e.Branch))
-		case errors.Is(err, github.ErrTooLarge):
-			writeJSONError(w, http.StatusRequestEntityTooLarge, "plan doc exceeds 256 KiB — open it on GitHub")
-		case err != nil:
-			log.Printf("api: epic plan fetch: %v", err)
-			writeJSONError(w, http.StatusBadGateway, "plan fetch failed")
-		default:
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, http.StatusOK, map[string]string{"path": path, "ref": e.Branch, "markdown": string(b)})
+		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, planDocPath(e.Needs, e.IssueNumber))
+	}
+}
+
+// OrchestratorEpicArtifactHandler proxies any allowlisted committed .md
+// artifact (plan or review evidence) off the epic branch — or the base branch
+// for merged epics (spec §1). The `path` query param is user-settable, so it is
+// validated fail-closed against artifactDirs BEFORE any GitHub access: the
+// endpoint can only ever read docs/plans/ or docs/reviews/, never the host FS.
+func (d Deps) OrchestratorEpicArtifactHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, ok := d.authorizeOr403(w, r, authz.OrchestratorView, "project:"+id); !ok {
+			return
 		}
+		if d.Contents == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		path := r.URL.Query().Get("path")
+		if !validateArtifactPath(path) {
+			writeJSONError(w, http.StatusBadRequest, "invalid or disallowed artifact path")
+			return
+		}
+		e, err := d.DB.GetEpic(r.Context(), r.PathValue("epicID"))
+		switch {
+		case errors.Is(err, sql.ErrNoRows) || (err == nil && e.ProjectID != id):
+			writeJSONError(w, http.StatusNotFound, "epic not found in project")
+			return
+		case err != nil:
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if e.Branch == "" {
+			writeJSONError(w, http.StatusConflict, "epic has no branch yet")
+			return
+		}
+		p, err := d.DB.GetProject(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, path)
 	}
 }
 
