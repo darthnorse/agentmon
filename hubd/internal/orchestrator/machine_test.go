@@ -23,6 +23,9 @@ func TestValidTransition(t *testing.T) {
 		{shared.EpicEscalated, shared.EpicPROpen},       // resolve DISCUSS → agent implements + opens the PR
 		{shared.EpicStalled, shared.EpicQueued},
 		{shared.EpicStalled, shared.EpicFailed},
+		{shared.EpicStalled, shared.EpicImplementing}, // quiet runner came back → resume
+		{shared.EpicStalled, shared.EpicReviewing},
+		{shared.EpicStalled, shared.EpicPROpen}, // stalled runner actually finished → PR
 		{shared.EpicQueued, shared.EpicCanceled},
 	}
 	for _, p := range ok {
@@ -39,6 +42,8 @@ func TestValidTransition(t *testing.T) {
 		{shared.EpicQueued, shared.EpicQueued},      // self-loop
 		{shared.EpicEscalated, shared.EpicPlanning}, // no re-plan from escalated (Retry re-queues instead)
 		{shared.EpicEscalated, shared.EpicStarting}, // starting is spawn-only
+		{shared.EpicStalled, shared.EpicPlanning},   // no re-plan from stalled either
+		{shared.EpicStalled, shared.EpicStarting},   // starting is spawn-only
 	}
 	for _, p := range bad {
 		if ValidTransition(p[0], p[1]) {

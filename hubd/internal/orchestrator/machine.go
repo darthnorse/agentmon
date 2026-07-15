@@ -44,7 +44,13 @@ func ValidTransition(from, to shared.EpicStage) bool {
 		return false
 	case shared.EpicStalled:
 		switch to {
-		case shared.EpicQueued, shared.EpicMerged, shared.EpicFailed, shared.EpicCanceled:
+		// Same resume-forward logic as escalated: a runner that went quiet (so the
+		// hub stalled it) but is actually still working can report a forward stage
+		// to recover — including finishing straight to a PR — instead of being
+		// forced through Retry. → failed: scheduler attempts-exhausted; → merged:
+		// reconcile of a human-merged PR.
+		case shared.EpicQueued, shared.EpicImplementing, shared.EpicReviewing, shared.EpicPROpen,
+			shared.EpicMerged, shared.EpicFailed, shared.EpicCanceled:
 			return true
 		}
 		return false
