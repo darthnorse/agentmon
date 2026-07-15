@@ -34,7 +34,11 @@ type GitHubAPI interface {
 type AgentAPI interface {
 	CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error)
 	DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)
-	KillSession(ctx context.Context, srv db.Server, target, name string) error
+	// KillSession returns the agent's capture-then-kill usage snapshot along
+	// with CapturedAt — the AGENT's own clock at capture time (empty if the
+	// agent predates it or captured nothing) — which callers must prefer over
+	// the hub's own clock for the reap boundary (see killEpicSession).
+	KillSession(ctx context.Context, srv db.Server, target, name string) ([]shared.Usage, string, error)
 	TeardownWorktree(ctx context.Context, srv db.Server, target, workdir, branch string) error
 	Sessions(ctx context.Context, srv db.Server, target string) ([]shared.Session, error)
 }
@@ -196,7 +200,7 @@ func (o *Orchestrator) retryRetire(ctx context.Context) {
 		}
 		kept := names[:0]
 		for _, name := range names {
-			if err := o.d.Agents.KillSession(ctx, srv, target, name); err != nil && !errors.Is(err, registry.ErrNoSession) {
+			if _, _, err := o.d.Agents.KillSession(ctx, srv, target, name); err != nil && !errors.Is(err, registry.ErrNoSession) {
 				kept = append(kept, name)
 				continue
 			}
@@ -396,9 +400,25 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 		log.Printf("orchestrator[%s]: report session mismatch: %q != %q", p.Name, r.Session, e.SessionName)
 		return false
 	}
+	// SAME-STAGE redelivery (the epic already sits at r.Stage) is the
+	// no-op-transition recovery case: a retry after a transient DB write
+	// failure must still land its usage snapshot, or the ledger entry is
+	// silently lost. It is not a transition at all — ValidTransition(x, x)
+	// is always false — so none of the transition-specific guards below
+	// (pr_open-without-PR, ValidTransition, branch persistence, SetEpicPR)
+	// apply to it; upsert directly and stop here.
+	if r.Stage == shared.EpicStage(e.Stage) {
+		o.upsertUsage(ctx, p, e, r)
+		return false
+	}
 	// A pr_open claim with no PR number would strand the epic in a stage no
 	// scanner revisits. Fail closed; the runner stays in reviewing where the
-	// stage timeout still applies.
+	// stage timeout still applies. This report is dropped outright below, so
+	// — unlike the redelivery case above — its usage must NOT be recorded:
+	// see the upsert call at the bottom of this function, which only runs
+	// once the transition has actually landed. Upserting here (before this
+	// guard, as a prior fix did) would plant a phantom pr_open boundary for
+	// a stage the epic never actually entered.
 	if r.Stage == shared.EpicPROpen && r.PR <= 0 && e.PRNumber <= 0 {
 		log.Printf("orchestrator[%s]: dropped pr_open report without PR number for epic #%d", p.Name, r.Epic)
 		return false
@@ -426,8 +446,44 @@ func (o *Orchestrator) applyReport(ctx context.Context, p db.Project, r shared.O
 	if r.PR > 0 {
 		_, _ = o.d.DB.SetEpicPR(ctx, e.ID, r.PR, e.Branch)
 	}
-	o.transition(ctx, e, r.Stage, "report", r.Note)
+	// Usage is upserted only once the transition has actually landed —
+	// o.transition returns false if the transition is illegal (already
+	// checked above, so this is really the DB-CAS-loss / lost-race case: the
+	// epic moved out from under us between the ValidTransition check and the
+	// write) or the DB write itself errors. Either way, a report that never
+	// really lands its transition must not plant a usage boundary for a
+	// stage the epic never entered.
+	if o.transition(ctx, e, r.Stage, "report", r.Note) {
+		o.upsertUsage(ctx, p, e, r)
+	}
 	return false
+}
+
+// upsertUsage records every token snapshot a report carries into the epic
+// usage ledger. Callers must only invoke this for a report applyReport has
+// actually ACCEPTED — a same-stage redelivery, or a real transition that
+// ValidTransition allowed and o.transition then actually landed — never for
+// one dropped by a guard (missing PR, illegal transition, lost transition
+// race): a dropped report never entered the stage boundary it would plant.
+// Attempt is read off the epic row (e.Attempt), stable under tickMu, not
+// tracked separately on the report. CapturedAt uses the report's own Ts (not
+// time.Now()) so an at-least-once redelivery of the same report UPDATEs the
+// same idempotent row (UsageRow's UNIQUE key includes captured_at) instead
+// of duplicating it. Best-effort: an upsert failure is logged and swallowed
+// — usage bookkeeping must never block or reverse a stage transition.
+func (o *Orchestrator) upsertUsage(ctx context.Context, p db.Project, e db.Epic, r shared.OrchestratorReport) {
+	for _, u := range r.Usage {
+		row := db.UsageRow{
+			ProjectID: p.ID, ProjectName: p.Name, Repo: p.Repo,
+			IssueNumber: e.IssueNumber, Attempt: e.Attempt,
+			Stage: string(r.Stage), CapturedAt: r.Ts,
+			Provider: u.Provider, Model: u.Model,
+			Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite,
+		}
+		if err := o.d.DB.UpsertUsage(ctx, row); err != nil {
+			log.Printf("orchestrator[%s]: usage upsert epic #%d: %v", p.Name, e.IssueNumber, err)
+		}
+	}
 }
 
 func (o *Orchestrator) retryPending(ctx context.Context) {
@@ -873,13 +929,31 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 	if !ok {
 		return false
 	}
-	if err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName); err != nil && !errors.Is(err, registry.ErrNoSession) {
+	usage, capturedAt, err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName)
+	if err != nil && !errors.Is(err, registry.ErrNoSession) {
 		// The runner may still be alive, sharing the epic's attempt-agnostic
 		// branch/worktree with its successor — queue the kill for per-tick
 		// retry before the next spawn overwrites e.SessionName.
 		o.queueRetire(srv.ID, p.Target, e.SessionName)
 		log.Printf("orchestrator[%s]: %s kill session %q failed (queued for retry): %v", p.Name, phase, e.SessionName, err)
 		return false
+	}
+	// The kill is CONFIRMED (killed, or already gone) — the agent's best-effort
+	// capture-then-kill snapshot (if any) is the epic's terminal usage boundary,
+	// closing the wasted-cost tail of a merge/cancel/retry reap that would
+	// otherwise report nothing past the last stage report.
+	if len(usage) > 0 {
+		// Prefer the AGENT's own clock (capturedAt) over the hub's: stage-report
+		// boundaries are stamped on the agent (r.Ts), and in a multi-host fleet
+		// clock skew could otherwise sort the hub-clock reap BEFORE the last
+		// real report, misattributing the interval and silently dropping the
+		// terminal tail the reap exists to capture. Fall back to the hub clock
+		// only for an agent that predates CapturedAt (mixed fleet).
+		ts := capturedAt
+		if ts == "" {
+			ts = o.d.Now()
+		}
+		o.upsertUsage(ctx, p, e, shared.OrchestratorReport{Stage: shared.EpicStage(e.Stage), Ts: ts, Usage: usage})
 	}
 	return true
 }

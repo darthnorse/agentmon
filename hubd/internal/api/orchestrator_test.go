@@ -131,6 +131,96 @@ func TestBoardEndpoint(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
+
+// TestBoardEpicUsageRollup: an epic with usage-ledger rows carries an inline
+// usage rollup (tokens = the summed final cumulative, cost priced from the
+// rate card); an epic with none omits the field entirely.
+func TestBoardEpicUsageRollup(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	eWithUsage, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	eNoUsage, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 8, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "claude-opus-4-8", Input: 100, Output: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
+	r, w := orchReq("GET", "/api/v1/orchestrator/projects/p1/board", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorBoardHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("board = %d %s", w.Code, w.Body.String())
+	}
+
+	var out struct {
+		Project projectDTO `json:"project"`
+		Epics   []epicDTO  `json:"epics"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+
+	var withUsage, noUsage *epicDTO
+	for i := range out.Epics {
+		switch out.Epics[i].ID {
+		case eWithUsage.ID:
+			withUsage = &out.Epics[i]
+		case eNoUsage.ID:
+			noUsage = &out.Epics[i]
+		}
+	}
+	if withUsage == nil {
+		t.Fatal("epic with usage rows missing from board")
+	}
+	if withUsage.Usage == nil {
+		t.Fatalf("epic with usage rows must carry a rollup, got %+v", withUsage)
+	}
+	if withUsage.Usage.Tokens != 150 { // summed final cumulative: Input 100 + Output 50
+		t.Fatalf("tokens = 150, got %d", withUsage.Usage.Tokens)
+	}
+	wantCost := (100*5.0 + 50*25.0) / 1e6 // claude-opus-4-8 rate card
+	if withUsage.Usage.Cost == nil || *withUsage.Usage.Cost != wantCost {
+		t.Fatalf("cost = %v, got %v", wantCost, withUsage.Usage.Cost)
+	}
+
+	if noUsage == nil {
+		t.Fatal("epic without usage rows missing from board")
+	}
+	if noUsage.Usage != nil {
+		t.Fatalf("epic with no usage rows must omit usage, got %+v", noUsage.Usage)
+	}
+
+	// omitempty must actually drop the key from the wire payload, not just
+	// round-trip as a Go nil pointer.
+	var raw struct {
+		Epics []map[string]json.RawMessage `json:"epics"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range raw.Epics {
+		var id string
+		json.Unmarshal(e["id"], &id)
+		_, hasUsage := e["usage"]
+		switch id {
+		case eWithUsage.ID:
+			if !hasUsage {
+				t.Fatalf("epic with usage rows must include the usage key: %s", w.Body.String())
+			}
+		case eNoUsage.ID:
+			if hasUsage {
+				t.Fatalf("epic with no usage rows must omit the usage key entirely: %s", w.Body.String())
+			}
+		}
+	}
+}
+
 func TestActionsDispatch(t *testing.T) {
 	database := orchDB(t)
 	ctx := context.Background()
@@ -627,5 +717,263 @@ func TestEpicPlanHandler(t *testing.T) {
 	d.OrchestratorEpicPlanHandler()(w, r)
 	if w.Code != 503 {
 		t.Fatalf("dormant = %d", w.Code)
+	}
+}
+
+// TestEpicUsageHandler: the epic usage-detail endpoint resolves the epic
+// exactly as the plan handler does (same cross-project 404 guard) and
+// returns orchestrator.DeriveEpicUsage's full breakdown verbatim, not a
+// collapsed rollup.
+func TestEpicUsageHandler(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "claude-opus-4-8", Input: 100, Output: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
+
+	// Unauthenticated (no principal in context) → 403, not 200.
+	r := httptest.NewRequest("GET", "/api/v1/orchestrator/projects/p1/epics/"+e.ID+"/usage", nil)
+	r.SetPathValue("id", "p1")
+	r.SetPathValue("epicID", e.ID)
+	w := httptest.NewRecorder()
+	d.OrchestratorEpicUsageHandler()(w, r)
+	if w.Code == 200 {
+		t.Fatalf("unauthenticated must not be 200, got %d %s", w.Code, w.Body.String())
+	}
+	if w.Code != 403 {
+		t.Fatalf("unauthenticated = %d, want 403", w.Code)
+	}
+
+	// Unknown epic → 404.
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/epics/does-not-exist/usage", "")
+	r.SetPathValue("id", "p1")
+	r.SetPathValue("epicID", "does-not-exist")
+	d.OrchestratorEpicUsageHandler()(w, r)
+	if w.Code != 404 {
+		t.Fatalf("unknown epic = %d, want 404", w.Code)
+	}
+
+	// Known epic with usage rows → full derived breakdown.
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/epics/"+e.ID+"/usage", "")
+	r.SetPathValue("id", "p1")
+	r.SetPathValue("epicID", e.ID)
+	d.OrchestratorEpicUsageHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("epic usage = %d %s", w.Code, w.Body.String())
+	}
+	var got orchestrator.EpicUsage
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Tokens.Total != 150 {
+		t.Fatalf("tokens.total = 150, got %d", got.Tokens.Total)
+	}
+	wantCost := (100*5.0 + 50*25.0) / 1e6 // claude-opus-4-8 rate card
+	if got.Cost == nil || *got.Cost != wantCost {
+		t.Fatalf("cost = %v, got %v", wantCost, got.Cost)
+	}
+	if len(got.Attempts) != 1 || got.Attempts[0].Attempt != 1 {
+		t.Fatalf("attempts = %+v", got.Attempts)
+	}
+	if len(got.Attempts[0].Stages) != 1 || got.Attempts[0].Stages[0].Stage != "planning" {
+		t.Fatalf("stages = %+v", got.Attempts[0].Stages)
+	}
+}
+
+// TestProjectUsageHandler: the project usage-detail endpoint aggregates
+// across every epic's ledger — by_stage folds every attempt's stages by
+// stage name across epics, by_model folds by (provider,model) across every
+// stage, and costs sum whatever's priced (nil only when nothing in that
+// scope is priced) rather than failing closed on a single unpriced model.
+func TestProjectUsageHandler(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+	database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 8, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "claude-opus-4-8", Input: 100, Output: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 8, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "claude-haiku-4-5-20251001", Input: 200, Output: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
+
+	// Unauthenticated → not 200.
+	r := httptest.NewRequest("GET", "/api/v1/orchestrator/projects/p1/usage", nil)
+	r.SetPathValue("id", "p1")
+	w := httptest.NewRecorder()
+	d.OrchestratorProjectUsageHandler()(w, r)
+	if w.Code == 200 {
+		t.Fatalf("unauthenticated must not be 200, got %d %s", w.Code, w.Body.String())
+	}
+
+	// Empty project (no rows) → zeroed DTO, still 200.
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p2/usage", "")
+	r.SetPathValue("id", "p2")
+	d.OrchestratorProjectUsageHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("empty project = %d, want 200", w.Code)
+	}
+	var empty projectUsageDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.Tokens.Total != 0 || empty.Cost != nil || len(empty.ByStage) != 0 || len(empty.ByModel) != 0 {
+		t.Fatalf("empty project dto = %+v", empty)
+	}
+
+	r, w = orchReq("GET", "/api/v1/orchestrator/projects/p1/usage", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectUsageHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("project usage = %d %s", w.Code, w.Body.String())
+	}
+	var got projectUsageDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	opusCost := (100*5.0)/1e6 + (50*25.0)/1e6
+	haikuCost := (200*1.0)/1e6 + (100*5.0)/1e6
+	wantTotal := opusCost + haikuCost
+
+	if got.Tokens.Total != 450 { // 150 (epic 7) + 300 (epic 8)
+		t.Fatalf("project tokens.total = 450, got %d", got.Tokens.Total)
+	}
+	if got.Cost == nil || *got.Cost != wantTotal {
+		t.Fatalf("project cost = %v, got %v", wantTotal, got.Cost)
+	}
+
+	if len(got.ByStage) != 1 || got.ByStage[0].Stage != "planning" {
+		t.Fatalf("by_stage = %+v", got.ByStage)
+	}
+	if got.ByStage[0].Tokens.Total != 450 {
+		t.Fatalf("by_stage[0].tokens.total = 450, got %d", got.ByStage[0].Tokens.Total)
+	}
+	if got.ByStage[0].Cost == nil || *got.ByStage[0].Cost != wantTotal {
+		t.Fatalf("by_stage[0].cost = %v, got %v", wantTotal, got.ByStage[0].Cost)
+	}
+
+	if len(got.ByModel) != 2 {
+		t.Fatalf("by_model = %+v", got.ByModel)
+	}
+	var gotOpus, gotHaiku *orchestrator.ModelUsage
+	for i := range got.ByModel {
+		switch got.ByModel[i].Model {
+		case "claude-opus-4-8":
+			gotOpus = &got.ByModel[i]
+		case "claude-haiku-4-5-20251001":
+			gotHaiku = &got.ByModel[i]
+		}
+	}
+	if gotOpus == nil || gotOpus.Tokens.Total != 150 || gotOpus.Cost == nil || *gotOpus.Cost != opusCost {
+		t.Fatalf("by_model opus = %+v", gotOpus)
+	}
+	if gotHaiku == nil || gotHaiku.Tokens.Total != 300 || gotHaiku.Cost == nil || *gotHaiku.Cost != haikuCost {
+		t.Fatalf("by_model haiku = %+v", gotHaiku)
+	}
+}
+
+// TestProjectUsageMixedModelCostFailsClosed guards the Should-Fix finding:
+// the (since-removed) board rollup summed non-nil PER-EPIC costs, skipping
+// any nil one, while aggregateProjectUsage (project endpoint) summed
+// non-nil PER-MODEL costs across the whole project. When a single epic mixes
+// a priced model with an unpriced one in the same stage, DeriveEpicUsage
+// already fails that epic's own Cost closed to nil — so the OLD board rollup
+// (its only epic contributes a nil cost) skipped it and landed on nil, while
+// the OLD project endpoint still summed the priced model's known share and
+// reported a real number, silently dropping the unpriced model's unknown
+// share. The two surfaces disagreed on the same project's total dollars.
+// Both must now report nil uniformly (fail-closed, matching DeriveEpicUsage),
+// while by_model rows stay independently priced per model.
+func TestProjectUsageMixedModelCostFailsClosed(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	// Both rows share one captured_at (one runner report = one boundary), so
+	// both models land in the SAME interval and SAME stage of the SAME
+	// epic — the mixed scope the finding is about, not two separately-priced
+	// stages/epics that each happen to be fully known or fully unknown.
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "claude-opus-4-8", Input: 100, Output: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertUsage(ctx, db.UsageRow{
+		ProjectID: "p1", ProjectName: "p", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "planning", CapturedAt: "2026-07-14T10:00:00Z",
+		Provider: "claude", Model: "future-model-x", Input: 40, Output: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := Deps{DB: database, Audit: audit.NewRecorder(&captureSink{})}
+
+	// GET /projects/{id}/usage — project total AND the mixed stage must be
+	// null; by_model stays independently priced per model. (projectDTO
+	// itself carries no project-level usage rollup — see the dead-board-
+	// rollup removal — so there is nothing to assert on GET /projects here.)
+	r, w := orchReq("GET", "/api/v1/orchestrator/projects/p1/usage", "")
+	r.SetPathValue("id", "p1")
+	d.OrchestratorProjectUsageHandler()(w, r)
+	if w.Code != 200 {
+		t.Fatalf("project usage = %d %s", w.Code, w.Body.String())
+	}
+	var got projectUsageDTO
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Cost != nil {
+		t.Fatalf("project-total cost must be nil when any contributing model is unpriced, got %v", *got.Cost)
+	}
+	if len(got.ByStage) != 1 || got.ByStage[0].Stage != "planning" {
+		t.Fatalf("by_stage = %+v", got.ByStage)
+	}
+	if got.ByStage[0].Cost != nil {
+		t.Fatalf("by_stage[planning].cost must be nil (mixes an unpriced model), got %v", *got.ByStage[0].Cost)
+	}
+
+	if len(got.ByModel) != 2 {
+		t.Fatalf("by_model = %+v", got.ByModel)
+	}
+	var gotOpus, gotUnpriced *orchestrator.ModelUsage
+	for i := range got.ByModel {
+		switch got.ByModel[i].Model {
+		case "claude-opus-4-8":
+			gotOpus = &got.ByModel[i]
+		case "future-model-x":
+			gotUnpriced = &got.ByModel[i]
+		}
+	}
+	wantOpusCost := (100*5.0)/1e6 + (50*25.0)/1e6
+	if gotOpus == nil || gotOpus.Cost == nil || *gotOpus.Cost != wantOpusCost {
+		t.Fatalf("by_model opus must stay independently priced even though the aggregate is nil, got %+v", gotOpus)
+	}
+	if gotUnpriced == nil || gotUnpriced.Cost != nil {
+		t.Fatalf("by_model future-model-x must stay nil (unknown to the rate card), got %+v", gotUnpriced)
 	}
 }

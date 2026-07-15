@@ -1,0 +1,2 @@
+{"timestamp":"2026-07-14T10:00:00Z","type":"event_msg","payload":{"type":"collaboration_mode","collaboration_mode":{"settings":{"model":"nested-only-model"}}}}
+{"timestamp":"2026-07-14T10:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":400,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":520},"last_token_usage":{"input_tokens":500,"cached_input_tokens":400,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":520}}}}

@@ -61,7 +61,14 @@ func main() {
 
 	reg := registry.New(database)
 	proj := state.NewProjection()
-	agentClient := registry.NewClient(10 * time.Second)
+	// 20s: this single client's timeout applies to EVERY agent RPC (the
+	// poller's DrainReports on each tick, etc.), not just KillSession — it
+	// was raised from 10s to accommodate KillSession's capture (≤3s, its own
+	// bounded budget) THEN kill (≤its own tmux timeout, currently 10s) as two
+	// back-to-back phases, which must fit inside this client-side timeout
+	// without getting cut off mid-flight. So a future reader should know the
+	// tick-path max stall is intentionally 20s, driven by KillSession's needs.
+	agentClient := registry.NewClient(20 * time.Second)
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)

@@ -8,6 +8,7 @@ import {
 } from "@/lib/board";
 import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
 import type { SessionState } from "@/lib/contracts";
+import { fmtCost, fmtDuration, fmtTokens } from "@/lib/usage-format";
 import { cn } from "@/lib/utils";
 
 export function EpicCard({ epic, project, showProject = false, liveState, onOpen }: {
@@ -61,6 +62,12 @@ export function EpicCard({ epic, project, showProject = false, liveState, onOpen
         <div className="truncate font-mono text-[11px] text-muted-foreground">
           {project.repo}
           {epic.branch ? ` · ${epic.branch}` : ""}
+        </div>
+      )}
+
+      {epic.usage && (
+        <div className="text-xs text-muted-foreground">
+          {fmtTokens(epic.usage.tokens)} tok · {fmtCost(epic.usage.cost)} · {fmtDuration(epic.usage.duration_ms)}
         </div>
       )}
 

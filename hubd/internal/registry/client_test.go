@@ -264,6 +264,87 @@ func TestClientRenameSessionErrorMapping(t *testing.T) {
 	}
 }
 
+// TestClientKillSessionDecodesUsage covers Task 10's reap snapshot: on a 200
+// the client decodes the agent's capture-then-kill body and returns its usage
+// AND (Fix 6) its CapturedAt — the agent's own clock — for the caller to use
+// as the reap boundary instead of the hub's clock.
+func TestClientKillSessionDecodesUsage(t *testing.T) {
+	var gotMethod, gotPath, gotTarget, gotAuth string
+	var gotBody shared.KillSessionRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotTarget = r.Method, r.URL.Path, r.URL.Query().Get("target")
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(shared.KillSessionResponse{
+			Usage:      []shared.Usage{{Provider: "codex", Model: "m", Output: 7}},
+			CapturedAt: "2026-07-10T13:55:00Z",
+		})
+	}))
+	defer ts.Close()
+	c := NewClient(2 * time.Second)
+	usage, capturedAt, err := c.KillSession(context.Background(), db.Server{ID: "server-a", URL: ts.URL, Bearer: "tok-a"}, "host1", "proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/sessions/kill" || gotTarget != "host1" || gotAuth != "Bearer tok-a" {
+		t.Fatalf("req: %s %s ?target=%s auth=%q", gotMethod, gotPath, gotTarget, gotAuth)
+	}
+	if gotBody.Name != "proj" {
+		t.Fatalf("body = %+v", gotBody)
+	}
+	if len(usage) != 1 || usage[0].Provider != "codex" || usage[0].Output != 7 {
+		t.Fatalf("usage = %+v", usage)
+	}
+	if capturedAt != "2026-07-10T13:55:00Z" {
+		t.Fatalf("capturedAt = %q, want agent clock", capturedAt)
+	}
+}
+
+// TestClientKillSessionNoContentYieldsNilUsage covers a legacy/mixed-fleet
+// agent that still returns a bodyless 204 on kill — success, but no usage and
+// no CapturedAt.
+func TestClientKillSessionNoContentYieldsNilUsage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+	usage, capturedAt, err := NewClient(2*time.Second).KillSession(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, "", "proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage != nil {
+		t.Fatalf("usage = %+v, want nil", usage)
+	}
+	if capturedAt != "" {
+		t.Fatalf("capturedAt = %q, want empty", capturedAt)
+	}
+}
+
+func TestClientKillSessionErrorMapping(t *testing.T) {
+	cases := []struct {
+		status int
+		want   error
+	}{
+		{http.StatusBadRequest, ErrInvalidSession},
+		{http.StatusNotFound, ErrNoSession},
+	}
+	for _, tc := range cases {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status) }))
+		usage, capturedAt, err := NewClient(2*time.Second).KillSession(context.Background(), db.Server{ID: "s", URL: ts.URL, Bearer: "t"}, "", "proj")
+		ts.Close()
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("status %d → err %v, want %v", tc.status, err, tc.want)
+		}
+		if usage != nil {
+			t.Fatalf("status %d → usage %+v, want nil", tc.status, usage)
+		}
+		if capturedAt != "" {
+			t.Fatalf("status %d → capturedAt %q, want empty", tc.status, capturedAt)
+		}
+	}
+}
+
 func TestDrainReports(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

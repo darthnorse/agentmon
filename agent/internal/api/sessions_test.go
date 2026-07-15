@@ -540,7 +540,7 @@ func TestRenameSessionHandlerTimesOutOnHungTmux(t *testing.T) {
 func TestKillSessionHandlerSuccess(t *testing.T) {
 	var gotSocket, gotName string
 	kill := func(_ context.Context, socket, name string) error { gotSocket = socket; gotName = name; return nil }
-	h := KillSessionHandler(testCfg(), kill)
+	h := KillSessionHandler(testCfg(), kill, nil)
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)))
 	if rr.Code != http.StatusOK {
@@ -555,7 +555,7 @@ func TestKillSessionHandlerSuccess(t *testing.T) {
 
 func TestKillSessionHandlerEmptyNameIs400(t *testing.T) {
 	kill := func(context.Context, string, string) error { t.Fatal("must not exec"); return nil }
-	h := KillSessionHandler(testCfg(), kill)
+	h := KillSessionHandler(testCfg(), kill, nil)
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":""}`)))
 	if rr.Code != http.StatusBadRequest {
@@ -565,7 +565,7 @@ func TestKillSessionHandlerEmptyNameIs400(t *testing.T) {
 
 func TestKillSessionHandlerNotFoundIs404(t *testing.T) {
 	kill := func(context.Context, string, string) error { return tmux.ErrNoSession }
-	h := KillSessionHandler(testCfg(), kill)
+	h := KillSessionHandler(testCfg(), kill, nil)
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"gone"}`)))
 	if rr.Code != http.StatusNotFound {
@@ -575,11 +575,232 @@ func TestKillSessionHandlerNotFoundIs404(t *testing.T) {
 
 func TestKillSessionHandlerUnknownTargetIs404(t *testing.T) {
 	kill := func(context.Context, string, string) error { t.Fatal("must not exec"); return nil }
-	h := KillSessionHandler(testCfg(), kill)
+	h := KillSessionHandler(testCfg(), kill, nil)
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=ghost", strings.NewReader(`{"name":"proj"}`)))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("want 404 for unknown target, got %d", rr.Code)
+	}
+}
+
+// TestKillSessionHandlerCapturesUsageBeforeKill covers Task 10's reap
+// snapshot: the handler must call capture with the SESSION NAME as the pane
+// arg (tmux resolves a session-name target to its active pane) BEFORE
+// killing, and ride the captured usage back in the success response.
+func TestKillSessionHandlerCapturesUsageBeforeKill(t *testing.T) {
+	var order []string
+	var gotSocket, gotPane string
+	capture := func(_ context.Context, socket, pane string) []shared.Usage {
+		order = append(order, "capture")
+		gotSocket, gotPane = socket, pane
+		return []shared.Usage{{Provider: "codex", Model: "m", Output: 7}}
+	}
+	kill := func(context.Context, string, string) error {
+		order = append(order, "kill")
+		return nil
+	}
+	h := KillSessionHandler(testCfg(), kill, capture)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rr.Code, rr.Body.String())
+	}
+	if gotSocket != "" || gotPane != "proj" {
+		t.Fatalf("capture got socket=%q pane=%q, want pane=session name %q", gotSocket, gotPane, "proj")
+	}
+	if len(order) != 2 || order[0] != "capture" || order[1] != "kill" {
+		t.Fatalf("capture must run before kill: order = %v", order)
+	}
+	var resp shared.KillSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body=%s)", err, rr.Body.String())
+	}
+	if len(resp.Usage) != 1 || resp.Usage[0].Provider != "codex" || resp.Usage[0].Output != 7 {
+		t.Fatalf("response usage = %+v", resp.Usage)
+	}
+}
+
+// TestKillSessionHandlerNilCapturerOmitsUsage: a nil capturer (the DI seam's
+// documented zero value) must not be called and must leave usage empty —
+// unchanged kill behavior for a caller that wires no capturer.
+func TestKillSessionHandlerNilCapturerOmitsUsage(t *testing.T) {
+	kill := func(context.Context, string, string) error { return nil }
+	h := KillSessionHandler(testCfg(), kill, nil)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rr.Code, rr.Body.String())
+	}
+	var resp shared.KillSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body=%s)", err, rr.Body.String())
+	}
+	if len(resp.Usage) != 0 {
+		t.Fatalf("nil capturer must yield no usage: %+v", resp.Usage)
+	}
+}
+
+// TestKillSessionHandlerCapturePanicDoesNotBlockKill: a capture bug must
+// never turn a successful kill into a failed one (mirrors the report
+// intake's best-effort recover).
+func TestKillSessionHandlerCapturePanicDoesNotBlockKill(t *testing.T) {
+	var killed bool
+	capture := func(context.Context, string, string) []shared.Usage { panic("capture boom") }
+	kill := func(context.Context, string, string) error { killed = true; return nil }
+	h := KillSessionHandler(testCfg(), kill, capture)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)))
+	if rr.Code != http.StatusOK || !killed {
+		t.Fatalf("capture panic must not block the kill: code=%d killed=%v", rr.Code, killed)
+	}
+}
+
+// TestKillSessionHandlerCaptureDoesNotStarveKillBudget covers Fix 4 (bound
+// budget) and Fix 1 (async capture + detached kill ctx): capture and kill run
+// under DELIBERATELY SEPARATE contexts, so a slow, SYNCHRONOUS capture (even
+// one that ignores cancellation, like the pre-fix /proc + filesystem walks —
+// a hung syscall inside it can't be interrupted just because its ctx
+// expired) can never eat into the kill's own timeout budget, and the
+// REQUIRED kill still runs even if the inbound request itself was cancelled
+// while capture was still blocking (e.g. the hub client disconnecting or
+// timing out mid-capture). Simulated by shrinking both captureTimeout and
+// agentTmuxTimeout far below the capturer's (uncancellable) sleep, and
+// cancelling the request's own context partway through that sleep — well
+// before the kill is ever invoked: under the pre-fix single-shared-context
+// handler, the kill would run against an already-expired/cancelled ctx and
+// fail (or never run at all); under the fix, capture runs in its own
+// goroutine so the handler stops waiting at captureTimeout regardless, and
+// the kill runs under a FRESH, DETACHED budget immune to both the slow
+// capture and the request's cancellation.
+func TestKillSessionHandlerCaptureDoesNotStarveKillBudget(t *testing.T) {
+	oldCap, oldTmux := captureTimeout, agentTmuxTimeout
+	captureTimeout = 30 * time.Millisecond
+	agentTmuxTimeout = 30 * time.Millisecond
+	defer func() { captureTimeout, agentTmuxTimeout = oldCap, oldTmux }()
+
+	var killed bool
+	var killCtxErr error
+	// Mimics a capturer that ignores cancellation entirely (the pre-fix /proc
+	// + filesystem walks, or any hung syscall): it blocks well past both
+	// shrunk budgets regardless of ctx.
+	capture := func(context.Context, string, string) []shared.Usage {
+		time.Sleep(150 * time.Millisecond)
+		return nil
+	}
+	kill := func(ctx context.Context, _, _ string) error {
+		killed = true
+		killCtxErr = ctx.Err()
+		// Mirrors tmux.KillSession's real exec.CommandContext behavior: an
+		// already-expired/cancelled ctx fails immediately before ever
+		// shelling out.
+		return ctx.Err()
+	}
+	h := KillSessionHandler(testCfg(), kill, capture)
+	rr := httptest.NewRecorder()
+
+	reqCtx, reqCancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)).WithContext(reqCtx)
+	// Cancel the INBOUND request's context early — well before capture's
+	// captureTimeout budget expires and long before kill is ever invoked —
+	// simulating the hub client disconnecting/timing out while the
+	// (uncancellable) capture is still running.
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		reqCancel()
+	}()
+
+	h(rr, req)
+	if !killed {
+		t.Fatal("a slow capture must not prevent the REQUIRED kill from running")
+	}
+	if killCtxErr != nil {
+		t.Fatalf("kill's ctx must be DETACHED from r.Context() — got ctx.Err() = %v after the request was cancelled mid-capture", killCtxErr)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("kill must get a FRESH, detached budget after capture returns — code %d body %s", rr.Code, rr.Body.String())
+	}
+	var resp shared.KillSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Usage) != 0 {
+		t.Fatalf("a capture that timed out should yield no usage, got %+v", resp.Usage)
+	}
+	if resp.CapturedAt != "" {
+		t.Fatalf("no usage captured — CapturedAt must be omitted, got %q", resp.CapturedAt)
+	}
+}
+
+// TestKillSessionHandlerCapturedAtReflectsCaptureNotKillCompletion covers Fix
+// 5: CapturedAt must be stamped the MOMENT a non-empty capture returns, not
+// after the (possibly slow) kill completes — otherwise a slow tmux kill
+// shifts the reap boundary the hub records by up to the kill's own timeout.
+// The kill here sleeps 2s well past capture's (instant) return.
+//
+// The bound below is deterministic, not a timing-luck race: time.RFC3339
+// FLOORS to the second (no fractional part), so parsing CapturedAt back
+// always yields a value <= the real instant it was stamped — never later.
+// Stamped at capture time (the fix), the real stamp instant is `before` +
+// a few ms, so got <= before + (a few ms) always. Stamped after the 2s kill
+// (the pre-fix bug), the real stamp instant is `before` + 2s + a few ms, so
+// flooring can subtract at most just under 1s, leaving got > before + 1s
+// always. A 500ms cutoff sits strictly between both guaranteed bounds, so
+// this can't pass by accident against the pre-fix ordering.
+func TestKillSessionHandlerCapturedAtReflectsCaptureNotKillCompletion(t *testing.T) {
+	kill := func(context.Context, string, string) error {
+		time.Sleep(2 * time.Second)
+		return nil
+	}
+	capture := func(context.Context, string, string) []shared.Usage {
+		return []shared.Usage{{Provider: "codex", Model: "m", Output: 7}}
+	}
+	h := KillSessionHandler(testCfg(), kill, capture)
+	rr := httptest.NewRecorder()
+	before := time.Now().UTC()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rr.Code, rr.Body.String())
+	}
+	var resp shared.KillSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	got, err := time.Parse(time.RFC3339, resp.CapturedAt)
+	if err != nil {
+		t.Fatalf("CapturedAt = %q not RFC3339: %v", resp.CapturedAt, err)
+	}
+	if d := got.Sub(before); d > 500*time.Millisecond {
+		t.Fatalf("CapturedAt %v is %v after request start — looks stamped AFTER the 2s kill, not at capture time", got, d)
+	}
+}
+
+// TestKillSessionHandlerStampsCapturedAtOnlyWhenUsageCaptured covers Fix 6's
+// agent-clock stamp: CapturedAt rides the response ONLY when capture actually
+// yielded usage (a real capture happened), and is the agent's own clock —
+// not left to the hub to infer.
+func TestKillSessionHandlerStampsCapturedAtOnlyWhenUsageCaptured(t *testing.T) {
+	kill := func(context.Context, string, string) error { return nil }
+	capture := func(context.Context, string, string) []shared.Usage {
+		return []shared.Usage{{Provider: "codex", Model: "m", Output: 7}}
+	}
+	h := KillSessionHandler(testCfg(), kill, capture)
+	rr := httptest.NewRecorder()
+	before := time.Now().UTC()
+	h(rr, httptest.NewRequest(http.MethodPost, "/sessions/kill?target=default", strings.NewReader(`{"name":"proj"}`)))
+	after := time.Now().UTC()
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rr.Code, rr.Body.String())
+	}
+	var resp shared.KillSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	got, err := time.Parse(time.RFC3339, resp.CapturedAt)
+	if err != nil {
+		t.Fatalf("CapturedAt = %q not RFC3339: %v", resp.CapturedAt, err)
+	}
+	if got.Before(before.Truncate(time.Second).Add(-time.Second)) || got.After(after.Add(time.Second)) {
+		t.Fatalf("CapturedAt %v not within [%v, %v]", got, before, after)
 	}
 }
 

@@ -67,15 +67,17 @@ func (f *fakeGH) AddLabels(_ context.Context, _ string, n int, ls []string) erro
 }
 
 type fakeAgents struct {
-	created     []shared.CreateSessionRequest
-	reports     []shared.OrchestratorReport
-	drainAcks   [][2]any
-	killed      []string
-	killErr     error
-	spawnErr    error
+	created         []shared.CreateSessionRequest
+	reports         []shared.OrchestratorReport
+	drainAcks       [][2]any
+	killed          []string
+	killErr         error
+	killUsage       []shared.Usage
+	killCapturedAt  string
+	spawnErr        error
 	sessions        []string // live tmux session names the agent would list
 	sessionsErr     error
-	sessionsTargets []string // target arg of every Sessions call, in order
+	sessionsTargets []string                         // target arg of every Sessions call, in order
 	tornDown        []shared.WorktreeTeardownRequest // worktree teardowns requested, in order
 	teardownErr     error
 }
@@ -106,9 +108,9 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: uint64(len(out)), Reports: out}, nil
 }
 
-func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) error {
+func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) ([]shared.Usage, string, error) {
 	f.killed = append(f.killed, name)
-	return f.killErr
+	return f.killUsage, f.killCapturedAt, f.killErr
 }
 
 func (f *fakeAgents) TeardownWorktree(_ context.Context, _ db.Server, _, workdir, branch string) error {
@@ -384,6 +386,84 @@ func TestFinishMergedProceedsWhenTeardownFails(t *testing.T) {
 	}
 }
 
+// TestKillEpicSessionStoresTerminalUsage covers the reap snapshot (task 10):
+// the agent's kill response can carry the session's final cumulative usage,
+// captured immediately before the kill. On a CONFIRMED kill, killEpicSession
+// must upsert that usage into the epic's ledger — closing the wasted-cost
+// tail of a merge/cancel/retry reap that would otherwise report nothing past
+// the last stage report.
+func TestKillEpicSessionStoresTerminalUsage(t *testing.T) {
+	ag := &fakeAgents{sessions: []string{sessionName(16)},
+		killUsage: []shared.Usage{{Provider: "codex", Model: "m", Output: 7}}}
+	d := mergeTo16(t, ag)
+	ctx := context.Background()
+	e, err := d.GetEpicByIssue(ctx, "p1", 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.ListEpicUsage(ctx, e.ProjectID, e.IssueNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// killEpicSession runs from finishMerged BEFORE finishMerged's own
+	// merged transition lands on the local epic struct it was passed, so the
+	// terminal row's stage is the epic's stage as of the kill call ("merging",
+	// the gate's pre-merged transition) — not "merged". That is the documented
+	// behavior (Stage: shared.EpicStage(e.Stage) uses the struct as received).
+	if !hasUsageRow(rows, "codex", 7, string(shared.EpicMerging)) {
+		t.Fatalf("terminal usage not stored: %+v", rows)
+	}
+	// The fake agent set no CapturedAt (mixed-fleet / pre-Fix-6 agent) — the
+	// terminal row must fall back to the hub's own clock (newTestOrch's fixed
+	// "2026-07-10T14:00:00Z").
+	for _, r := range rows {
+		if r.Provider == "codex" && r.Output == 7 && r.CapturedAt != "2026-07-10T14:00:00Z" {
+			t.Fatalf("captured_at = %q, want hub-clock fallback %q", r.CapturedAt, "2026-07-10T14:00:00Z")
+		}
+	}
+}
+
+// TestKillEpicSessionUsesAgentCapturedAtForReapBoundary covers Fix 6: the
+// terminal reap boundary must carry the AGENT's own clock (CapturedAt), not
+// the hub's — in a multi-host fleet, clock skew could otherwise sort the
+// hub-clock reap BEFORE the last real stage report (stamped on the agent),
+// silently dropping the terminal tail the reap exists to capture.
+func TestKillEpicSessionUsesAgentCapturedAtForReapBoundary(t *testing.T) {
+	const agentClock = "2026-07-10T13:55:00Z" // deliberately BEFORE the hub's fixed Now()
+	ag := &fakeAgents{sessions: []string{sessionName(16)},
+		killUsage:      []shared.Usage{{Provider: "codex", Model: "m", Output: 7}},
+		killCapturedAt: agentClock,
+	}
+	d := mergeTo16(t, ag)
+	ctx := context.Background()
+	e, err := d.GetEpicByIssue(ctx, "p1", 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.ListEpicUsage(ctx, e.ProjectID, e.IssueNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Provider == "codex" && r.Output == 7 {
+			if r.CapturedAt != agentClock {
+				t.Fatalf("captured_at = %q, want agent clock %q (not hub Now)", r.CapturedAt, agentClock)
+			}
+			return
+		}
+	}
+	t.Fatalf("terminal usage row not found: %+v", rows)
+}
+
+func hasUsageRow(rows []db.UsageRow, provider string, output int64, stage string) bool {
+	for _, r := range rows {
+		if r.Provider == provider && r.Output == output && r.Stage == stage {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFinishMergedSkipsTeardownWhenKillFails(t *testing.T) {
 	// Ordering: a merged epic whose session kill FAILS must NOT have its worktree
 	// torn down — never pull a worktree out from under a runner whose kill has not
@@ -576,7 +656,7 @@ func TestStallLivenessComesFromAgentSessionsNotHookState(t *testing.T) {
 	ag := &fakeAgents{}
 	o, d := newTestOrch(t, gh, ag)
 	ctx := context.Background()
-	o.Tick(ctx) // spawn
+	o.Tick(ctx)                             // spawn
 	ag.sessions = []string{sessionName(16)} // alive in tmux; NO hook state anywhere
 	o.Tick(ctx)
 	o.Tick(ctx)
@@ -862,5 +942,172 @@ func TestTickGateEnforcesPlatformRequirements(t *testing.T) {
 	// tests), so a plumbing regression can't hide behind an unrelated escalation.
 	if !strings.Contains(strings.Join(gh.comments, "\n"), "platform requirements not met: always-use-rls (missing)") {
 		t.Fatalf("escalation must name the missing requirement, comments = %v", gh.comments)
+	}
+}
+
+// TestApplyReportUpsertsUsageEvenOnNoopTransition covers redelivery recovery:
+// a report whose stage transition is a no-op (the epic is already at that
+// stage) must still upsert the usage it carries — the same-stage case is
+// explicitly treated as legal-for-usage-purposes by applyReport's gate (see
+// TestApplyReportGatesUsageUpsertOnTransitionLegality for the genuinely
+// illegal case, which must NOT upsert). Provenance still gates it — the
+// epic is assigned a session and the report must claim that same session.
+func TestApplyReportUpsertsUsageEvenOnNoopTransition(t *testing.T) {
+	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
+	ctx := context.Background()
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{
+		ProjectID: "p1", IssueNumber: 7, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range [][3]string{
+		{"queued", "starting", "hub"},
+		{"starting", "planning", "report"},
+		{"planning", "implementing", "report"},
+		{"implementing", "reviewing", "report"},
+	} {
+		if ok, err := d.TransitionEpic(ctx, e.ID, tr[0], tr[1], tr[2], "", "t1"); err != nil || !ok {
+			t.Fatalf("%s->%s: ok=%v err=%v", tr[0], tr[1], ok, err)
+		}
+	}
+	if ok, err := d.SetEpicAssignment(ctx, e.ID, "P-7", 1); err != nil || !ok {
+		t.Fatalf("assign session: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rep := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicReviewing,
+		Session: "P-7", Ts: "2026-07-14T10:00:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 42}}}
+	if deferred := o.applyReport(ctx, p, rep); deferred {
+		t.Fatal("noop-transition report unexpectedly deferred")
+	}
+
+	got, err := d.GetEpic(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Stage != "reviewing" {
+		t.Fatalf("stage must remain unchanged (noop transition): %q", got.Stage)
+	}
+
+	rows, err := d.ListEpicUsage(ctx, p.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Output != 42 {
+		t.Fatalf("usage not upserted on noop transition: %+v", rows)
+	}
+	if rows[0].Attempt != 1 || rows[0].Stage != "reviewing" {
+		t.Fatalf("usage row must carry epic attempt + report stage: %+v", rows[0])
+	}
+}
+
+// TestApplyReportGatesUsageUpsertOnTransitionLegality guards Fix D1 and its
+// Fix #4 refinement: usage upsert must be gated on the report being fully
+// ACCEPTED — a same-stage redelivery (see
+// TestApplyReportUpsertsUsageEvenOnNoopTransition), or a real transition
+// that is legal AND actually landed — never for a report dropped by ANY
+// guard, whether that's a genuinely ILLEGAL transition or a legal-looking
+// pr_open claim with no PR number. Both are dropped outright a few lines
+// later anyway; upserting their usage first (the pre-Fix-#4 ordering) would
+// plant a phantom stage boundary that skews attribution for work never
+// really attributed to that stage. A subsequent LEGAL transition that
+// actually lands must still upsert normally.
+func TestApplyReportGatesUsageUpsertOnTransitionLegality(t *testing.T) {
+	o, d := newTestOrch(t, &fakeGH{}, &fakeAgents{})
+	ctx := context.Background()
+	e, err := d.UpsertEpicIssue(ctx, db.Epic{
+		ProjectID: "p1", IssueNumber: 7, IssueState: "open",
+		QueuedAt: "t0", StageUpdatedAt: "t0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range [][3]string{
+		{"queued", "starting", "hub"},
+		{"starting", "planning", "report"},
+		{"planning", "implementing", "report"},
+		{"implementing", "reviewing", "report"},
+	} {
+		if ok, err := d.TransitionEpic(ctx, e.ID, tr[0], tr[1], tr[2], "", "t1"); err != nil || !ok {
+			t.Fatalf("%s->%s: ok=%v err=%v", tr[0], tr[1], ok, err)
+		}
+	}
+	if ok, err := d.SetEpicAssignment(ctx, e.ID, "P-7", 1); err != nil || !ok {
+		t.Fatalf("assign session: ok=%v err=%v", ok, err)
+	}
+	p, err := d.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// (a) pr_open report with NO PR number and no prior PR on the epic: this
+	// is the exact Fix #4 hazard — a legal reviewing->pr_open transition per
+	// ValidTransition, but dropped a few lines later by the missing-PR
+	// guard. Before Fix #4 this still upserted usage (the D1 gate ran
+	// before the PR-number check); it must NOT anymore.
+	prOpenNoPR := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicPROpen,
+		Session: "P-7", Ts: "2026-07-14T09:55:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 7}}}
+	if deferred := o.applyReport(ctx, p, prOpenNoPR); deferred {
+		t.Fatal("pr_open-without-PR report unexpectedly deferred")
+	}
+	if got, err := d.GetEpic(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	} else if got.Stage != "reviewing" {
+		t.Fatalf("pr_open without a PR number must not move the stage, got %q", got.Stage)
+	}
+	if rows, err := d.ListEpicUsage(ctx, p.ID, 7); err != nil {
+		t.Fatal(err)
+	} else if len(rows) != 0 {
+		t.Fatalf("pr_open report dropped for a missing PR number must NOT upsert usage, got %+v", rows)
+	}
+
+	// (b) ILLEGAL transition: epic is at "reviewing"; reviewing->planning is
+	// a backward jump (not the special reviewing->implementing fix loop), so
+	// ValidTransition rejects it. Its usage must NOT land.
+	illegal := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicPlanning,
+		Session: "P-7", Ts: "2026-07-14T10:00:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 999}}}
+	if deferred := o.applyReport(ctx, p, illegal); deferred {
+		t.Fatal("illegal-transition report unexpectedly deferred")
+	}
+	if got, err := d.GetEpic(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	} else if got.Stage != "reviewing" {
+		t.Fatalf("illegal transition must not move the stage, got %q", got.Stage)
+	}
+	rows, err := d.ListEpicUsage(ctx, p.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("illegal transition must NOT upsert usage, got %+v", rows)
+	}
+
+	// (c) LEGAL transition: reviewing -> pr_open is a forward move. Its usage
+	// must land.
+	legal := shared.OrchestratorReport{Repo: "o/r", Epic: 7, Stage: shared.EpicPROpen, PR: 42,
+		Session: "P-7", Ts: "2026-07-14T10:05:00Z",
+		Usage: []shared.Usage{{Provider: "claude", Model: "m", Output: 111}}}
+	if deferred := o.applyReport(ctx, p, legal); deferred {
+		t.Fatal("legal-transition report unexpectedly deferred")
+	}
+	if got, err := d.GetEpic(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	} else if got.Stage != "pr_open" {
+		t.Fatalf("legal transition must actually transition the epic, got %q", got.Stage)
+	}
+	rows, err = d.ListEpicUsage(ctx, p.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Output != 111 || rows[0].Stage != "pr_open" {
+		t.Fatalf("legal transition must upsert its usage, got %+v", rows)
 	}
 }

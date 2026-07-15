@@ -1,8 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ epicAction: vi.fn(), openOrFocusSession: vi.fn(), navigate: vi.fn() }));
-vi.mock("@/lib/api-client", async (importOriginal) => ({ ...(await importOriginal<object>()), epicAction: h.epicAction }));
+const h = vi.hoisted(() => ({ epicAction: vi.fn(), getProjectUsage: vi.fn(), openOrFocusSession: vi.fn(), navigate: vi.fn() }));
+vi.mock("@/lib/api-client", async (importOriginal) => ({
+  ...(await importOriginal<object>()), epicAction: h.epicAction, getProjectUsage: h.getProjectUsage,
+}));
 vi.mock("@/lib/query-client", () => ({ queryClient: { invalidateQueries: vi.fn() } }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock("@/components/board/open-session", () => ({ openOrFocusSession: h.openOrFocusSession }));
@@ -10,7 +14,12 @@ vi.mock("@/lib/use-media-query", () => ({ useMediaQuery: () => true }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => h.navigate }));
 
 import { ProjectHeader, parseIssue } from "@/components/board/ProjectHeader";
-import type { EpicDTO, ProjectDTO } from "@/lib/contracts";
+import type { EpicDTO, ProjectDTO, ProjectUsage } from "@/lib/contracts";
+
+const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+);
 
 const project: ProjectDTO = {
   id: "p1", name: "school", repo: "o/r", server_id: "h1", target: "", workdir: "/w",
@@ -18,32 +27,42 @@ const project: ProjectDTO = {
   paused: false, require_ci: true, pinned: false, requirements: [],
 };
 
+const zeroUsage: ProjectUsage = {
+  tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 },
+  cost: null, duration_ms: 0, by_stage: [], by_model: [],
+};
+
 describe("ProjectHeader", () => {
-  beforeEach(() => { h.epicAction.mockReset().mockResolvedValue({ ok: true }); h.openOrFocusSession.mockReset(); });
+  beforeEach(() => {
+    qc.clear();
+    h.epicAction.mockReset().mockResolvedValue({ ok: true });
+    h.openOrFocusSession.mockReset();
+    h.getProjectUsage.mockReset().mockResolvedValue(zeroUsage);
+  });
 
   it("shows slot usage and steps max_parallel", async () => {
     const epics: EpicDTO[] = [{ ...({} as EpicDTO), id: "e1", project_id: "p1", stage: "implementing", issue: 1, title: "t", labels: [], blocked_by: [], attempt: 1, session: "", branch: "", pr: 0, needs: "", issue_state: "open", queued_at: "", started_at: "", stage_updated_at: "", merged_at: "" }];
-    render(<ProjectHeader project={project} epics={epics} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={epics} onEdit={() => {}} />, { wrapper });
     expect(screen.getByText(/1\/2 slots/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "increase max parallel" }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_max_parallel", value: 3 });
   });
 
   it("toggles require-CI via set_require_ci", () => {
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: /Require CI/ }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_require_ci", on: false });
   });
 
   it("toggles pin via set_pinned", () => {
     // fixture project.pinned is false → clicking pins it (on: true)
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: /Pin/ }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "set_pinned", on: true });
   });
 
   it("pause confirms, and Plan epics (empty vibe) spawns the bare interactive session", async () => {
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Pause project" }));
     fireEvent.click(screen.getByRole("button", { name: "Pause?" }));
     expect(h.epicAction).toHaveBeenCalledWith("p1", { action: "pause" });
@@ -57,7 +76,7 @@ describe("ProjectHeader", () => {
   });
 
   it("Plan epics seeds a typed vibe into the launch command (shell-safe)", () => {
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "add dark mode" } });
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
@@ -72,7 +91,7 @@ describe("ProjectHeader", () => {
     // each call returns a different value, so the two launches' uniq tokens differ.
     let n = 0;
     const rnd = vi.spyOn(Math, "random").mockImplementation(() => { n += 1; return n / 100; });
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     // launch #1
     fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "add dark mode" } });
@@ -94,7 +113,7 @@ describe("ProjectHeader", () => {
   });
 
   it("Run doctor re-runs the host check in a session", () => {
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Run doctor…" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
       expect.objectContaining({ serverId: "h1", command: "agentmon doctor", cwd: "/w" }),
@@ -103,7 +122,7 @@ describe("ProjectHeader", () => {
   });
 
   it("Plan epics uses codex -a never for a codex project", () => {
-    render(<ProjectHeader project={{ ...project, provider: "codex" }} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={{ ...project, provider: "codex" }} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Plan epics…" }));
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     expect(h.openOrFocusSession).toHaveBeenCalledWith(
@@ -113,7 +132,7 @@ describe("ProjectHeader", () => {
   });
 
   it("Run issue parses a number or a GitHub URL", async () => {
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));
     fireEvent.change(screen.getByPlaceholderText(/issue number or URL/i), { target: { value: "https://github.com/o/r/issues/47" } });
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
@@ -121,20 +140,49 @@ describe("ProjectHeader", () => {
   });
 
   it("disables Run for an out-of-range issue number", () => {
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));
     fireEvent.change(screen.getByPlaceholderText(/issue number or URL/i), { target: { value: "99999999999999999999" } });
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 
   it("rejects an issue URL from a different repository", () => {
-    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
     fireEvent.click(screen.getByRole("button", { name: "Run issue…" }));
     // project.repo is "o/r"; a foreign repo's issue URL must NOT dispatch its
     // number into the current project — Run stays disabled and no action fires.
     fireEvent.change(screen.getByPlaceholderText(/issue number or URL/i), { target: { value: "https://github.com/other/repo/issues/9" } });
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
     expect(h.epicAction).not.toHaveBeenCalled();
+  });
+
+  it("shows a total/by-stage/by-model usage summary", async () => {
+    const tok = (total: number) => ({ input: total, output: 0, cache_read: 0, cache_write: 0, total });
+    const usage: ProjectUsage = {
+      tokens: tok(10000), cost: 1.5, duration_ms: 3600000,
+      by_stage: [
+        { stage: "implementing", tokens: tok(6000), cost: 1.0, duration_ms: 2400000 },
+        { stage: "reviewing", tokens: tok(4000), cost: 0.5, duration_ms: 1200000 },
+      ],
+      by_model: [
+        { provider: "anthropic", model: "claude-opus", tokens: tok(7000), cost: 1.2 },
+        { provider: "openai", model: "gpt-5", tokens: tok(3000), cost: 0.3 },
+      ],
+    };
+    h.getProjectUsage.mockResolvedValue(usage);
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
+
+    await waitFor(() => expect(screen.getByText(/10\.0k tok · ~\$1\.50 · 1h/)).toBeInTheDocument());
+    expect(screen.getByText(/implementing — 6\.0k tok · ~\$1\.00 · 40m/)).toBeInTheDocument();
+    expect(screen.getByText(/reviewing — 4\.0k tok · ~\$0\.50 · 20m/)).toBeInTheDocument();
+    expect(screen.getByText(/anthropic\/claude-opus — 7\.0k tok · ~\$1\.20/)).toBeInTheDocument();
+    expect(screen.getByText(/openai\/gpt-5 — 3\.0k tok · ~\$0\.30/)).toBeInTheDocument();
+  });
+
+  it("renders no usage summary when the project has zero usage", async () => {
+    render(<ProjectHeader project={project} epics={[]} onEdit={() => {}} />, { wrapper });
+    await waitFor(() => expect(h.getProjectUsage).toHaveBeenCalledWith("p1"));
+    expect(screen.queryByText(/tok ·/)).not.toBeInTheDocument();
   });
 });
 
