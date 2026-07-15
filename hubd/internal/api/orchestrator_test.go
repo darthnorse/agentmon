@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -762,6 +763,106 @@ func TestEpicPlanHandlerBaseBranchFallback(t *testing.T) {
 	}
 	if len(fc.refsSeen) != 2 || fc.refsSeen[0] != "epic/7-x" || fc.refsSeen[1] != "main" {
 		t.Fatalf("expected branch-then-base fetch order, got %v", fc.refsSeen)
+	}
+}
+
+func TestValidateArtifactPath(t *testing.T) {
+	for p, want := range map[string]bool{
+		"docs/plans/epic-7.md":         true,
+		"docs/reviews/epic-7-final.md": true,
+		"docs/reviews/sub/r.md":        true,  // nested under an allowlisted dir is fine
+		"docs/plans/epic-7":            false, // not .md
+		"docs/reviews/../secrets.md":   false, // traversal
+		"/etc/passwd":                  false, // leading slash (and not allowlisted)
+		"/docs/reviews/x.md":           false, // leading slash
+		"src/main.go":                  false, // not allowlisted, not .md
+		"docs/other/x.md":              false, // .md but not an allowlisted dir
+		"docs/reviews/a b.md":          false, // space fails the safe-char regex
+		"":                             false, // empty
+	} {
+		if got := validateArtifactPath(p); got != want {
+			t.Fatalf("validateArtifactPath(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+func TestEpicArtifactHandler(t *testing.T) {
+	database := orchDB(t)
+	ctx := context.Background()
+	database.CreateProject(ctx, db.Project{ID: "p1", Name: "p", Repo: "o/r", ServerID: "h1", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1})
+	e, _ := database.UpsertEpicIssue(ctx, db.Epic{ProjectID: "p1", IssueNumber: 7, IssueState: "open", QueuedAt: "t", StageUpdatedAt: "t"})
+
+	fc := &fakeContents{body: []byte("# Review")}
+	d := Deps{DB: database, Orch: &fakeOrch{}, Contents: fc}
+
+	call := func(project, path string) *httptest.ResponseRecorder {
+		r, w := orchReq("GET", "/api/v1/orchestrator/projects/"+project+"/epics/"+e.ID+"/artifact?path="+url.QueryEscape(path), "")
+		r.SetPathValue("id", project)
+		r.SetPathValue("epicID", e.ID)
+		d.OrchestratorEpicArtifactHandler()(w, r)
+		return w
+	}
+
+	// No branch yet → 409 (guard runs before the fetch).
+	if w := call("p1", "docs/reviews/epic-7-final.md"); w.Code != 409 {
+		t.Fatalf("branchless = %d %s", w.Code, w.Body.String())
+	}
+	if ok, err := database.SetEpicPR(ctx, e.ID, 0, "epic/7-x"); err != nil || !ok {
+		t.Fatalf("SetEpicPR: ok=%v err=%v", ok, err)
+	}
+
+	// Allowlisted docs/reviews path → 200, fetched off the branch.
+	w := call("p1", "docs/reviews/epic-7-final.md")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"markdown":"# Review"`) {
+		t.Fatalf("review = %d %s", w.Code, w.Body.String())
+	}
+	if fc.path != "docs/reviews/epic-7-final.md" || fc.ref != "epic/7-x" {
+		t.Fatalf("fetch args %+v", fc)
+	}
+
+	// Fail-closed rejects → 400, and never touch GitHub.
+	for _, bad := range []string{"docs/reviews/../secrets.md", "/etc/passwd", "src/main.go", "docs/plans/epic-7"} {
+		fc.path = "" // reset the recorder
+		if w := call("p1", bad); w.Code != 400 {
+			t.Fatalf("bad path %q = %d, want 400", bad, w.Code)
+		}
+		if fc.path != "" {
+			t.Fatalf("bad path %q reached GitHub (fetched %q)", bad, fc.path)
+		}
+	}
+
+	// Missing path param → 400.
+	if w := call("p1", ""); w.Code != 400 {
+		t.Fatalf("empty path = %d, want 400", w.Code)
+	}
+
+	// Wrong project → 404 (cross-project guard).
+	if w := call("p2", "docs/reviews/epic-7-final.md"); w.Code != 404 {
+		t.Fatalf("cross-project = %d", w.Code)
+	}
+
+	// Not on branch, present on base → 404 falls back to 200.
+	fc.byRef = map[string]refResp{"epic/7-x": {err: github.ErrNotFound}, "main": {body: []byte("# Base Review")}}
+	w = call("p1", "docs/reviews/epic-7-final.md")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ref":"main"`) {
+		t.Fatalf("fallback = %d %s", w.Code, w.Body.String())
+	}
+
+	// GitHub error shapes: not-found on both refs → 404; too-large → 413.
+	fc.byRef = nil
+	fc.err = github.ErrNotFound
+	if w := call("p1", "docs/reviews/epic-7-final.md"); w.Code != 404 {
+		t.Fatalf("not-found = %d", w.Code)
+	}
+	fc.err = github.ErrTooLarge
+	if w := call("p1", "docs/reviews/epic-7-final.md"); w.Code != 413 {
+		t.Fatalf("too-large = %d", w.Code)
+	}
+
+	// Contents unset (dormant) → 503.
+	d.Contents = nil
+	if w := call("p1", "docs/reviews/epic-7-final.md"); w.Code != 503 {
+		t.Fatalf("dormant = %d", w.Code)
 	}
 }
 

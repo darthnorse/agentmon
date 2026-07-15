@@ -705,6 +705,28 @@ var (
 // falls back to the default so the proxy can only ever serve a plan doc.
 const planDirPrefix = "docs/plans/"
 
+// artifactDirs is the fail-closed allowlist for the generic artifact proxy.
+// The endpoint can only ever serve a doc under one of these dirs, via the
+// GitHub Contents API — never the host filesystem. Extensible.
+var artifactDirs = []string{"docs/plans/", "docs/reviews/"}
+
+// validateArtifactPath applies the plan-proxy's fail-closed rules to a
+// user-supplied path: bounded length, no leading slash, no traversal, safe
+// chars (planPathRe), .md only, and under an allowlisted artifact dir. This is
+// the security boundary (spec §Security) — false → 400.
+func validateArtifactPath(p string) bool {
+	if p == "" || len(p) > 512 || strings.HasPrefix(p, "/") || strings.Contains(p, "..") ||
+		!strings.HasSuffix(p, ".md") || !planPathRe.MatchString(p) {
+		return false
+	}
+	for _, dir := range artifactDirs {
+		if strings.HasPrefix(p, dir) {
+			return true
+		}
+	}
+	return false
+}
+
 // planDocPath resolves the plan document path from the escalation note
 // (runner-skill convention: "plan-gate: plan ready at <path>"), falling back
 // to the docs/plans convention. The note is runner-controlled text, so
@@ -787,6 +809,48 @@ func (d Deps) OrchestratorEpicPlanHandler() http.HandlerFunc {
 			return
 		}
 		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, planDocPath(e.Needs, e.IssueNumber))
+	}
+}
+
+// OrchestratorEpicArtifactHandler proxies any allowlisted committed .md
+// artifact (plan or review evidence) off the epic branch — or the base branch
+// for merged epics (spec §1). The `path` query param is user-settable, so it is
+// validated fail-closed against artifactDirs BEFORE any GitHub access: the
+// endpoint can only ever read docs/plans/ or docs/reviews/, never the host FS.
+func (d Deps) OrchestratorEpicArtifactHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, ok := d.authorizeOr403(w, r, authz.OrchestratorView, "project:"+id); !ok {
+			return
+		}
+		if d.Contents == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "orchestrator disabled")
+			return
+		}
+		path := r.URL.Query().Get("path")
+		if !validateArtifactPath(path) {
+			writeJSONError(w, http.StatusBadRequest, "invalid or disallowed artifact path")
+			return
+		}
+		e, err := d.DB.GetEpic(r.Context(), r.PathValue("epicID"))
+		switch {
+		case errors.Is(err, sql.ErrNoRows) || (err == nil && e.ProjectID != id):
+			writeJSONError(w, http.StatusNotFound, "epic not found in project")
+			return
+		case err != nil:
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if e.Branch == "" {
+			writeJSONError(w, http.StatusConflict, "epic has no branch yet")
+			return
+		}
+		p, err := d.DB.GetProject(r.Context(), id)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		d.fetchArtifact(r.Context(), w, p.Repo, p.BaseBranch, e.Branch, path)
 	}
 }
 

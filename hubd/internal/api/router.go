@@ -59,6 +59,7 @@ func NewRouter(rd RouterDeps) http.Handler {
 	mux.Handle("DELETE /api/v1/orchestrator/projects/{id}", rd.Auth.RequireAuth(rd.API.OrchestratorProjectDeleteHandler()))
 	mux.Handle("GET /api/v1/orchestrator/board", rd.Auth.RequireAuth(rd.API.OrchestratorAllBoardHandler()))
 	mux.Handle("GET /api/v1/orchestrator/projects/{id}/epics/{epicID}/plan", rd.Auth.RequireAuth(rd.API.OrchestratorEpicPlanHandler()))
+	mux.Handle("GET /api/v1/orchestrator/projects/{id}/epics/{epicID}/artifact", rd.Auth.RequireAuth(rd.API.OrchestratorEpicArtifactHandler()))
 	mux.Handle("GET /api/v1/orchestrator/projects/{id}/epics/{epicID}/usage", rd.Auth.RequireAuth(rd.API.OrchestratorEpicUsageHandler()))
 	mux.Handle("GET /api/v1/orchestrator/projects/{id}/usage", rd.Auth.RequireAuth(rd.API.OrchestratorProjectUsageHandler()))
 	mux.Handle("GET /api/v1/orchestrator/projects/{id}/board", rd.Auth.RequireAuth(rd.API.OrchestratorBoardHandler()))
