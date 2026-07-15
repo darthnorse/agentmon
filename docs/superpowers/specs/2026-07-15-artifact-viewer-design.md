@@ -111,6 +111,17 @@ hub already fully controls, **via the GitHub Contents API — never the host
 filesystem**. No new attack surface beyond "read two specific `.md` dirs." Authz
 is the existing `OrchestratorView` on the project.
 
+**Known v1 limitation (accepted — symlinks):** GitHub's Contents API follows a
+committed symlink whose target is a normal file *in the same repo*, returning the
+target's bytes. So an allowlisted `docs/reviews/x.md` that is actually a symlink
+to a repo file *outside* the allowlisted dirs would be served — a lexical bypass
+of the dir boundary. **Accepted for v1** because it is bounded by the same trust
+model this feature rests on: planting such a symlink requires repo-write access,
+which already grants full read of the hub-controlled repo, so it yields an
+attacker nothing they couldn't already read. Hardening (reject `120000`
+symlink / non-blob entries via the Git tree API before serving) is a deferred v2
+follow-up.
+
 ## Error handling
 
 - Path fails validation / not allowlisted → **400** (fail-closed).

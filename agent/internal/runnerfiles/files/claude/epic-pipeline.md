@@ -199,16 +199,20 @@ At every `CHECKPOINT` step in the plan:
    dispatches its lenses as subagents, applies + commits every validated FIX
    itself, and returns a consolidated report with any DISCUSS items and
    nitpicks.
-4. Route the outcomes:
+4. **Commit the evidence FIRST** — before routing outcomes below, so that if you
+   escalate, the report is already committed for the escalation push to carry.
+   Write the consolidated report to `docs/reviews/epic-$ARGUMENTS-cp<K>.md`, tick
+   the plan's checkpoint box appending the reviewed SHA —
+   `- [x] CHECKPOINT K — reviewed to <sha>` — and commit both, message
+   `docs: epic #$ARGUMENTS checkpoint K review`.
+5. Route the outcomes:
    - FIX findings: already applied + committed by the review (regression
      tests included per its policy). Verify the suite is still green.
-   - DISCUSS items (risky/ambiguous/trade-off): **escalate** with the item
-     as the note — this is the existing human-summoning path.
-   - NITPICKs: record in the review report file; do not chase them.
-5. Commit the evidence: write the consolidated report to
-   `docs/reviews/epic-$ARGUMENTS-cp<K>.md`, tick the plan's checkpoint box
-   appending the reviewed SHA — `- [x] CHECKPOINT K — reviewed to <sha>` —
-   and commit both, message `docs: epic #$ARGUMENTS checkpoint K review`.
+   - DISCUSS items (risky/ambiguous/trade-off): **escalate**, naming the
+     `docs/reviews/epic-$ARGUMENTS-cp<K>.md` you just committed in the note so a
+     human can open it in the UI (the escalation protocol pushes it). This is the
+     existing human-summoning path.
+   - NITPICKs: recorded in the review report file (already committed); do not chase them.
 6. **Review recursion is `/multi-review`'s own job now.** After it applies
    fixes, `/multi-review` runs its OWN bounded review-of-fixes pass when they
    carry fresh logic (Claude-gated, `--codex-only`, hard-capped at one — its
@@ -224,9 +228,10 @@ At every `CHECKPOINT` step in the plan:
    conflict in <files>"). NEVER force-push around it.
 2. `agentmon report --epic $ARGUMENTS --stage reviewing`, then the final
    whole-branch review: **`/multi-review <merge-base>..HEAD --codex`** where
-   `<merge-base>` = `git merge-base HEAD origin/<base>`. Apply outcomes as in
-   Step 6 (FIX applied by the review, DISCUSS → escalate). Commit the report to
-   `docs/reviews/epic-$ARGUMENTS-final.md`.
+   `<merge-base>` = `git merge-base HEAD origin/<base>`. **Commit the report to
+   `docs/reviews/epic-$ARGUMENTS-final.md` FIRST**, then apply outcomes as in
+   Step 6 (FIX already applied by the review; DISCUSS → escalate, naming the
+   committed final-review path in the note so it opens in the UI).
 3. **Verify every effective requirement after review fixes settle.** Assess
    each epic-specific requirement and each platform requirement without a
    `check_cmd` against the final reviewed diff/repository, recording

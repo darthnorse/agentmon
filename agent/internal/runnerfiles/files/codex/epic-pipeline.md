@@ -206,16 +206,20 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    validated FIX itself (with regression tests), and writes the consolidated
    report to that file. Expect new `fix(review): …` commits on your branch —
    read them.
-4. Route the report's outcomes:
+4. **Commit the evidence FIRST** — before routing outcomes below, so that if you
+   escalate, the report is already committed for the escalation push to carry:
+   `git add docs/reviews/` plus the plan tick — append the reviewed SHA to the
+   checkpoint line, `- [x] CHECKPOINT K — reviewed to <sha>` — message
+   `docs: epic #N checkpoint K review`.
+5. Route the report's outcomes:
    - FIX findings: already applied + committed by the reviewer. Run the full
      build + test suite yourself and confirm green; a red suite after review
      fixes → escalate with the failure.
-   - DISCUSS items (risky/ambiguous/trade-off): **escalate** with the item
-     as the note — this is the existing human-summoning path.
-   - NITPICKs: leave them in the report file; do not chase them.
-5. Commit the evidence: `git add docs/reviews/` plus the plan tick — append
-   the reviewed SHA to the checkpoint line, `- [x] CHECKPOINT K — reviewed to <sha>` —
-   message `docs: epic #N checkpoint K review`.
+   - DISCUSS items (risky/ambiguous/trade-off): **escalate**, naming the
+     `docs/reviews/epic-N-cp<K>.md` you just committed in the note so a human can
+     open it in the UI (the escalation protocol pushes it). This is the existing
+     human-summoning path.
+   - NITPICKs: leave them in the report file (already committed); do not chase them.
 6. **Review recursion terminates.** Recurse only while the delta contains
    UNREVIEWED JUDGMENT: a large fix round of fresh logic warrants ONE
    review-of-fixes pass (same command on `<pre-fix-sha>..HEAD`); fixes that
@@ -236,8 +240,9 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <merge-base>..HEAD" > docs/reviews/epic-N-final.md
    ```
 
-   Apply outcomes as in Step 6 (one review-of-fixes max; DISCUSS → escalate).
-   Commit the report.
+   **Commit the report first** (`docs/reviews/epic-N-final.md`), then apply
+   outcomes as in Step 6 (one review-of-fixes max; DISCUSS → escalate, naming the
+   committed final-review path in the note so it opens in the UI).
 3. **Verify every effective requirement after review fixes settle.** Assess
    each epic-specific requirement and each platform requirement without a
    `check_cmd` against the final reviewed diff/repository, recording
