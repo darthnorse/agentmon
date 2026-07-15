@@ -24,6 +24,13 @@ const reportTmuxTimeout = 10 * time.Second
 // DI seam for IntakeHandler (production binds tmux.SessionNameForPane).
 type SessionResolver func(ctx context.Context, socket, pane string) (string, error)
 
+// UsageCapturer returns the reporting session's cumulative usage, best-effort
+// (production binds usage.NewCapturer(tmux.PaneInfo)). It is called AFTER
+// session resolution and its result is purely advisory: a nil return (or nil
+// capturer) leaves the report usage-less, and IntakeHandler recovers from any
+// panic — a capture bug must never turn a valid report into a 400.
+type UsageCapturer func(ctx context.Context, socket, pane string) []shared.Usage
+
 type intakeBody struct {
 	Repo   string `json:"repo"`
 	Epic   int    `json:"epic"`
@@ -41,7 +48,7 @@ type intakeBody struct {
 // agent resolves the calling pane's session via tmux instead (design doc §3).
 // ?dry_run=1 validates everything (including session resolution) without
 // buffering — the doctor's connectivity probe.
-func IntakeHandler(cfg config.Config, st *Store, resolve SessionResolver, now func() time.Time) http.HandlerFunc {
+func IntakeHandler(cfg config.Config, st *Store, resolve SessionResolver, capture UsageCapturer, now func() time.Time) http.HandlerFunc {
 	if now == nil {
 		now = time.Now
 	}
@@ -91,6 +98,12 @@ func IntakeHandler(cfg config.Config, st *Store, resolve SessionResolver, now fu
 			Ts: now().UTC().Format(time.RFC3339),
 		}
 		if r.URL.Query().Get("dry_run") != "1" {
+			if capture != nil {
+				func() {
+					defer func() { _ = recover() }() // capture is best-effort; never break intake
+					rep.Usage = capture(ctx, t.SocketName, pane)
+				}()
+			}
 			st.Add(t.Label, rep)
 		}
 		w.Header().Set("Content-Type", "application/json")

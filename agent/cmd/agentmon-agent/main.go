@@ -17,6 +17,7 @@ import (
 	"agentmon/agent/internal/report"
 	"agentmon/agent/internal/state"
 	"agentmon/agent/internal/tmux"
+	"agentmon/agent/internal/usage"
 	"agentmon/agent/internal/worktree"
 )
 
@@ -93,6 +94,10 @@ func main() {
 	resolveSession := func(ctx context.Context, socket, pane string) (string, error) {
 		return tmux.SessionNameForPane(ctx, tmux.ExecRunner, socket, pane)
 	}
+	paneInfo := func(ctx context.Context, socket, pane string) (int, string, string, time.Time, error) {
+		return tmux.PaneInfo(ctx, tmux.ExecRunner, socket, pane)
+	}
+	captureUsage := usage.NewCapturer(paneInfo)
 
 	_, tmuxErr := exec.LookPath("tmux")
 	mux := http.NewServeMux()
@@ -125,7 +130,7 @@ func main() {
 		}
 		mux.Handle("POST /hook", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, hooks.HookHandler(cfg, machine, nil))))
 		log.Printf("hook intake enabled at POST /hook")
-		mux.Handle("POST /orchestrator/report", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, report.IntakeHandler(cfg, reportStore, resolveSession, nil))))
+		mux.Handle("POST /orchestrator/report", hooks.RequireLoopback(hooks.RequireHookAuth(cfg.HookToken, report.IntakeHandler(cfg, reportStore, resolveSession, captureUsage, nil))))
 		log.Printf("orchestrator report intake enabled at POST /orchestrator/report")
 	}
 

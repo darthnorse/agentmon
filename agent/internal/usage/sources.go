@@ -78,6 +78,40 @@ func enumerateChildRollouts(codexRoot, worktree string, since time.Time) []strin
 	return out
 }
 
+// isCodexPath reports whether f is a Codex rollout (lives under codexRoot) as
+// opposed to a Claude transcript.
+func isCodexPath(path, codexRoot string) bool {
+	return strings.HasPrefix(path, codexRoot)
+}
+
+// claudeEncodeCwd mirrors Claude Code's project-directory naming: every "/"
+// and "." in cwd becomes "-". Confirmed empirically on this host, e.g.
+// "/root/agentmon" -> "-root-agentmon" and
+// "/root/agentmon/spike-0.5/scratch" -> "-root-agentmon-spike-0-5-scratch".
+func claudeEncodeCwd(cwd string) string {
+	return strings.NewReplacer("/", "-", ".", "-").Replace(cwd)
+}
+
+// enumerateChildTranscripts returns Claude .jsonl transcripts under
+// <claudeRoot>/<encoded cwd>/ with mtime >= since. Unlike Codex rollouts,
+// Claude encodes cwd into the project DIRECTORY NAME rather than a payload
+// field, so this is a glob rather than a walk-and-match. Over-inclusion
+// (parent + subagent transcripts sharing the dir) is safe: Aggregate dedups
+// every Claude row globally by message.id.
+func enumerateChildTranscripts(claudeRoot, cwd string, since time.Time) []string {
+	dir := filepath.Join(claudeRoot, claudeEncodeCwd(cwd))
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	var out []string
+	for _, p := range matches {
+		fi, err := os.Stat(p)
+		if err != nil || fi.ModTime().Before(since) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func rolloutCwd(path string) string {
 	f, err := os.Open(path)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentmon/agent/internal/config"
+	"agentmon/shared"
 )
 
 func testCfg() config.Config {
@@ -25,10 +26,10 @@ func okResolver(session string) SessionResolver {
 	}
 }
 
-func intakePost(t *testing.T, st *Store, resolve SessionResolver, url, body string) *httptest.ResponseRecorder {
+func intakePost(t *testing.T, st *Store, resolve SessionResolver, capture UsageCapturer, url, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	now := func() time.Time { return time.Date(2026, 7, 10, 14, 0, 0, 0, time.UTC) }
-	h := IntakeHandler(testCfg(), st, resolve, now)
+	h := IntakeHandler(testCfg(), st, resolve, capture, now)
 	r := httptest.NewRequest(http.MethodPost, url, strings.NewReader(body))
 	r.Header.Set("X-AgentMon-Pane", "%5")
 	r.Header.Set("X-AgentMon-Tmux", "/tmp/tmux-0/agentmon,123,0")
@@ -39,7 +40,7 @@ func intakePost(t *testing.T, st *Store, resolve SessionResolver, url, body stri
 
 func TestIntakeBuffersServerStampedReport(t *testing.T) {
 	st := NewStore("i", 10)
-	w := intakePost(t, st, okResolver("epic-proj-16"), "/orchestrator/report",
+	w := intakePost(t, st, okResolver("epic-proj-16"), nil, "/orchestrator/report",
 		`{"repo":"o/r","epic":16,"stage":"planning","note":"n","branch":"epic/7-x"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code %d body %s", w.Code, w.Body)
@@ -56,13 +57,69 @@ func TestIntakeBuffersServerStampedReport(t *testing.T) {
 
 func TestIntakeDryRunValidatesWithoutBuffering(t *testing.T) {
 	st := NewStore("i", 10)
-	w := intakePost(t, st, okResolver("s1"), "/orchestrator/report?dry_run=1",
+	w := intakePost(t, st, okResolver("s1"), nil, "/orchestrator/report?dry_run=1",
 		`{"repo":"o/r","epic":1,"stage":"planning"}`)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"session":"s1"`) {
 		t.Fatalf("code %d body %s", w.Code, w.Body)
 	}
 	if b := st.Drain("default", "", 0); len(b.Reports) != 0 {
 		t.Fatalf("dry_run must not buffer: %+v", b)
+	}
+}
+
+func TestIntakeAttachesUsageBestEffort(t *testing.T) {
+	st := NewStore("i", 10)
+	capture := func(_ context.Context, socket, pane string) []shared.Usage {
+		if socket != "agentmon" || pane != "%5" {
+			t.Fatalf("unexpected capture args: socket=%q pane=%q", socket, pane)
+		}
+		return []shared.Usage{{Provider: "claude", Model: "m", Output: 5}}
+	}
+	w := intakePost(t, st, okResolver("epic-proj-16"), capture, "/orchestrator/report",
+		`{"repo":"o/r","epic":16,"stage":"planning"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	b := st.Drain("default", "", 0)
+	if len(b.Reports) != 1 || len(b.Reports[0].Usage) != 1 || b.Reports[0].Usage[0].Output != 5 {
+		t.Fatalf("usage not attached: %+v", b.Reports)
+	}
+}
+
+func TestIntakeNilCapturerStillSucceeds(t *testing.T) {
+	st := NewStore("i", 10)
+	w := intakePost(t, st, okResolver("s"), nil, "/orchestrator/report",
+		`{"repo":"o/r","epic":1,"stage":"planning"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("nil capturer broke intake: %d body %s", w.Code, w.Body)
+	}
+}
+
+func TestIntakePanickingCapturerStillSucceeds(t *testing.T) {
+	st := NewStore("i", 10)
+	capture := func(_ context.Context, _, _ string) []shared.Usage { panic("boom") }
+	w := intakePost(t, st, okResolver("s"), capture, "/orchestrator/report",
+		`{"repo":"o/r","epic":1,"stage":"planning"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("panicking capturer broke intake: %d body %s", w.Code, w.Body)
+	}
+	b := st.Drain("default", "", 0)
+	if len(b.Reports) != 1 || b.Reports[0].Usage != nil {
+		t.Fatalf("panic must leave usage nil, not error: %+v", b.Reports)
+	}
+}
+
+func TestIntakeDryRunSkipsCapture(t *testing.T) {
+	st := NewStore("i", 10)
+	called := false
+	capture := func(_ context.Context, _, _ string) []shared.Usage { called = true; return nil }
+	w := intakePost(t, st, okResolver("s1"), capture, "/orchestrator/report?dry_run=1",
+		`{"repo":"o/r","epic":1,"stage":"planning"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", w.Code, w.Body)
+	}
+	if called {
+		t.Fatalf("dry_run must not invoke capture")
 	}
 }
 
@@ -81,7 +138,7 @@ func TestIntakeRejections(t *testing.T) {
 			func(_ context.Context, _, _ string) (string, error) { return "", errors.New("no pane") }},
 	}
 	for _, c := range cases {
-		if w := intakePost(t, st, c.resolve, "/orchestrator/report", c.body); w.Code != http.StatusBadRequest {
+		if w := intakePost(t, st, c.resolve, nil, "/orchestrator/report", c.body); w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: code %d body %s", c.name, w.Code, w.Body)
 		}
 	}
@@ -89,7 +146,7 @@ func TestIntakeRejections(t *testing.T) {
 
 func TestIntakeRejectsUnknownSocketOrBadPane(t *testing.T) {
 	st := NewStore("i", 10)
-	h := IntakeHandler(testCfg(), st, okResolver("s"), nil)
+	h := IntakeHandler(testCfg(), st, okResolver("s"), nil, nil)
 	r := httptest.NewRequest(http.MethodPost, "/orchestrator/report", strings.NewReader(`{"epic":1,"stage":"planning"}`))
 	r.Header.Set("X-AgentMon-Pane", "%5")
 	r.Header.Set("X-AgentMon-Tmux", "/tmp/tmux-0/othersock,1,0")
