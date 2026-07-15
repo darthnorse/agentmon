@@ -26,6 +26,37 @@ func TestUpsertUsageIdempotent(t *testing.T) {
 	}
 }
 
+// TestUpsertUsageMonotonic guards Fix UP: a colliding upsert on the SAME key
+// with LOWER token values (e.g. a best-effort partial reap landing on a key
+// a report already claimed) must never lower the stored values — the max of
+// what's been seen for that key is retained, not the latest write.
+func TestUpsertUsageMonotonic(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	row := UsageRow{ProjectID: "p", ProjectName: "P", Repo: "o/r", IssueNumber: 7, Attempt: 1,
+		Stage: "reviewing", CapturedAt: "2026-07-14T10:00:00Z", Provider: "claude", Model: "m",
+		Input: 1000, Output: 500, CacheRead: 300, CacheWrite: 200}
+	if err := d.UpsertUsage(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	// Same key, LOWER values (e.g. a partial reap snapshot) — must not overwrite.
+	row.Input, row.Output, row.CacheRead, row.CacheWrite = 10, 5, 3, 2
+	if err := d.UpsertUsage(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.ListEpicUsage(ctx, "p", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got %d: %+v", len(rows), rows)
+	}
+	got := rows[0]
+	if got.Input != 1000 || got.Output != 500 || got.CacheRead != 300 || got.CacheWrite != 200 {
+		t.Fatalf("want original higher values retained, got %+v", got)
+	}
+}
+
 // TestListEpicUsageOrdersSameSecondRowsByInsertion guards Fix 7's ORDER BY
 // tie-break: two rows sharing one captured_at second (different stage, so
 // distinct rows under the UNIQUE key) must come back in the order they were

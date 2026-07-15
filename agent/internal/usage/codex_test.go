@@ -38,3 +38,23 @@ func TestParseCodexModelSnapshotAtTokenCount(t *testing.T) {
 		t.Fatalf("Model = %q, want %q (model current AT the token_count, not model-b seen only afterward)", got.Model, "model-a")
 	}
 }
+
+// TestParseCodexNestedCollaborationModeModel covers Fix CM: when the ONLY
+// model source in the rollout is the nested
+// payload.collaboration_mode.settings.model (no top-level turn_context
+// payload.model at all), ParseCodex must still pick it up rather than
+// returning "" — the doc comment already promised this source is read.
+func TestParseCodexNestedCollaborationModeModel(t *testing.T) {
+	f, err := os.Open("testdata/codex_rollout_nested_model.jsonl")
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer f.Close()
+	got, ok, err := ParseCodex(f)
+	if err != nil || !ok {
+		t.Fatalf("want ok, got ok=%v err=%v", ok, err)
+	}
+	if got.Model != "nested-only-model" {
+		t.Fatalf("Model = %q, want %q (nested collaboration_mode.settings.model)", got.Model, "nested-only-model")
+	}
+}

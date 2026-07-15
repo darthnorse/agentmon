@@ -8,9 +8,14 @@ import (
 
 type codexLine struct {
 	Payload struct {
-		Type  string `json:"type"`
-		Model string `json:"model"`
-		Info  struct {
+		Type              string `json:"type"`
+		Model             string `json:"model"`
+		CollaborationMode struct {
+			Settings struct {
+				Model string `json:"model"`
+			} `json:"settings"`
+		} `json:"collaboration_mode"`
+		Info struct {
 			Total struct {
 				Input  int64 `json:"input_tokens"`
 				Cached int64 `json:"cached_input_tokens"`
@@ -49,6 +54,8 @@ func ParseCodex(r io.Reader) (MsgUsage, bool, error) {
 		}
 		if l.Payload.Model != "" {
 			curModel = l.Payload.Model
+		} else if l.Payload.CollaborationMode.Settings.Model != "" {
+			curModel = l.Payload.CollaborationMode.Settings.Model
 		}
 		if l.Payload.Type != "token_count" {
 			continue

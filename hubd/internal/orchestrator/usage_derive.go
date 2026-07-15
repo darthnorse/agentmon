@@ -54,13 +54,7 @@ func (t TokenTotals) sub(o TokenTotals) TokenTotals {
 // it; subtracting would produce negative stage tokens and, downstream, a
 // negative CostUSD polluting by_stage/by_model/totals.
 func (t TokenTotals) clampNonNeg() TokenTotals {
-	clamp := func(v int64) int64 {
-		if v < 0 {
-			return 0
-		}
-		return v
-	}
-	return newTokenTotals(clamp(t.Input), clamp(t.Output), clamp(t.CacheRead), clamp(t.CacheWrite))
+	return newTokenTotals(max(t.Input, 0), max(t.Output, 0), max(t.CacheRead, 0), max(t.CacheWrite, 0))
 }
 
 // maxBuckets returns the per-bucket (never per-Total) max of a and b, with
@@ -76,12 +70,6 @@ func (t TokenTotals) clampNonNeg() TokenTotals {
 // the 100→500 climb. Maxing keeps the baseline at its true peak (500), so
 // that same regrowth correctly adds only 600−500=100.
 func maxBuckets(a, b TokenTotals) TokenTotals {
-	max := func(x, y int64) int64 {
-		if y > x {
-			return y
-		}
-		return x
-	}
 	return newTokenTotals(max(a.Input, b.Input), max(a.Output, b.Output), max(a.CacheRead, b.CacheRead), max(a.CacheWrite, b.CacheWrite))
 }
 
