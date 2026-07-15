@@ -55,7 +55,7 @@ export interface ProjectDTO {
   workdir: string; base_branch: string; provider: string;
   required_reviews: string[] | null; max_parallel: number; paused: boolean;
   require_ci: boolean; pinned: boolean; requirements: Requirement[];
-  counts?: Record<string, number>;
+  counts?: Record<string, number>; usage?: UsageRollup;
 }
 
 export interface EpicDTO {
@@ -64,6 +64,7 @@ export interface EpicDTO {
   attempt: number; session: string; branch: string; pr: number;
   verdict?: string; needs: string; issue_state: string;
   queued_at: string; started_at: string; stage_updated_at: string; merged_at: string;
+  usage?: UsageRollup;
 }
 
 export interface EpicEventDTO { from: string; to: string; source: string; note: string; ts: string; }
@@ -71,6 +72,20 @@ export interface EpicEventDTO { from: string; to: string; source: string; note: 
 export interface AllBoardResponse { orchestrator_enabled: boolean; projects: ProjectDTO[]; epics: EpicDTO[]; }
 export interface ProjectBoardResponse { project: ProjectDTO; epics: EpicDTO[]; events: Record<string, EpicEventDTO[]>; }
 export interface EpicPlanResponse { path: string; ref: string; markdown: string; }
+
+// Usage tracking DTO family (mirrors Go shared.Usage* types)
+export interface TokenTotals { input: number; output: number; cache_read: number; cache_write: number; total: number; }
+export interface ModelUsage { provider: string; model: string; tokens: TokenTotals; cost: number | null; }
+export interface UsageStage { stage: string; duration_ms: number; tokens: TokenTotals; cost: number | null; by_model: ModelUsage[]; }
+export interface UsageAttempt { attempt: number; outcome: string; duration_ms: number; tokens: TokenTotals; cost: number | null; is_lower_bound: boolean; stages: UsageStage[]; }
+export interface EpicUsage { tokens: TokenTotals; cost: number | null; duration_ms: number; by_model: ModelUsage[]; attempts: UsageAttempt[]; }
+export interface ProjectStageUsage { stage: string; tokens: TokenTotals; cost: number | null; duration_ms: number; }
+export interface ProjectUsage { tokens: TokenTotals; cost: number | null; duration_ms: number; by_stage: ProjectStageUsage[]; by_model: ModelUsage[]; }
+// Inline light rollup carried on board epic/project DTOs (omitted when absent):
+export interface UsageRollup { tokens: number; cost: number | null; duration_ms: number; }
+
+export type EpicUsageResponse = EpicUsage;
+export type ProjectUsageResponse = ProjectUsage;
 
 // SSE `board` delta — hubd/internal/api/orchestrator_events.go:74
 export interface BoardDeltaFrame {
