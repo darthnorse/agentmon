@@ -61,7 +61,11 @@ func main() {
 
 	reg := registry.New(database)
 	proj := state.NewProjection()
-	agentClient := registry.NewClient(10 * time.Second)
+	// 20s: KillSession now runs the agent's capture (≤3s, its own bounded
+	// budget) THEN the kill (≤its own tmux timeout, currently 10s) as two
+	// back-to-back phases — a legitimately-slow-but-bounded capture+kill must
+	// fit inside this client-side timeout, not get cut off mid-flight.
+	agentClient := registry.NewClient(20 * time.Second)
 	store := authn.NewStore(cookieTTL(cfg))
 	auth := &authn.Authenticator{Store: store, CookieName: cfg.SessionCookie.Name}
 	rec := audit.NewRecorder(database)

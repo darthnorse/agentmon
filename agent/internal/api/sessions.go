@@ -28,6 +28,14 @@ func withTmuxTimeout(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), agentTmuxTimeout)
 }
 
+// captureTimeout bounds KillSessionHandler's pre-kill usage capture,
+// independently of agentTmuxTimeout. The capturer's /proc + filesystem walks
+// are best-effort and can be slow; this cap keeps a slow capture from ever
+// eating into the kill's own budget (the kill is REQUIRED — worktree teardown
+// and retry retirement depend on it — while a lost capture just means no
+// usage snapshot). A var so tests can shorten it.
+var captureTimeout = 3 * time.Second
+
 // Discoverer resolves a target's live session tree. Injected so the handler is
 // testable without a real tmux (production binds tmux.DiscoverDetailed + tmux.ExecRunner).
 type Discoverer func(ctx context.Context, opts tmux.DiscoverOpts) (tmux.Discovery, error)
@@ -214,10 +222,20 @@ type SessionKiller func(ctx context.Context, socket, name string) error
 // Task 10 (reap snapshot): BEFORE killing, capture runs against the target
 // session — tmux `display-message -t <session_name>` targets that session's
 // active pane, so the session NAME doubles as the capturer's `pane` arg — and
-// the resulting usage (if any) rides the success response so the hub can
-// record the session's terminal boundary before it's gone. capture is
-// best-effort like the report intake's: a nil capturer/result, or even a
-// panic inside it, must never turn a valid kill into a failed one.
+// the resulting usage (if any) rides the success response, stamped with the
+// AGENT's own clock (CapturedAt), so the hub can record the session's
+// terminal boundary before it's gone without trusting its own (possibly
+// skewed) clock. capture is best-effort like the report intake's: a nil
+// capturer/result, or even a panic inside it, must never turn a valid kill
+// into a failed one.
+//
+// capture and kill run under DELIBERATELY SEPARATE contexts: capture gets its
+// own short captureTimeout budget, independent of the kill's — so a slow
+// capture (the /proc + filesystem walks are best-effort and can stall) can
+// never eat into the kill's own timeout. The kill then runs under a FRESH
+// withTmuxTimeout(r), unaffected by however long capture took. The kill is
+// REQUIRED (worktree teardown / retry retirement depend on it); the capture
+// is not.
 func KillSessionHandler(cfg config.Config, kill SessionKiller, capture report.UsageCapturer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxCreateBody)
@@ -243,15 +261,17 @@ func KillSessionHandler(cfg config.Config, kill SessionKiller, capture report.Us
 			writeJSONError(w, http.StatusNotFound, "unknown target")
 			return
 		}
-		ctx, cancel := withTmuxTimeout(r)
-		defer cancel()
 		var usage []shared.Usage
 		if capture != nil {
+			capCtx, capCancel := context.WithTimeout(r.Context(), captureTimeout)
 			func() {
+				defer capCancel()
 				defer func() { _ = recover() }() // capture is best-effort; never break the kill
-				usage = capture(ctx, t.SocketName, req.Name)
+				usage = capture(capCtx, t.SocketName, req.Name)
 			}()
 		}
+		ctx, cancel := withTmuxTimeout(r)
+		defer cancel()
 		if err := kill(ctx, t.SocketName, req.Name); err != nil {
 			if errors.Is(err, tmux.ErrNoSession) {
 				writeJSONError(w, http.StatusNotFound, "no such session")
@@ -261,8 +281,14 @@ func KillSessionHandler(cfg config.Config, kill SessionKiller, capture report.Us
 			writeJSONError(w, http.StatusInternalServerError, "kill failed")
 			return
 		}
+		resp := shared.KillSessionResponse{Usage: usage}
+		if len(usage) > 0 {
+			// The agent's own clock, second precision RFC3339 to match report
+			// Ts's lexicographic-ordering contract — never RFC3339Nano.
+			resp.CapturedAt = time.Now().UTC().Format(time.RFC3339)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(shared.KillSessionResponse{Usage: usage})
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 

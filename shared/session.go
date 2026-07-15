@@ -101,8 +101,16 @@ type KillSessionRequest struct {
 // immediately BEFORE the kill, per Task 10's reap-snapshot design — so the
 // hub can attribute the tail of tokens a merge/cancel/retry would otherwise
 // drop. Empty/omitted when capture is unavailable, nil, or returns nothing.
+// CapturedAt is the AGENT's own clock (RFC3339, second precision, matching
+// OrchestratorReport.Ts) at the moment usage was captured — set only when
+// Usage is non-empty. The hub uses it (not its own clock) as the reap
+// boundary: stamping the boundary with the HUB's clock would let cross-host
+// clock skew sort the reap BEFORE the runner's last real stage report in a
+// multi-host fleet, silently dropping the terminal tail the reap exists to
+// capture.
 type KillSessionResponse struct {
-	Usage []Usage `json:"usage,omitempty"`
+	Usage      []Usage `json:"usage,omitempty"`
+	CapturedAt string  `json:"captured_at,omitempty"`
 }
 
 // WorktreeTeardownRequest is the body of POST /worktrees/teardown (agent) and

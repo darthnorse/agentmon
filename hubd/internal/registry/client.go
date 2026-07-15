@@ -183,27 +183,30 @@ func (c *Client) RenameSession(ctx context.Context, srv db.Server, target, from,
 // KillSession terminates session `name` on the agent's target. Maps the agent's
 // 400→ErrInvalidSession, 404→ErrNoSession. On success it decodes the agent's
 // capture-then-kill snapshot (task 10: reap snapshot) — the session's terminal
-// usage, captured just before the kill — and returns it; a legacy 204 (no
-// body, mixed fleet) or a decode failure yields nil usage without failing the
-// kill, since the kill itself already succeeded.
-func (c *Client) KillSession(ctx context.Context, srv db.Server, target, name string) ([]shared.Usage, error) {
+// usage, captured just before the kill — and returns it along with the
+// AGENT's own clock timestamp (CapturedAt, empty when the agent predates it
+// or no usage was captured) for the caller to use as the reap boundary
+// instead of its own (possibly skewed) clock; a legacy 204 (no body, mixed
+// fleet) or a decode failure yields nil usage and an empty CapturedAt without
+// failing the kill, since the kill itself already succeeded.
+func (c *Client) KillSession(ctx context.Context, srv db.Server, target, name string) ([]shared.Usage, string, error) {
 	u := srv.URL + "/sessions/kill"
 	if target != "" {
 		u += "?target=" + url.QueryEscape(target)
 	}
 	body, err := json.Marshal(shared.KillSessionRequest{Name: name})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+srv.Bearer)
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("dial agent %s: %w", srv.ID, err)
+		return nil, "", fmt.Errorf("dial agent %s: %w", srv.ID, err)
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
@@ -212,17 +215,17 @@ func (c *Client) KillSession(ctx context.Context, srv db.Server, target, name st
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			// The kill already succeeded (status 200) — a malformed/absent body
 			// only costs the usage snapshot, not the kill itself.
-			return nil, nil
+			return nil, "", nil
 		}
-		return out.Usage, nil
+		return out.Usage, out.CapturedAt, nil
 	case http.StatusNoContent:
-		return nil, nil
+		return nil, "", nil
 	case http.StatusBadRequest:
-		return nil, ErrInvalidSession
+		return nil, "", ErrInvalidSession
 	case http.StatusNotFound:
-		return nil, ErrNoSession
+		return nil, "", ErrNoSession
 	default:
-		return nil, fmt.Errorf("agent %s kill-session returned %d", srv.ID, resp.StatusCode)
+		return nil, "", fmt.Errorf("agent %s kill-session returned %d", srv.ID, resp.StatusCode)
 	}
 }
 

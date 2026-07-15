@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,7 @@ func TestOpenTranscriptFDsFindsOpenJSONL(t *testing.T) {
 	p := filepath.Join(dir, "sess.jsonl")
 	f, _ := os.Create(p)
 	defer f.Close()
-	got := openTranscriptFDs(os.Getpid())
+	got := openTranscriptFDs(context.Background(), os.Getpid())
 	found := false
 	for _, g := range got {
 		if g == p {
@@ -54,7 +55,7 @@ func TestDescendantsWalksFullSubtree(t *testing.T) {
 	var got []int
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		got = descendants(os.Getpid())
+		got = descendants(context.Background(), os.Getpid())
 		if len(got) >= 3 { // sh + its two sleep grandchildren
 			break
 		}
@@ -83,9 +84,27 @@ func TestEnumerateChildRolloutsFiltersByCwd(t *testing.T) {
 	os.WriteFile(mine, []byte(`{"payload":{"cwd":"/wt/epic7"}}`+"\n"), 0o644)
 	other := filepath.Join(day, "rollout-b.jsonl")
 	os.WriteFile(other, []byte(`{"payload":{"cwd":"/wt/epic9"}}`+"\n"), 0o644)
-	got := enumerateChildRollouts(root, "/wt/epic7", time.Time{})
+	got := enumerateChildRollouts(context.Background(), root, "/wt/epic7", time.Time{})
 	if len(got) != 1 || got[0] != mine {
 		t.Fatalf("want only %s, got %v", mine, got)
+	}
+}
+
+// TestEnumerateChildRolloutsAbortsOnCancelledContext covers Fix 4's
+// cancellation plumbing: the WalkDir callback returns ctx.Err() once ctx is
+// done, aborting the walk — a cancelled capture must yield nothing rather
+// than pay for a full filesystem walk.
+func TestEnumerateChildRolloutsAbortsOnCancelledContext(t *testing.T) {
+	root := t.TempDir()
+	day := filepath.Join(root, "2026", "07", "14")
+	os.MkdirAll(day, 0o755)
+	os.WriteFile(filepath.Join(day, "rollout-a.jsonl"), []byte(`{"payload":{"cwd":"/wt/epic7"}}`+"\n"), 0o644)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got := enumerateChildRollouts(ctx, root, "/wt/epic7", time.Time{})
+	if len(got) != 0 {
+		t.Fatalf("want no results once ctx is already cancelled, got %v", got)
 	}
 }
 
@@ -121,7 +140,7 @@ func TestEnumerateChildTranscriptsFiltersByCwdEncoding(t *testing.T) {
 	os.MkdirAll(otherDir, 0o755)
 	os.WriteFile(filepath.Join(otherDir, "sess-b.jsonl"), []byte("{}\n"), 0o644)
 
-	got := enumerateChildTranscripts(root, "/root/agentmon", time.Time{})
+	got := enumerateChildTranscripts(context.Background(), root, "/root/agentmon", time.Time{})
 	if len(got) != 1 || got[0] != mine {
 		t.Fatalf("want only %s, got %v", mine, got)
 	}
@@ -158,7 +177,7 @@ func TestEnumerateChildTranscriptsRespectsSince(t *testing.T) {
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(stale, old, old)
 
-	got := enumerateChildTranscripts(root, "/root/agentmon", time.Now())
+	got := enumerateChildTranscripts(context.Background(), root, "/root/agentmon", time.Now())
 	if len(got) != 0 {
 		t.Fatalf("want stale transcript excluded, got %v", got)
 	}

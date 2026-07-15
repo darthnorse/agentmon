@@ -2,6 +2,7 @@ package usage
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -15,9 +16,16 @@ type Sources struct{ Claude, Codex []string }
 // openTranscriptFDs returns .jsonl files held open by pid or any descendant.
 // This binds the PARENT transcript to the exact runner process, which is
 // session-safe even when concurrent attempts share a project dir.
-func openTranscriptFDs(pid int) []string {
+//
+// ctx is checked between pids (and threaded into descendants' own /proc
+// walk): this is a best-effort capture, so an already-cancelled/expired ctx
+// just yields whatever was gathered so far — never an error.
+func openTranscriptFDs(ctx context.Context, pid int) []string {
 	seen := map[string]bool{}
-	for _, p := range append([]int{pid}, descendants(pid)...) {
+	for _, p := range append([]int{pid}, descendants(ctx, pid)...) {
+		if ctx.Err() != nil {
+			break
+		}
 		entries, _ := os.ReadDir("/proc/" + strconv.Itoa(p) + "/fd")
 		for _, e := range entries {
 			target, err := os.Readlink("/proc/" + strconv.Itoa(p) + "/fd/" + e.Name())
@@ -37,10 +45,18 @@ func openTranscriptFDs(pid int) []string {
 // so on) by walking the FULL process-tree subtree rooted at pid — not just
 // one level. /proc is read exactly once (not once per node, unlike a naive
 // recursive re-scan) into a pid->children map, which the walk then reuses.
-func descendants(pid int) []int {
+//
+// ctx is checked periodically (both while building the pid->children map and
+// while draining the BFS queue) so a cancelled capture can't be pinned here
+// indefinitely by a large process table; a cancellation mid-walk just yields
+// the descendants found so far.
+func descendants(ctx context.Context, pid int) []int {
 	children := map[int][]int{}
 	procs, _ := os.ReadDir("/proc")
 	for _, pe := range procs {
+		if ctx.Err() != nil {
+			return nil
+		}
 		cpid, err := strconv.Atoi(pe.Name())
 		if err != nil {
 			continue
@@ -68,6 +84,9 @@ func descendants(pid int) []int {
 	var out []int
 	queue := []int{pid}
 	for len(queue) > 0 {
+		if ctx.Err() != nil {
+			return out
+		}
 		p := queue[0]
 		queue = queue[1:]
 		for _, c := range children[p] {
@@ -79,10 +98,17 @@ func descendants(pid int) []int {
 }
 
 // enumerateChildRollouts returns Codex rollouts under codexRoot whose recorded
-// cwd == worktree and mtime >= since.
-func enumerateChildRollouts(codexRoot, worktree string, since time.Time) []string {
+// cwd == worktree and mtime >= since. The WalkDir callback returns ctx.Err()
+// once ctx is done, which aborts the walk (filepath.WalkDir stops on any
+// non-nil, non-SkipDir/SkipAll error from the callback) — this is a
+// best-effort capture, so an aborted walk just yields whatever was gathered
+// before cancellation, never an error to the caller.
+func enumerateChildRollouts(ctx context.Context, codexRoot, worktree string, since time.Time) []string {
 	var out []string
-	filepath.WalkDir(codexRoot, func(p string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(codexRoot, func(p string, d os.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".jsonl") {
 			return nil
 		}
@@ -117,11 +143,22 @@ func claudeEncodeCwd(cwd string) string {
 // field, so this is a glob rather than a walk-and-match. Over-inclusion
 // (parent + subagent transcripts sharing the dir) is safe: Aggregate dedups
 // every Claude row globally by message.id.
-func enumerateChildTranscripts(claudeRoot, cwd string, since time.Time) []string {
+//
+// ctx is checked before the glob and again per-match so a cancelled capture
+// stops enumerating rather than statting an arbitrarily large directory —
+// best-effort, so cancellation yields a partial (or nil) result, never an
+// error.
+func enumerateChildTranscripts(ctx context.Context, claudeRoot, cwd string, since time.Time) []string {
+	if ctx.Err() != nil {
+		return nil
+	}
 	dir := filepath.Join(claudeRoot, claudeEncodeCwd(cwd))
 	matches, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	var out []string
 	for _, p := range matches {
+		if ctx.Err() != nil {
+			break
+		}
 		fi, err := os.Stat(p)
 		if err != nil || fi.ModTime().Before(since) {
 			continue

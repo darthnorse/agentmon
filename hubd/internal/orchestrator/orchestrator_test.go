@@ -73,6 +73,7 @@ type fakeAgents struct {
 	killed          []string
 	killErr         error
 	killUsage       []shared.Usage
+	killCapturedAt  string
 	spawnErr        error
 	sessions        []string // live tmux session names the agent would list
 	sessionsErr     error
@@ -107,9 +108,9 @@ func (f *fakeAgents) DrainReports(_ context.Context, _ db.Server, _, instance st
 	return shared.OrchestratorReportBatch{Instance: "test-instance", Cursor: uint64(len(out)), Reports: out}, nil
 }
 
-func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) ([]shared.Usage, error) {
+func (f *fakeAgents) KillSession(_ context.Context, _ db.Server, _, name string) ([]shared.Usage, string, error) {
 	f.killed = append(f.killed, name)
-	return f.killUsage, f.killErr
+	return f.killUsage, f.killCapturedAt, f.killErr
 }
 
 func (f *fakeAgents) TeardownWorktree(_ context.Context, _ db.Server, _, workdir, branch string) error {
@@ -412,6 +413,46 @@ func TestKillEpicSessionStoresTerminalUsage(t *testing.T) {
 	if !hasUsageRow(rows, "codex", 7, string(shared.EpicMerging)) {
 		t.Fatalf("terminal usage not stored: %+v", rows)
 	}
+	// The fake agent set no CapturedAt (mixed-fleet / pre-Fix-6 agent) — the
+	// terminal row must fall back to the hub's own clock (newTestOrch's fixed
+	// "2026-07-10T14:00:00Z").
+	for _, r := range rows {
+		if r.Provider == "codex" && r.Output == 7 && r.CapturedAt != "2026-07-10T14:00:00Z" {
+			t.Fatalf("captured_at = %q, want hub-clock fallback %q", r.CapturedAt, "2026-07-10T14:00:00Z")
+		}
+	}
+}
+
+// TestKillEpicSessionUsesAgentCapturedAtForReapBoundary covers Fix 6: the
+// terminal reap boundary must carry the AGENT's own clock (CapturedAt), not
+// the hub's — in a multi-host fleet, clock skew could otherwise sort the
+// hub-clock reap BEFORE the last real stage report (stamped on the agent),
+// silently dropping the terminal tail the reap exists to capture.
+func TestKillEpicSessionUsesAgentCapturedAtForReapBoundary(t *testing.T) {
+	const agentClock = "2026-07-10T13:55:00Z" // deliberately BEFORE the hub's fixed Now()
+	ag := &fakeAgents{sessions: []string{sessionName(16)},
+		killUsage:      []shared.Usage{{Provider: "codex", Model: "m", Output: 7}},
+		killCapturedAt: agentClock,
+	}
+	d := mergeTo16(t, ag)
+	ctx := context.Background()
+	e, err := d.GetEpicByIssue(ctx, "p1", 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.ListEpicUsage(ctx, e.ProjectID, e.IssueNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Provider == "codex" && r.Output == 7 {
+			if r.CapturedAt != agentClock {
+				t.Fatalf("captured_at = %q, want agent clock %q (not hub Now)", r.CapturedAt, agentClock)
+			}
+			return
+		}
+	}
+	t.Fatalf("terminal usage row not found: %+v", rows)
 }
 
 func hasUsageRow(rows []db.UsageRow, provider string, output int64, stage string) bool {

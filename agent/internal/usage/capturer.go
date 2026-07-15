@@ -37,7 +37,7 @@ func NewCapturer(paneInfo func(ctx context.Context, socket, pane string) (pid in
 		var s Sources
 		// Parent transcript: bound to the runner process's open fd (session-safe
 		// even when concurrent attempts share a project dir).
-		for _, f := range openTranscriptFDs(pid) {
+		for _, f := range openTranscriptFDs(ctx, pid) {
 			if isCodexPath(f, codexRoot) {
 				s.Codex = append(s.Codex, f)
 			} else {
@@ -51,8 +51,8 @@ func NewCapturer(paneInfo func(ctx context.Context, socket, pane string) (pid in
 		}
 		// Child sessions in the worktree (codex exec, subagents), scoped to
 		// this session's lifetime — see since= discussion above.
-		s.Codex = append(s.Codex, enumerateChildRollouts(codexRoot, cwd, since)...)
-		s.Claude = append(s.Claude, enumerateChildTranscripts(claudeRoot, cwd, since)...)
+		s.Codex = append(s.Codex, enumerateChildRollouts(ctx, codexRoot, cwd, since)...)
+		s.Claude = append(s.Claude, enumerateChildTranscripts(ctx, claudeRoot, cwd, since)...)
 		return Aggregate(s)
 	}
 }

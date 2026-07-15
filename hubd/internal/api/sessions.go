@@ -265,7 +265,7 @@ func (d Deps) ServerKillSessionHandler() http.HandlerFunc {
 		if auditTarget == "" {
 			auditTarget = "default"
 		}
-		if _, err := d.Agent.KillSession(r.Context(), srv, target, req.Name); err != nil {
+		if _, _, err := d.Agent.KillSession(r.Context(), srv, target, req.Name); err != nil {
 			switch {
 			case errors.Is(err, registry.ErrNoSession):
 				writeJSONError(w, http.StatusNotFound, "no such session")

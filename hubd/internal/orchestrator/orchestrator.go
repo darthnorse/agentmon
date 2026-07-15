@@ -34,7 +34,11 @@ type GitHubAPI interface {
 type AgentAPI interface {
 	CreateSession(ctx context.Context, srv db.Server, target string, req shared.CreateSessionRequest) (shared.CreateSessionResponse, error)
 	DrainReports(ctx context.Context, srv db.Server, target, instance string, ack uint64) (shared.OrchestratorReportBatch, error)
-	KillSession(ctx context.Context, srv db.Server, target, name string) ([]shared.Usage, error)
+	// KillSession returns the agent's capture-then-kill usage snapshot along
+	// with CapturedAt — the AGENT's own clock at capture time (empty if the
+	// agent predates it or captured nothing) — which callers must prefer over
+	// the hub's own clock for the reap boundary (see killEpicSession).
+	KillSession(ctx context.Context, srv db.Server, target, name string) ([]shared.Usage, string, error)
 	TeardownWorktree(ctx context.Context, srv db.Server, target, workdir, branch string) error
 	Sessions(ctx context.Context, srv db.Server, target string) ([]shared.Session, error)
 }
@@ -196,7 +200,7 @@ func (o *Orchestrator) retryRetire(ctx context.Context) {
 		}
 		kept := names[:0]
 		for _, name := range names {
-			if _, err := o.d.Agents.KillSession(ctx, srv, target, name); err != nil && !errors.Is(err, registry.ErrNoSession) {
+			if _, _, err := o.d.Agents.KillSession(ctx, srv, target, name); err != nil && !errors.Is(err, registry.ErrNoSession) {
 				kept = append(kept, name)
 				continue
 			}
@@ -901,7 +905,7 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 	if !ok {
 		return false
 	}
-	usage, err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName)
+	usage, capturedAt, err := o.d.Agents.KillSession(ctx, srv, p.Target, e.SessionName)
 	if err != nil && !errors.Is(err, registry.ErrNoSession) {
 		// The runner may still be alive, sharing the epic's attempt-agnostic
 		// branch/worktree with its successor — queue the kill for per-tick
@@ -915,7 +919,17 @@ func (o *Orchestrator) killEpicSession(ctx context.Context, e db.Epic, phase str
 	// closing the wasted-cost tail of a merge/cancel/retry reap that would
 	// otherwise report nothing past the last stage report.
 	if len(usage) > 0 {
-		o.upsertUsage(ctx, p, e, shared.OrchestratorReport{Stage: shared.EpicStage(e.Stage), Ts: o.d.Now(), Usage: usage})
+		// Prefer the AGENT's own clock (capturedAt) over the hub's: stage-report
+		// boundaries are stamped on the agent (r.Ts), and in a multi-host fleet
+		// clock skew could otherwise sort the hub-clock reap BEFORE the last
+		// real report, misattributing the interval and silently dropping the
+		// terminal tail the reap exists to capture. Fall back to the hub clock
+		// only for an agent that predates CapturedAt (mixed fleet).
+		ts := capturedAt
+		if ts == "" {
+			ts = o.d.Now()
+		}
+		o.upsertUsage(ctx, p, e, shared.OrchestratorReport{Stage: shared.EpicStage(e.Stage), Ts: ts, Usage: usage})
 	}
 	return true
 }
