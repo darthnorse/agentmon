@@ -86,7 +86,12 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 			add("claude epic-pipeline skill", statFile(filepath.Join(h, ".claude", "commands", "epic-pipeline.md")))
 		}
 		if codexBin {
-			add("codex epic-pipeline prompt", statFile(filepath.Join(h, ".codex", "prompts", "epic-pipeline.md")))
+			// ~/.codex/skills/<name>/SKILL.md — NOT ~/.codex/prompts, which
+			// codex-cli does not read (0.144.3 rejects /epic-pipeline outright).
+			// This check pointed at the dead path, so it reported the runner
+			// healthy while it was unloadable: the preflight was itself the
+			// misconfiguration it exists to catch.
+			add("codex epic-pipeline skill", statFile(filepath.Join(h, ".codex", "skills", "epic-pipeline", "SKILL.md")))
 			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), run))
 			if _, herr := os.Stat(filepath.Join(h, ".codex", "hooks.json")); herr == nil {
 				add("codex hooks trust", checkCodexHooksTrust(filepath.Join(h, ".codex")))

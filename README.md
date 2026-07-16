@@ -303,8 +303,12 @@ session_dirs = ["/home/dev/projects", "/srv/work"]
 
 **Runner CLI (orchestrator hosts).** The installer symlinks `agentmon` →
 `agentmon-agent` and installs the runner skills into the run user's
-`~/.claude/commands/` (`epic-pipeline`, `plan-epics`) and `~/.codex/prompts/`
-(`epic-pipeline`). Inside a monitored session:
+`~/.claude/commands/` (`epic-pipeline`, `plan-epics`) and
+`~/.codex/skills/<name>/SKILL.md` (`epic-pipeline`, `plan-epics`). The two hosts
+use different mechanisms: Claude Code loads slash commands from
+`~/.claude/commands/`, while Codex loads skills from `~/.codex/skills/` and does
+**not** read `~/.codex/prompts/` (verified on codex-cli 0.144.3). Inside a
+monitored session:
 
 ```bash
 agentmon report --epic 16 --stage implementing   # runner stage reports

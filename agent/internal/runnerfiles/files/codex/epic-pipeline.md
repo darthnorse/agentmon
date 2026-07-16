@@ -1,3 +1,8 @@
+---
+name: epic-pipeline
+description: Autonomous runner for ONE AgentMon epic issue — plan, implement, checkpoint-review, and open a PR, reporting each stage to the orchestrator. Use when asked to run epic-pipeline for an issue number, or to work an AgentMon epic end-to-end unattended.
+---
+
 # epic-pipeline — autonomous AgentMon epic runner (Codex)
 
 You are the autonomous RUNNER for GitHub epic issue **#$1** in this repository

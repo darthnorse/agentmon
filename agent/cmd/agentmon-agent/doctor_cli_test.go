@@ -53,9 +53,12 @@ func seedSkills(t *testing.T, home string, claude, codex bool) {
 		_ = os.WriteFile(filepath.Join(p, "epic-pipeline.md"), []byte("skill"), 0o644)
 	}
 	if codex {
-		p := filepath.Join(home, ".codex", "prompts")
+		// ~/.codex/skills/<name>/SKILL.md is the only layout codex-cli loads;
+		// this fixture used to build ~/.codex/prompts, which encoded the very
+		// misconfiguration the doctor is supposed to catch.
+		p := filepath.Join(home, ".codex", "skills", "epic-pipeline")
 		_ = os.MkdirAll(p, 0o755)
-		_ = os.WriteFile(filepath.Join(p, "epic-pipeline.md"), []byte("playbook"), 0o644)
+		_ = os.WriteFile(filepath.Join(p, "SKILL.md"), []byte("playbook"), 0o644)
 		_ = os.WriteFile(filepath.Join(home, ".codex", "config.toml"),
 			[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"\"]\nnetwork_access = true\n"), 0o644)
 	}

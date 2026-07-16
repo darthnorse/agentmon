@@ -1,3 +1,8 @@
+---
+name: plan-epics
+description: Interactive session with a human to decompose a PRD, phase, or feature cluster into orchestrator-ready AgentMon epics and import them as GitHub issues. Use when asked to run plan-epics, or to break a PRD or phase into epics.
+---
+
 # plan-epics — interactive PRD/phase to epic decomposition (Codex)
 
 You are running `/plan-epics`: an INTERACTIVE working session with a human to
