@@ -157,6 +157,8 @@ Then `cd` there and STAY there for everything that follows.
    code while a fix is still one edit. If `claude` is on PATH, pipe it the
    committed plan:
    `timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-N.md)"`
+   Exit 124 (timed out) → treat as unavailable, exactly as if `claude` were
+   not on PATH: fall through to self-review. Do NOT retry the call.
    No claude → run your own review in a fresh context with the same brief.
    Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
    verify each finding against the repo (empirically when cheap) before
