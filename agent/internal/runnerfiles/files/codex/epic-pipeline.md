@@ -1,3 +1,8 @@
+---
+name: epic-pipeline
+description: Autonomous runner for ONE AgentMon epic issue — plan, implement, checkpoint-review, and open a PR, reporting each stage to the orchestrator. Use when asked to run epic-pipeline for an issue number, or to work an AgentMon epic end-to-end unattended.
+---
+
 # epic-pipeline — autonomous AgentMon epic runner (Codex)
 
 You are the autonomous RUNNER for GitHub epic issue **#$1** in this repository
@@ -156,7 +161,9 @@ Then `cd` there and STAY there for everything that follows.
    their transcription, are where defects originate; review the plan like
    code while a fix is still one edit. If `claude` is on PATH, pipe it the
    committed plan:
-   `IS_SANDBOX=1 claude --dangerously-skip-permissions -p "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-N.md)"`
+   `timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-N.md)"`
+   Exit 124 (timed out) → treat as unavailable, exactly as if `claude` were
+   not on PATH: fall through to self-review. Do NOT retry the call.
    No claude → run your own review in a fresh context with the same brief.
    Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
    verify each finding against the repo (empirically when cheap) before
@@ -199,8 +206,16 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    substituting the range; it typically takes several minutes):
 
    ```
-   IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <segment-base>..HEAD" > docs/reviews/epic-N-cp<K>.md
+   timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <segment-base>..HEAD" > docs/reviews/epic-N-cp<K>.md
    ```
+
+   The review is bounded at **20 minutes** (`timeout 1200`). Exit **124** means the review
+   TIMED OUT — escalate with the explicit reason "review timed out after 20m", which is
+   distinct from a review that ran and failed. Do NOT retry a timeout in place and do NOT
+   open a PR without review evidence: a timed-out review produces no evidence, so the
+   fail-closed escalation is correct. (Bound rationale: a full `/multi-review` is ~10 min of
+   fixed cost, so 20m is ~2x headroom. A very large epic diff could legitimately exceed it
+   and be killed mid-review; if that happens in practice, raise this one number.)
 
    The reviewer dispatches independent lenses, applies + COMMITS every
    validated FIX itself (with regression tests), and writes the consolidated
@@ -237,7 +252,7 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    review with `<merge-base>` = `git merge-base HEAD origin/<base>`:
 
    ```
-   IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <merge-base>..HEAD" > docs/reviews/epic-N-final.md
+   timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <merge-base>..HEAD" > docs/reviews/epic-N-final.md
    ```
 
    **Commit the report first** (`docs/reviews/epic-N-final.md`), then apply
@@ -326,4 +341,4 @@ worktree, stage reports, escalation, ONE full pre-PR headless review over
 | blocked / DISCUSS | commit + push the epic branch, then `agentmon report --epic N --stage escalated --branch <branch> --note "…"` |
 | plan-gate (pause after planning) | push branch, then `agentmon report … --stage escalated --branch <branch> --note "plan-gate: …"` — see Step 4 |
 | report CLI broken during escalation | `gh issue comment N --body "ESCALATED: …"` |
-| cross-provider review | `IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md` |
+| cross-provider review | `timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md` |
