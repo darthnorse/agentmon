@@ -134,3 +134,19 @@ func TestInstallSkillsReplacesSymlinkDestination(t *testing.T) {
 		t.Fatalf("symlink target was clobbered: %q", got)
 	}
 }
+
+// The runner is told to put worktrees in $HOME/worktrees and CANNOT create that
+// directory itself — a sandboxed agent has no write access to $HOME (which is
+// precisely why worktrees are not siblings of the clone any more). If the
+// installer stops creating it, every epic fails at Step 3 with a message about
+// a path that "should" exist.
+func TestInstallSkillsCreatesWorktreeRoot(t *testing.T) {
+	home := t.TempDir()
+	if _, err := InstallSkills(home); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(home, "worktrees"))
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("$HOME/worktrees must exist and be a directory: %v", err)
+	}
+}

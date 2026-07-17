@@ -77,7 +77,7 @@ otherwise guess.
 4. Derive: base branch (the repo default via `gh repo view --json defaultBranchRef`),
    repo name, and your naming set:
    - slug: lowercase alnum-dash from the issue title, ≤4 words
-   - branch `epic/$ARGUMENTS-<slug>`, worktree `../<repo>-epic-$ARGUMENTS`
+   - branch `epic/$ARGUMENTS-<slug>`, worktree `$HOME/worktrees/<repo>-epic-$ARGUMENTS`
    - plan `docs/plans/epic-$ARGUMENTS.md`, reviews `docs/reviews/epic-$ARGUMENTS-*.md`
 
 ## Step 2: Assess artifacts — ALWAYS (this is also the resume path)
@@ -91,7 +91,7 @@ a retry, a crash re-kick, and a first run all start HERE.
    checkboxes are ticked? What do `git log` task commits show?
 2. **Nothing found** → fresh start: continue with Step 3.
 3. **Artifacts found** → resume: recreate whatever half is missing (worktree
-   for an existing branch: `git worktree add ../<repo>-epic-$ARGUMENTS epic/$ARGUMENTS-<slug>`),
+   for an existing branch: `git worktree add "$HOME/worktrees/<repo>-epic-$ARGUMENTS" epic/$ARGUMENTS-<slug>`),
    reconcile plan ticks against actual commits (the commits are the truth;
    fix the ticks), report the stage you are re-entering, and continue from
    the first unticked step. A canceled attempt's leftover branch resumes the
@@ -101,7 +101,7 @@ a retry, a crash re-kick, and a first run all start HERE.
 
 ## Step 3: Worktree
 
-From the main clone: `git worktree add ../<repo>-epic-$ARGUMENTS -b epic/$ARGUMENTS-<slug> origin/<base>`
+From the main clone: `git worktree add "$HOME/worktrees/<repo>-epic-$ARGUMENTS" -b epic/$ARGUMENTS-<slug> origin/<base>`
 Then `cd` there and STAY there for everything that follows. (Worktrees keep
 the main clone clean for humans and other runners; `../` keeps them out of
 the repo tree.)
