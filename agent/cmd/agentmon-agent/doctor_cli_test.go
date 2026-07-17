@@ -59,8 +59,10 @@ func seedSkills(t *testing.T, home string, claude, codex bool) {
 		p := filepath.Join(home, ".codex", "skills", "epic-pipeline")
 		_ = os.MkdirAll(p, 0o755)
 		_ = os.WriteFile(filepath.Join(p, "SKILL.md"), []byte("playbook"), 0o644)
+		// A healthy host grants BOTH the clone's .git (branches/commits) and
+		// $HOME/worktrees (where every epic worktree is created).
 		_ = os.WriteFile(filepath.Join(home, ".codex", "config.toml"),
-			[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"\"]\nnetwork_access = true\n"), 0o644)
+			[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"\", \""+filepath.Join(home, "worktrees")+"\"]\nnetwork_access = true\n"), 0o644)
 	}
 }
 
@@ -265,13 +267,41 @@ func TestDoctorCodexRepoRootWritableRootFails(t *testing.T) {
 	}
 }
 
+func TestDoctorCodexWorktreeRootMissingFails(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true)
+	// The clone's .git is writable but $HOME/worktrees is NOT. Every epic
+	// worktree is created under $HOME/worktrees, so this host cannot run a
+	// single codex epic — `git worktree add` dies with "Read-only file
+	// system". This exact config shipped fleet-wide and the doctor reported
+	// the sandbox green, which is how it stayed invisible.
+	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"),
+		[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"\"]\nnetwork_access = true\n"), 0o644)
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err == nil || !strings.Contains(out.String(), filepath.Join(h, "worktrees")) {
+		t.Fatalf("missing worktree root must fail and name the path: err=%v out:\n%s", err, out.String())
+	}
+}
+
+func TestDoctorCodexWorktreeRootPresentPasses(t *testing.T) {
+	run, look, home, h := doctorEnv(t, []string{"codex"})
+	seedSkills(t, h, false, true) // seeds .git + $HOME/worktrees
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	if err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home); err != nil {
+		t.Fatalf("both roots present must pass: %v\n%s", err, out.String())
+	}
+}
+
 func TestDoctorCodexUncleanWritableRootPasses(t *testing.T) {
 	run, look, home, h := doctorEnv(t, []string{"codex"})
 	seedSkills(t, h, false, true)
 	// A trailing slash is still the same directory; exact string equality
-	// used to false-fail this.
+	// used to false-fail this. Both required roots carry one here.
 	_ = os.WriteFile(filepath.Join(h, ".codex", "config.toml"),
-		[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"/\"]\nnetwork_access = true\n"), 0o644)
+		[]byte("[sandbox_workspace_write]\nwritable_roots = [\""+filepath.Join(mustGetwd(t), ".git")+"/\", \""+filepath.Join(h, "worktrees")+"/\"]\nnetwork_access = true\n"), 0o644)
 	cfgPath := doctorReporterOK(t)
 	var out bytes.Buffer
 	if err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home); err != nil {

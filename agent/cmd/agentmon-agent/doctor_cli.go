@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"agentmon/agent/internal/runnerfiles"
+
 	"github.com/BurntSushi/toml"
 )
 
@@ -92,7 +94,7 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 			// healthy while it was unloadable: the preflight was itself the
 			// misconfiguration it exists to catch.
 			add("codex epic-pipeline skill", statFile(filepath.Join(h, ".codex", "skills", "epic-pipeline", "SKILL.md")))
-			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), run))
+			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), h, run))
 			if _, herr := os.Stat(filepath.Join(h, ".codex", "hooks.json")); herr == nil {
 				add("codex hooks trust", checkCodexHooksTrust(filepath.Join(h, ".codex")))
 			} else if !errors.Is(herr, os.ErrNotExist) {
@@ -175,7 +177,7 @@ func checkCodexHooksTrust(codexDir string) error {
 	return notTrusted
 }
 
-func checkCodexConfig(path string, run cmdRunner) error {
+func checkCodexConfig(path, home string, run cmdRunner) error {
 	var c codexConfig
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
@@ -203,10 +205,29 @@ func checkCodexConfig(path string, run cmdRunner) error {
 		return fmt.Errorf("%s: cannot resolve the clone's git dir (run the doctor from the project workdir): %w", path, err)
 	}
 	gitDir := filepath.Clean(strings.TrimSpace(out))
-	for _, root := range c.SandboxWorkspaceWrite.WritableRoots {
-		if filepath.Clean(root) == gitDir {
-			return nil
+	// Every epic worktree is created under $HOME/worktrees. The installer
+	// creates that directory, but creating it does not make it WRITABLE inside
+	// codex's sandbox — only an explicit writable root does. Without it the
+	// runner's first `git worktree add` dies with "Read-only file system" while
+	// every other check here reports green, so the host looks healthy and no
+	// codex epic can start. Both roots are required; neither substitutes.
+	needed := []string{gitDir, filepath.Clean(filepath.Join(home, runnerfiles.WorktreeRoot))}
+	var missing []string
+	for _, want := range needed {
+		found := false
+		for _, root := range c.SandboxWorkspaceWrite.WritableRoots {
+			if filepath.Clean(root) == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, want)
 		}
 	}
-	return fmt.Errorf("%s: writable_roots must include %s (else no branches/commits)", path, gitDir)
+	if len(missing) > 0 {
+		return fmt.Errorf("%s: writable_roots must include %s (%s is needed for branches/commits; %s is where every epic worktree is created)",
+			path, strings.Join(missing, " and "), gitDir, filepath.Join(home, runnerfiles.WorktreeRoot))
+	}
+	return nil
 }

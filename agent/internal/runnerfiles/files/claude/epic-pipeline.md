@@ -139,7 +139,8 @@ the repo tree.)
      hitting it at a checkpoint.
    - **`CHECKPOINT` steps — sized to the epic; default NONE.** Step 7's final
      review already covers the WHOLE branch, so an intermediate checkpoint only
-     earns its cost (a full `/multi-review` — ~10 min, 5 lens subagents) when
+     earns its cost (a full `/multi-review` — ~15 min, 5 lens subagents;
+     measured 14m50s on an 11-line diff 2026-07-16, so that is the floor) when
      reviewing IN STAGES stops drift compounding across MANY tasks. So a plan of
      **≤5 tasks gets NO intermediate checkpoints** — the final review catches it
      (reviewing a 1–2-task segment pays the full review cost for a tiny diff, the
@@ -156,7 +157,14 @@ the repo tree.)
    committed plan on STDIN with `-` as the prompt arg (NOT as a quoted
    argument: passing the prompt as an argument while stdin is attached makes
    `codex exec` hang waiting for EOF):
-   `{ printf '%s\n\n' "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN follows:"; cat docs/plans/epic-$ARGUMENTS.md; } | codex exec --skip-git-repo-check -`
+   `{ printf '%s\n\n' "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN follows:"; cat docs/plans/epic-$ARGUMENTS.md; } | timeout 1200 codex exec --skip-git-repo-check -`
+   The **`timeout 1200` is required, not defensive** — a hung `codex` never
+   fails, it blocks forever, and it would take this epic with it (no output,
+   no stall signal, just a runner sitting there until its stage timeout).
+   Exit **124** means the plan review TIMED OUT: escalate with the explicit
+   reason "plan review timed out after 20m" — do NOT retry it in place and do
+   NOT proceed to implementation on an unreviewed plan. This mirrors the bound
+   on the Codex runner's review calls; the two playbooks must not drift.
    No codex → dispatch a fresh-context subagent with the same brief.
    Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
    verify each finding against the repo (empirically when cheap) before
@@ -264,7 +272,7 @@ At every `CHECKPOINT` step in the plan:
    ```yaml
    agentmon-verdict: v1
    epic: $ARGUMENTS
-   reviews: [specialist, simplifier, deep-scan, codex, cross-model]
+   reviews: [specialist, simplifier, deep-scan, security, codex, cross-model]
    findings: { found: <total across final review>, resolved: <fixed>, unresolved: <count> }
    unresolved:
      - "<each unresolved/DISCUSS item, verbatim>"
@@ -275,9 +283,11 @@ At every `CHECKPOINT` step in the plan:
    learnings_updated: true
    ```
 
-   Verdict rules: `reviews` lists each lens that actually ran, plus
-   `cross-model` when at least one reviewing model differs from the model
-   that wrote the code (with `--codex` it does). `findings` counts come from
+   Verdict rules: `reviews` lists each lens that ACTUALLY RAN — read the
+   roster line of the review report and copy it; the list above is a template,
+   not the answer, and a lens missing from it is not a lens that did not run.
+   Then add `cross-model` when at least one reviewing model differs from the
+   model that wrote the code (with `--codex` it does). `findings` counts come from
    the FINAL review only (checkpoint evidence lives in the committed report
    files). Count every DISCUSS item you escalated as unresolved. NEVER round
    `failed` down to zero. Include exactly one requirement entry per platform

@@ -48,13 +48,20 @@ var staleCodexPrompts = []string{
 	filepath.Join(".codex", "prompts", "plan-epics.md"),
 }
 
-// worktreeRoot is the shared parent for every epic worktree. The runner cannot
-// create it: a sandboxed agent has no write access to $HOME, which is the whole
-// reason worktrees moved here. Sibling worktrees (../<repo>-epic-N) would have
-// required $HOME itself to be writable — and $HOME holds ~/.ssh,
-// ~/.codex/config.toml (the sandbox's own bounds) and ~/.claude/settings.json
-// (hooks that execute OUTSIDE the sandbox). One narrow grant instead.
-const worktreeRoot = "worktrees"
+// WorktreeRoot is the shared parent for every epic worktree, relative to $HOME.
+// The runner cannot create it: a sandboxed agent has no write access to $HOME,
+// which is the whole reason worktrees moved here. Sibling worktrees
+// (../<repo>-epic-N) would have required $HOME itself to be writable — and $HOME
+// holds ~/.ssh, ~/.codex/config.toml (the sandbox's own bounds) and
+// ~/.claude/settings.json (hooks that execute OUTSIDE the sandbox). One narrow
+// grant instead.
+//
+// Exported because the doctor must assert that a codex host grants this exact
+// path in writable_roots. Creating the directory is NOT enough: codex's sandbox
+// makes it read-only unless it is an explicit writable root, so `git worktree
+// add` dies with "Read-only file system" while every other check reports green.
+// Two definitions of this path would drift; there is deliberately only one.
+const WorktreeRoot = "worktrees"
 
 // InstallSkills writes every embedded skill under home (0755 dirs, 0644 files
 // — they are prompts, not secrets) and returns the written paths.
@@ -65,7 +72,7 @@ func InstallSkills(home string) ([]string, error) {
 		return nil, fmt.Errorf("home directory is required")
 	}
 	// Create the worktree root before the skills that reference it.
-	if err := os.MkdirAll(filepath.Join(home, worktreeRoot), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, WorktreeRoot), 0o755); err != nil {
 		return nil, fmt.Errorf("worktree root: %w", err)
 	}
 	var written []string
