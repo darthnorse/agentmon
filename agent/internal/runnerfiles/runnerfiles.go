@@ -48,6 +48,14 @@ var staleCodexPrompts = []string{
 	filepath.Join(".codex", "prompts", "plan-epics.md"),
 }
 
+// worktreeRoot is the shared parent for every epic worktree. The runner cannot
+// create it: a sandboxed agent has no write access to $HOME, which is the whole
+// reason worktrees moved here. Sibling worktrees (../<repo>-epic-N) would have
+// required $HOME itself to be writable — and $HOME holds ~/.ssh,
+// ~/.codex/config.toml (the sandbox's own bounds) and ~/.claude/settings.json
+// (hooks that execute OUTSIDE the sandbox). One narrow grant instead.
+const worktreeRoot = "worktrees"
+
 // InstallSkills writes every embedded skill under home (0755 dirs, 0644 files
 // — they are prompts, not secrets) and returns the written paths.
 // Unconditional for both providers: a file for an absent provider is harmless
@@ -55,6 +63,10 @@ var staleCodexPrompts = []string{
 func InstallSkills(home string) ([]string, error) {
 	if home == "" {
 		return nil, fmt.Errorf("home directory is required")
+	}
+	// Create the worktree root before the skills that reference it.
+	if err := os.MkdirAll(filepath.Join(home, worktreeRoot), 0o755); err != nil {
+		return nil, fmt.Errorf("worktree root: %w", err)
 	}
 	var written []string
 	for _, in := range installs {

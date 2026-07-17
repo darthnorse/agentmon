@@ -87,7 +87,7 @@ otherwise guess. Refer to the issue number as N throughout.
 4. Derive: base branch (`gh repo view --json defaultBranchRef`), repo name,
    and your naming set:
    - slug: lowercase alnum-dash from the issue title, ≤4 words
-   - branch `epic/N-<slug>`, worktree `../<repo>-epic-N`
+   - branch `epic/N-<slug>`, worktree `$HOME/worktrees/<repo>-epic-N`
    - plan `docs/plans/epic-N.md`, reviews `docs/reviews/epic-N-*.md`
 
 ## Step 2: Assess artifacts — ALWAYS (this is also the resume path)
@@ -101,7 +101,7 @@ a retry, a crash re-kick, and a first run all start HERE.
    `git log` task commits show?
 2. **Nothing found** → fresh start: continue with Step 3.
 3. **Artifacts found** → resume: recreate whatever half is missing (worktree
-   for an existing branch: `git worktree add ../<repo>-epic-N epic/N-<slug>`),
+   for an existing branch: `git worktree add "$HOME/worktrees/<repo>-epic-N" epic/N-<slug>`),
    reconcile plan ticks against actual commits (the commits are the truth;
    fix the ticks), report the stage you are re-entering, and continue from
    the first unticked step. A canceled attempt's leftover branch resumes the
@@ -111,8 +111,17 @@ a retry, a crash re-kick, and a first run all start HERE.
 
 ## Step 3: Worktree
 
-From the main clone: `git worktree add ../<repo>-epic-N -b epic/N-<slug> origin/<base>`
+From the main clone, create the worktree under the shared worktree root:
+`git worktree add "$HOME/worktrees/<repo>-epic-N" -b epic/N-<slug> origin/<base>`
 Then `cd` there and STAY there for everything that follows.
+
+Why `$HOME/worktrees` and not a sibling of the clone (`../<repo>-epic-N`): a
+sibling lands in the clone's PARENT, so the sandbox would need that parent
+writable — for repos in `$HOME` that means all of `$HOME`, which includes
+`~/.ssh`, `~/.codex/config.toml` (the sandbox's own bounds) and
+`~/.claude/settings.json` (hooks that run OUTSIDE the sandbox). One dedicated
+worktree root keeps the grant narrow. The directory is created by the agent
+installer, not here — you may not be able to create it yourself.
 
 ## Step 4: Plan (report `planning`)
 
