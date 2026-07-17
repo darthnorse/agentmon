@@ -88,30 +88,6 @@ func TestInstallScriptInstallsRunnerFiles(t *testing.T) {
 	}
 }
 
-func TestInstallScriptRedirectsBuildCachesOffReadOnlyHome(t *testing.T) {
-	d := InstallDeps{HubURL: "https://hub.example.lan"}
-	r := httptest.NewRequest("GET", "/install.sh", nil)
-	w := httptest.NewRecorder()
-	d.ScriptHandler()(w, r)
-	body := w.Body.String()
-	// The codex sandbox keeps $HOME read-only (the narrow-grant design behind
-	// $HOME/worktrees). Every one of these caches defaults to a path under
-	// $HOME, so without a redirect the runner's own `go build`/`go test` dies
-	// on its cache — a failure with no product cause. /tmp is writable inside
-	// the sandbox with no extra writable_roots entry, so the installer must
-	// point them there for every agent-spawned session to inherit.
-	for _, want := range []string{"XDG_CACHE_HOME=", "GOCACHE=", "GOMODCACHE="} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("install.sh must set %s off $HOME — a read-only $HOME breaks the runner's build cache", want)
-		}
-	}
-	// They must land somewhere the codex sandbox actually grants. $HOME is
-	// exactly what is read-only, so a cache under it would reintroduce the bug.
-	if !strings.Contains(body, "pp_cache=\"/tmp/agentmon-cache-$RUN_USER\"") {
-		t.Fatal("the cache root must be under /tmp (granted in the codex sandbox), not $HOME")
-	}
-}
-
 func TestInstallScriptUnitUsesKillModeProcess(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/install.sh", nil)

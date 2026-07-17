@@ -272,7 +272,7 @@ func TestCheckGitCredentialHelperStoreFails(t *testing.T) {
 	// file beside it. $HOME is read-only inside the codex sandbox, so every
 	// runner fetch on a private repo dies — while the doctor's own fetch check
 	// passes, because it runs outside the sandbox.
-	run := func(_ string, _ string, _ ...string) (string, error) { return "store\n", nil }
+	run := func(_ string, _ string, _ ...string) (string, error) { return "credential.helper store\n", nil }
 	err := checkGitCredentialHelper(run)
 	if err == nil || !strings.Contains(err.Error(), "gh auth git-credential") {
 		t.Fatalf("credential.helper=store must fail and name the fix: %v", err)
@@ -281,7 +281,7 @@ func TestCheckGitCredentialHelperStoreFails(t *testing.T) {
 
 func TestCheckGitCredentialHelperGhPasses(t *testing.T) {
 	run := func(_ string, _ string, _ ...string) (string, error) {
-		return "!gh auth git-credential\n", nil
+		return "credential.helper !gh auth git-credential\n", nil
 	}
 	if err := checkGitCredentialHelper(run); err != nil {
 		t.Fatalf("a gh-based helper writes nothing under $HOME and must pass: %v", err)
@@ -302,10 +302,62 @@ func TestCheckGitCredentialHelperUnsetPasses(t *testing.T) {
 func TestCheckGitCredentialHelperStoreAmongMultipleFails(t *testing.T) {
 	// git allows several helpers; one bad one is enough to break the fetch.
 	run := func(_ string, _ string, _ ...string) (string, error) {
-		return "!gh auth git-credential\nstore\n", nil
+		return "credential.helper !gh auth git-credential\ncredential.helper store\n", nil
 	}
 	if err := checkGitCredentialHelper(run); err == nil {
 		t.Fatal("a store helper listed after a good one must still fail")
+	}
+}
+
+func TestCheckGitCredentialHelperWithArgumentsFails(t *testing.T) {
+	// git returns helper values verbatim, arguments included — and these are
+	// the spellings git's OWN docs tell users to configure. An exact-string
+	// compare passes them, i.e. misses the documented form of the very defect
+	// this check exists to catch. `cache` is essentially always written with
+	// --timeout, so that arm was dead in practice.
+	for _, helper := range []string{
+		"cache --timeout=3600",
+		"store --file=/root/.git-credentials",
+		"/usr/lib/git-core/git-credential-store",
+	} {
+		run := func(_ string, _ string, _ ...string) (string, error) { return "credential.helper " + helper + "\n", nil }
+		if err := checkGitCredentialHelper(run); err == nil {
+			t.Fatalf("helper %q writes under $HOME and must fail", helper)
+		}
+	}
+}
+
+func TestCheckGitCredentialHelperURLScopedFails(t *testing.T) {
+	// Helpers can be URL-scoped. `--get-all credential.helper` does not return
+	// these, so the host could configure the exact defect per-remote and pass
+	// the check while every fetch still died.
+	run := func(_ string, _ string, _ ...string) (string, error) {
+		return "credential.https://github.com.helper store\n", nil
+	}
+	if err := checkGitCredentialHelper(run); err == nil {
+		t.Fatal("a URL-scoped store helper writes under $HOME and must fail")
+	}
+}
+
+func TestDoctorClaudeOnlyHostWithStoreHelperPasses(t *testing.T) {
+	// A claude-only host has NO codex sandbox, so $HOME is writable and `store`
+	// works fine there. Running the codex-sandbox credential check on it failed
+	// a healthy host and told the operator to fix a sandbox it does not run.
+	run, look, home, h := doctorEnv(t, []string{"claude"})
+	seedSkills(t, h, true, false)
+	runStore := func(dir string, name string, args ...string) (string, error) {
+		if name == "git" && len(args) > 1 && args[0] == "config" {
+			return "credential.helper store\n", nil
+		}
+		return run(dir, name, args...)
+	}
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	if err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, runStore, look, home); err != nil {
+		t.Fatalf("claude-only host with credential.helper=store must pass: %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "credential helper") {
+		t.Fatalf("the codex credential check must not run on a claude-only host:\n%s", out.String())
 	}
 }
 

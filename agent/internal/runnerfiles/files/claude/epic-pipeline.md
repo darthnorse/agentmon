@@ -161,10 +161,13 @@ the repo tree.)
    The **`timeout 1200` is required, not defensive** — a hung `codex` never
    fails, it blocks forever, and it would take this epic with it (no output,
    no stall signal, just a runner sitting there until its stage timeout).
-   Exit **124** means the plan review TIMED OUT: escalate with the explicit
-   reason "plan review timed out after 20m" — do NOT retry it in place and do
-   NOT proceed to implementation on an unreviewed plan. This mirrors the bound
-   on the Codex runner's review calls; the two playbooks must not drift.
+   Exit 124 (timed out) → treat as unavailable, exactly as if `codex` were not
+   on PATH: fall through to the fresh-context subagent review below. Do NOT
+   retry the call. (This mirrors the Codex playbook's rule for the same stage —
+   the plan review has a self-review fallback, so losing the cross-model
+   reviewer degrades the review rather than blocking the epic. Only the FINAL
+   review is fail-closed on 124, because a PR without review evidence is the
+   thing we refuse to ship.)
    No codex → dispatch a fresh-context subagent with the same brief.
    Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
    verify each finding against the repo (empirically when cheap) before

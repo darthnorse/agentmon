@@ -182,7 +182,7 @@ function HostChecklist({ provider }: { provider: string }) {
         <li>Clone the repo at the workdir and set a git identity.</li>
         <li>Install the provider CLI + AgentMon hooks (existing installer).</li>
         {provider === "codex" && (
-          <li>Codex: add the repo's <span className="font-mono">.git</span> to <span className="font-mono">writable_roots</span> and set <span className="font-mono">network_access = true</span> in <span className="font-mono">~/.codex/config.toml</span>; trust the hooks once interactively.</li>
+          <li>Codex: add the repo's <span className="font-mono">.git</span> <em>and</em> <span className="font-mono">~/worktrees</span> (where every epic worktree is created) to <span className="font-mono">writable_roots</span>, and set <span className="font-mono">network_access = true</span> in <span className="font-mono">~/.codex/config.toml</span>; trust the hooks once interactively.</li>
         )}
       </ol>
     </div>

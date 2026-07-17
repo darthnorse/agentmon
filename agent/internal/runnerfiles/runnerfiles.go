@@ -60,7 +60,14 @@ var staleCodexPrompts = []string{
 // path in writable_roots. Creating the directory is NOT enough: codex's sandbox
 // makes it read-only unless it is an explicit writable root, so `git worktree
 // add` dies with "Read-only file system" while every other check reports green.
-// Two definitions of this path would drift; there is deliberately only one.
+//
+// This is the only definition IN GO — the installer's mkdir and the doctor's
+// check both read it here. It is NOT the only occurrence: both embedded
+// playbooks spell `$HOME/worktrees` literally in the `git worktree add`
+// instructions they hand the runner, and prose cannot import a constant.
+// Changing this value therefore requires editing
+// files/{claude,codex}/epic-pipeline.md in the same commit, or the Go side and
+// the runner instructions point at different directories.
 const WorktreeRoot = "worktrees"
 
 // InstallSkills writes every embedded skill under home (0755 dirs, 0644 files
