@@ -163,11 +163,12 @@ the repo tree.)
    no stall signal, just a runner sitting there until its stage timeout).
    Exit 124 (timed out) → treat as unavailable, exactly as if `codex` were not
    on PATH: fall through to the fresh-context subagent review below. Do NOT
-   retry the call. (This mirrors the Codex playbook's rule for the same stage —
-   the plan review has a self-review fallback, so losing the cross-model
-   reviewer degrades the review rather than blocking the epic. Only the FINAL
-   review is fail-closed on 124, because a PR without review evidence is the
-   thing we refuse to ship.)
+   retry the call. (This mirrors the Codex playbook's rule for THIS stage: the
+   plan review has a self-review fallback, so losing the cross-model reviewer
+   degrades the review rather than blocking the epic. The CHECKPOINT and FINAL
+   reviews are the opposite — they fail closed on 124 and escalate, because
+   they are the PR's review evidence and a timeout produces none. Do not
+   generalise either rule to the other stage.)
    No codex → dispatch a fresh-context subagent with the same brief.
    Findings are CLAIMS, not orders: reviewers carry stale tool knowledge, so
    verify each finding against the repo (empirically when cheap) before
