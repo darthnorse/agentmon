@@ -157,8 +157,8 @@ the repo tree.)
    committed plan on STDIN with `-` as the prompt arg (NOT as a quoted
    argument: passing the prompt as an argument while stdin is attached makes
    `codex exec` hang waiting for EOF):
-   `{ printf '%s\n\n' "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN follows:"; cat docs/plans/epic-$ARGUMENTS.md; } | timeout 1200 codex exec --skip-git-repo-check -`
-   The **`timeout 1200` is required, not defensive** — a hung `codex` never
+   `{ printf '%s\n\n' "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN follows:"; cat docs/plans/epic-$ARGUMENTS.md; } | timeout 1800 codex exec --skip-git-repo-check -`
+   The **`timeout 1800` is required, not defensive** — a hung `codex` never
    fails, it blocks forever, and it would take this epic with it (no output,
    no stall signal, just a runner sitting there until its stage timeout).
    Exit 124 (timed out) → treat as unavailable, exactly as if `codex` were not
