@@ -473,11 +473,19 @@ keeps `.git` read-only and blocks loopback networking — so runners can't commi
 network_access = true              # test + reporter processes bind 127.0.0.1
 writable_roots = [
   "/path/to/your/clone/.git",      # the workdir you registered, plus /.git
+  "/home/<run-user>/worktrees",    # where every epic worktree is created
 ]
 ```
 
 Codex keeps each writable root's *top-level* `.git` read-only, so listing the repo root isn't enough — the
-`.git` path itself must be in `writable_roots`. Re-run doctor after editing.
+`.git` path itself must be in `writable_roots`.
+
+**Both roots are required.** Runners create each epic's worktree under `$HOME/worktrees` (deliberately
+narrow: a sibling-of-the-clone worktree would need `$HOME` itself writable, and `$HOME` holds `~/.ssh`,
+`~/.codex/config.toml` — the sandbox's own bounds — and `~/.claude/settings.json`, whose hooks run
+*outside* the sandbox). The installer creates the directory, but creating it does not make it writable
+inside the sandbox: without the explicit root, the runner's first `git worktree add` dies with
+"Read-only file system" and **no codex epic can start**. Re-run doctor after editing — it checks for both.
 
 ---
 

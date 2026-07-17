@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"agentmon/agent/internal/runnerfiles"
+
 	"github.com/BurntSushi/toml"
 )
 
@@ -73,6 +75,14 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 	if _, err := look("codex"); err == nil {
 		codexBin = true
 		add("codex binary", nil)
+		// Codex-only, like every other sandbox check below: the read-only $HOME
+		// this guards against is the codex sandbox's, and a Claude host has no
+		// sandbox at all — `store` works fine there. Ungated, this failed a
+		// perfectly healthy claude-only host and told it to fix a sandbox it
+		// does not run. The `git fetch` check above cannot cover this: it runs
+		// OUTSIDE the sandbox, where $HOME is writable, so it stays green on a
+		// host where every sandboxed runner fetch dies.
+		add("codex git credential helper", checkGitCredentialHelper(run))
 	} else {
 		skip("codex binary", "not detected")
 	}
@@ -92,7 +102,7 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 			// healthy while it was unloadable: the preflight was itself the
 			// misconfiguration it exists to catch.
 			add("codex epic-pipeline skill", statFile(filepath.Join(h, ".codex", "skills", "epic-pipeline", "SKILL.md")))
-			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), run))
+			add("codex sandbox config", checkCodexConfig(filepath.Join(h, ".codex", "config.toml"), h, run))
 			if _, herr := os.Stat(filepath.Join(h, ".codex", "hooks.json")); herr == nil {
 				add("codex hooks trust", checkCodexHooksTrust(filepath.Join(h, ".codex")))
 			} else if !errors.Is(herr, os.ErrNotExist) {
@@ -175,7 +185,65 @@ func checkCodexHooksTrust(codexDir string) error {
 	return notTrusted
 }
 
-func checkCodexConfig(path string, run cmdRunner) error {
+// checkGitCredentialHelper rejects the git credential helpers that need to
+// WRITE under $HOME. The codex sandbox keeps $HOME read-only by design, and
+// `store` rewrites ~/.git-credentials (taking a lock file beside it) after every
+// successful auth, while `cache` needs a socket under ~/.cache. On a private
+// repo that means every `git fetch` inside a runner dies with:
+//
+//	fatal: unable to get credential storage lock in 1000 ms: Read-only file system
+//
+// The doctor's own `git fetch` check cannot catch this: it runs outside the
+// sandbox, where $HOME is writable, so it passes on a host where every codex
+// epic fails. Observed live 2026-07-16 — the runner improvised its way out with
+// `-c credential.helper='!gh auth git-credential'`, which is a model noticing,
+// not a mechanism.
+func checkGitCredentialHelper(run cmdRunner) error {
+	// --get-regexp, not --get-all: helpers can be URL-scoped
+	// (`credential.https://github.com.helper = store`), and the unscoped
+	// --get-all query does not return those — a host could configure the
+	// defect per-host and pass this check while every fetch still failed.
+	out, err := run(".", "git", "config", "--get-regexp", `^credential\..*helper$`)
+	if err != nil {
+		// No helper configured at all: nothing writes $HOME, so nothing to fix
+		// here. (git exits non-zero when nothing matches.)
+		return nil
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		// --get-regexp emits "<key> <value>"; the value is what we judge.
+		h := strings.TrimSpace(line)
+		if _, v, ok := strings.Cut(h, " "); ok {
+			h = strings.TrimSpace(v)
+		} else {
+			continue // key with no value resets earlier helpers; not a writer
+		}
+		fields := strings.Fields(h)
+		if len(fields) == 0 {
+			continue
+		}
+		// Match the helper's COMMAND WORD, not the whole line. git returns
+		// helper values verbatim, arguments and all, and the argument-bearing
+		// forms are the ones git's own docs tell people to write:
+		//   credential.helper = cache --timeout=3600
+		//   credential.helper = store --file=/path/to/.git-credentials
+		// An exact-string compare passes both — i.e. it misses the documented
+		// spelling of the very defect it exists to catch, and makes the `cache`
+		// arm dead in practice (cache is ~always configured with --timeout).
+		// `!`-prefixed values are shell expansions (e.g. `!gh auth
+		// git-credential`), which is the fix we recommend — never a match.
+		word := fields[0]
+		if strings.HasPrefix(word, "!") {
+			continue
+		}
+		switch strings.TrimPrefix(filepath.Base(word), "git-credential-") {
+		case "store", "cache":
+			return fmt.Errorf("credential.helper %q writes under $HOME, which is read-only inside the codex sandbox — runner fetches will fail with \"unable to get credential storage lock\" (fix: git config --global credential.helper '!gh auth git-credential')", h)
+		}
+	}
+	return nil
+}
+
+func checkCodexConfig(path, home string, run cmdRunner) error {
 	var c codexConfig
 	if _, err := toml.DecodeFile(path, &c); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
@@ -203,10 +271,32 @@ func checkCodexConfig(path string, run cmdRunner) error {
 		return fmt.Errorf("%s: cannot resolve the clone's git dir (run the doctor from the project workdir): %w", path, err)
 	}
 	gitDir := filepath.Clean(strings.TrimSpace(out))
+	// Every epic worktree is created under $HOME/worktrees. The installer
+	// creates that directory, but creating it does not make it WRITABLE inside
+	// codex's sandbox — only an explicit writable root does. Without it the
+	// runner's first `git worktree add` dies with "Read-only file system" while
+	// every other check here reports green, so the host looks healthy and no
+	// codex epic can start. Both roots are required; neither substitutes.
+	have := make(map[string]bool, len(c.SandboxWorkspaceWrite.WritableRoots))
 	for _, root := range c.SandboxWorkspaceWrite.WritableRoots {
-		if filepath.Clean(root) == gitDir {
-			return nil
+		have[filepath.Clean(root)] = true
+	}
+	// Name a reason per root and report only the ones actually missing —
+	// explaining a root that is already configured correctly reads as though it
+	// were also at fault, in the one message whose whole job is to make an
+	// invisible misconfiguration obvious.
+	needed := []struct{ path, why string }{
+		{gitDir, "needed for branches/commits"},
+		{filepath.Clean(filepath.Join(home, runnerfiles.WorktreeRoot)), "where every epic worktree is created"},
+	}
+	var missing []string
+	for _, n := range needed {
+		if !have[n.path] {
+			missing = append(missing, fmt.Sprintf("%s (%s)", n.path, n.why))
 		}
 	}
-	return fmt.Errorf("%s: writable_roots must include %s (else no branches/commits)", path, gitDir)
+	if len(missing) > 0 {
+		return fmt.Errorf("%s: writable_roots must include %s", path, strings.Join(missing, " and "))
+	}
+	return nil
 }

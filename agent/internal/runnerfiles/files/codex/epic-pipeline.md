@@ -156,7 +156,8 @@ installer, not here — you may not be able to create it yourself.
      hitting it at a checkpoint.
    - **`CHECKPOINT` steps — sized to the epic; default NONE.** Step 7's final
      review already covers the WHOLE branch, so an intermediate checkpoint only
-     earns its cost (a full `/multi-review` — ~10 min, 5 lens subagents) when
+     earns its cost (a full `/multi-review` — ~15 min, 5 lens subagents;
+     measured 14m50s on an 11-line diff 2026-07-16, so that is the floor) when
      reviewing IN STAGES stops drift compounding across MANY tasks. So a plan of
      **≤5 tasks gets NO intermediate checkpoints** — the final review catches it
      (reviewing a 1–2-task segment pays the full review cost for a tiny diff, the
@@ -170,7 +171,7 @@ installer, not here — you may not be able to create it yourself.
    their transcription, are where defects originate; review the plan like
    code while a fix is still one edit. If `claude` is on PATH, pipe it the
    committed plan:
-   `timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-N.md)"`
+   `timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "Review this implementation plan for repo $PWD. Treat every code snippet as near-final code: check signatures/fixtures against the repo's ACTUAL loaders and helpers, empirically verify external-tool invocations (tmux/gh/git flags, parsing) where feasible, and flag anything a stop-don't-improvise executor would stop on. Findings as a numbered list. PLAN: $(cat docs/plans/epic-N.md)"`
    Exit 124 (timed out) → treat as unavailable, exactly as if `claude` were
    not on PATH: fall through to self-review. Do NOT retry the call.
    No claude → run your own review in a fresh context with the same brief.
@@ -215,16 +216,21 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    substituting the range; it typically takes several minutes):
 
    ```
-   timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <segment-base>..HEAD" > docs/reviews/epic-N-cp<K>.md
+   timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <segment-base>..HEAD" > docs/reviews/epic-N-cp<K>.md
    ```
 
-   The review is bounded at **20 minutes** (`timeout 1200`). Exit **124** means the review
-   TIMED OUT — escalate with the explicit reason "review timed out after 20m", which is
+   The review is bounded at **30 minutes** (`timeout 1800`). Exit **124** means the review
+   TIMED OUT — escalate with the explicit reason "review timed out after 30m", which is
    distinct from a review that ran and failed. Do NOT retry a timeout in place and do NOT
    open a PR without review evidence: a timed-out review produces no evidence, so the
-   fail-closed escalation is correct. (Bound rationale: a full `/multi-review` is ~10 min of
-   fixed cost, so 20m is ~2x headroom. A very large epic diff could legitimately exceed it
-   and be killed mid-review; if that happens in practice, raise this one number.)
+   fail-closed escalation is correct. (Bound rationale, MEASURED 2026-07-16: a full
+   `/multi-review` took **14m50s on an 11-line diff** — that is the FLOOR, not the typical
+   cost. An earlier note here claimed "~10 min fixed cost, so 20m is ~2x headroom"; measurement
+   disproved it, and 20m was only ~1.35x the floor, so a real epic diff could be killed
+   mid-review. 30m is ~2x the measured floor. **NEVER pick this number from an estimate** —
+   that is exactly how `/multi-review`'s own cross-model lens ended up bounded at 600s, its
+   own median, killing about half its runs. If large epics start timing out routinely, raise
+   it and re-measure; never trim it.)
 
    The reviewer dispatches independent lenses, applies + COMMITS every
    validated FIX itself (with regression tests), and writes the consolidated
@@ -261,7 +267,7 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    review with `<merge-base>` = `git merge-base HEAD origin/<base>`:
 
    ```
-   timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <merge-base>..HEAD" > docs/reviews/epic-N-final.md
+   timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <merge-base>..HEAD" > docs/reviews/epic-N-final.md
    ```
 
    **Commit the report first** (`docs/reviews/epic-N-final.md`), then apply
@@ -299,7 +305,7 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    ```yaml
    agentmon-verdict: v1
    epic: N
-   reviews: [specialist, simplifier, deep-scan, cross-model]
+   reviews: [specialist, simplifier, deep-scan, security, cross-model]
    findings: { found: <total across final review>, resolved: <fixed>, unresolved: <count> }
    unresolved:
      - "<each unresolved/DISCUSS item, verbatim>"
@@ -310,9 +316,16 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    learnings_updated: true
    ```
 
-   Verdict rules: `reviews` lists each reviewer lens that actually ran, plus
-   `cross-model` — your reviewers are Claude lenses and you are Codex, so the
-   review IS cross-model. `findings` counts come from the FINAL review only
+   Verdict rules: `reviews` lists each reviewer lens that ACTUALLY RAN — read
+   the roster line of the review report and copy it; the list above is a
+   template, not the answer, and a lens missing from it is not a lens that did
+   not run. (It omitted `security` for months while the security lens ran on
+   every review, because copying the example is easier than reading the
+   report.) Then add `cross-model` — your reviewers are Claude lenses and you
+   are Codex, so the review IS cross-model. Note `cross-model` here means "the
+   reviewers are a different model than me"; it is NOT the same thing as
+   `/multi-review`'s own opt-in cross-model lens, which its report may
+   separately list as "not requested". `findings` counts come from the FINAL review only
    (checkpoint evidence lives in the committed report files). Count every
    DISCUSS item you escalated as unresolved. NEVER round `failed` down to
    zero. Include exactly one requirement entry per platform carrier record,
@@ -350,4 +363,4 @@ worktree, stage reports, escalation, ONE full pre-PR headless review over
 | blocked / DISCUSS | commit + push the epic branch, then `agentmon report --epic N --stage escalated --branch <branch> --note "…"` |
 | plan-gate (pause after planning) | push branch, then `agentmon report … --stage escalated --branch <branch> --note "plan-gate: …"` — see Step 4 |
 | report CLI broken during escalation | `gh issue comment N --body "ESCALATED: …"` |
-| cross-provider review | `timeout 1200 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md` |
+| cross-provider review | `timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md` |
