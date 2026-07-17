@@ -59,6 +59,10 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 	}
 	_, err = run(".", "git", "fetch", "origin", *base)
 	add("git fetch origin "+*base, err)
+	// NOTE: that fetch check runs OUTSIDE the codex sandbox, where $HOME is
+	// writable — so it passes on hosts where the sandboxed runner's fetch
+	// fails. This check covers the difference.
+	add("git credential helper", checkGitCredentialHelper(run))
 
 	_, err = postReport(*cfgPath, map[string]any{
 		"repo": "doctor/doctor", "epic": 1, "stage": "planning", "note": "doctor dry-run",
@@ -175,6 +179,35 @@ func checkCodexHooksTrust(codexDir string) error {
 		}
 	}
 	return notTrusted
+}
+
+// checkGitCredentialHelper rejects the git credential helpers that need to
+// WRITE under $HOME. The codex sandbox keeps $HOME read-only by design, and
+// `store` rewrites ~/.git-credentials (taking a lock file beside it) after every
+// successful auth, while `cache` needs a socket under ~/.cache. On a private
+// repo that means every `git fetch` inside a runner dies with:
+//
+//	fatal: unable to get credential storage lock in 1000 ms: Read-only file system
+//
+// The doctor's own `git fetch` check cannot catch this: it runs outside the
+// sandbox, where $HOME is writable, so it passes on a host where every codex
+// epic fails. Observed live 2026-07-16 — the runner improvised its way out with
+// `-c credential.helper='!gh auth git-credential'`, which is a model noticing,
+// not a mechanism.
+func checkGitCredentialHelper(run cmdRunner) error {
+	out, err := run(".", "git", "config", "--get-all", "credential.helper")
+	if err != nil {
+		// No helper configured at all: nothing writes $HOME, so nothing to fix
+		// here. (git exits non-zero when the key is unset.)
+		return nil
+	}
+	for _, h := range strings.Split(strings.TrimSpace(out), "\n") {
+		switch strings.TrimSpace(h) {
+		case "store", "cache":
+			return fmt.Errorf("credential.helper %q writes under $HOME, which is read-only inside the codex sandbox — runner fetches will fail with \"unable to get credential storage lock\" (fix: git config --global credential.helper '!gh auth git-credential')", strings.TrimSpace(h))
+		}
+	}
+	return nil
 }
 
 func checkCodexConfig(path, home string, run cmdRunner) error {

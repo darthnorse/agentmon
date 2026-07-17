@@ -267,6 +267,48 @@ func TestDoctorCodexRepoRootWritableRootFails(t *testing.T) {
 	}
 }
 
+func TestCheckGitCredentialHelperStoreFails(t *testing.T) {
+	// `store` rewrites ~/.git-credentials after every auth and needs a lock
+	// file beside it. $HOME is read-only inside the codex sandbox, so every
+	// runner fetch on a private repo dies — while the doctor's own fetch check
+	// passes, because it runs outside the sandbox.
+	run := func(_ string, _ string, _ ...string) (string, error) { return "store\n", nil }
+	err := checkGitCredentialHelper(run)
+	if err == nil || !strings.Contains(err.Error(), "gh auth git-credential") {
+		t.Fatalf("credential.helper=store must fail and name the fix: %v", err)
+	}
+}
+
+func TestCheckGitCredentialHelperGhPasses(t *testing.T) {
+	run := func(_ string, _ string, _ ...string) (string, error) {
+		return "!gh auth git-credential\n", nil
+	}
+	if err := checkGitCredentialHelper(run); err != nil {
+		t.Fatalf("a gh-based helper writes nothing under $HOME and must pass: %v", err)
+	}
+}
+
+func TestCheckGitCredentialHelperUnsetPasses(t *testing.T) {
+	// git exits non-zero when the key is unset — nothing writes $HOME, so
+	// there is nothing to fix.
+	run := func(_ string, _ string, _ ...string) (string, error) {
+		return "", errors.New("exit status 1")
+	}
+	if err := checkGitCredentialHelper(run); err != nil {
+		t.Fatalf("no helper configured must pass: %v", err)
+	}
+}
+
+func TestCheckGitCredentialHelperStoreAmongMultipleFails(t *testing.T) {
+	// git allows several helpers; one bad one is enough to break the fetch.
+	run := func(_ string, _ string, _ ...string) (string, error) {
+		return "!gh auth git-credential\nstore\n", nil
+	}
+	if err := checkGitCredentialHelper(run); err == nil {
+		t.Fatal("a store helper listed after a good one must still fail")
+	}
+}
+
 func TestDoctorCodexWorktreeRootMissingFails(t *testing.T) {
 	run, look, home, h := doctorEnv(t, []string{"codex"})
 	seedSkills(t, h, false, true)
