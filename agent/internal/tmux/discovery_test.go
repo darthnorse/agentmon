@@ -110,6 +110,18 @@ func TestDiscoverNonBenignConnectErrorSurfaces(t *testing.T) {
 	}
 }
 
+func TestDiscoverBenignPhraseOutsideReasonStillErrors(t *testing.T) {
+	// The benign phrases must be matched as tmux's PARENTHESIZED reason, not anywhere
+	// in the wrapped message. A socket name or echoed command carrying "No such file
+	// or directory" while the actual reason is non-benign ("(Permission denied)") must
+	// still surface as an error, not be masked as an empty session set.
+	msg := "tmux -L No such file or directory list-sessions: exit status 1: error connecting to /tmp/tmux-0/x (Permission denied)"
+	run := fakeRunner(t, "", nil, errors.New(msg))
+	if _, err := Discover(context.Background(), run, DiscoverOpts{ServerID: "srv", TargetLabel: "default"}); err == nil {
+		t.Fatal("a benign phrase outside the parenthesized reason must not mask a real (Permission denied) fault")
+	}
+}
+
 func TestDiscoverGroupsPanesIntoWindowsInOrder(t *testing.T) {
 	sessions := p("$1", "proj") + "\n"
 	panes := map[string]string{

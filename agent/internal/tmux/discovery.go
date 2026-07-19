@@ -170,9 +170,12 @@ func isNoServer(err error) bool {
 	if strings.Contains(msg, "no server running") {
 		return true
 	}
+	// Match the benign reason as tmux's parenthesized "(<reason>)" suffix, not a bare
+	// substring — a socket name or echoed command carrying "No such file or directory"
+	// must not mask a real "(Permission denied)" fault.
 	return strings.Contains(msg, "error connecting to") &&
-		(strings.Contains(msg, "No such file or directory") ||
-			strings.Contains(msg, "Connection refused"))
+		(strings.Contains(msg, "(No such file or directory)") ||
+			strings.Contains(msg, "(Connection refused)"))
 }
 
 func nonEmptyLines(b []byte) []string {
