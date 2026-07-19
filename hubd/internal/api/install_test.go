@@ -374,6 +374,44 @@ func TestInstallScriptRejectsUnknownHookMode(t *testing.T) {
 	}
 }
 
+func TestInstallScriptRequiresTmux(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	path := filepath.Join(t.TempDir(), "install.sh")
+	if err := os.WriteFile(path, w.Body.Bytes(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A host without tmux is the prism failure: the agent enrolls but every tmux
+	// operation 500s and the host looks installed-but-broken. tmux must be a hard
+	// prerequisite, refused up front like curl/systemd. Run with a PATH holding the
+	// earlier preflight tools (systemctl, curl) but NO tmux, so the installer must
+	// die at the tmux check before it touches anything.
+	stub := t.TempDir()
+	for _, name := range []string{"systemctl", "curl"} {
+		if err := os.WriteFile(filepath.Join(stub, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "PATH=") {
+			env = append(env, e)
+		}
+	}
+	env = append(env, "PATH="+stub)
+	cmd := exec.Command("bash", path, "--dry-run")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("install on a host without tmux must fail; output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "tmux is required") {
+		t.Fatalf("installer must die with a clear tmux-required message; got:\n%s", out)
+	}
+}
+
 func TestInstallScriptBashSyntax(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/install.sh", nil)
