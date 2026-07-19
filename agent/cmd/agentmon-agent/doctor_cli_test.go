@@ -126,6 +126,30 @@ func TestDoctorNoProvidersFails(t *testing.T) {
 	}
 }
 
+func TestDoctorProviderInstalledButNotOnPathHintsLocation(t *testing.T) {
+	run, look, home, h := doctorEnv(t, nil) // nothing resolves on PATH
+	// ...but claude IS installed in the run-user's ~/.local/bin — the native
+	// installer default, and the exact "installed but the agent's PATH can't see
+	// it" case. The failure must name the dir + PATH, not just say "not on PATH".
+	localBin := filepath.Join(h, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localBin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := doctorReporterOK(t)
+	var out bytes.Buffer
+	err := doctorRun([]string{"--config", cfgPath, "--repo", "o/r"}, &out, run, look, home)
+	if err == nil {
+		t.Fatal("a provider that isn't on the agent's PATH must still fail the doctor")
+	}
+	s := out.String()
+	if !strings.Contains(s, localBin) || !strings.Contains(s, "PATH") {
+		t.Fatalf("provider-binaries failure must point at %s and the agent's PATH; got:\n%s", localBin, s)
+	}
+}
+
 func TestDoctorCodexConfigChecked(t *testing.T) {
 	run, look, home, h := doctorEnv(t, []string{"codex"})
 	seedSkills(t, h, false, true)

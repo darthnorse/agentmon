@@ -79,7 +79,11 @@ func doctorRun(args []string, stdout io.Writer, run cmdRunner, look func(string)
 		skip("codex binary", "not detected")
 	}
 	if !claudeBin && !codexBin {
-		add("provider binaries", fmt.Errorf("neither claude nor codex on PATH"))
+		msg := "neither claude nor codex on PATH"
+		if hint := providerPathHint(home); hint != "" {
+			msg += "; " + hint
+		}
+		add("provider binaries", errors.New(msg))
 	}
 	if h, herr := home(); herr != nil {
 		add("home dir", herr)
@@ -129,6 +133,35 @@ func statFile(p string) error {
 		return fmt.Errorf("missing %s (run: agentmon install-skills)", p)
 	}
 	return nil
+}
+
+// providerPathHint upgrades a bare "not on PATH" into an actionable message when
+// a provider CLI is actually installed in the run-user's conventional tool dirs
+// but the agent's (systemd) PATH can't see it — the native-installer-into-
+// ~/.local/bin case that reads as "not detected" even though it's right there.
+// Returns "" when nothing is found (a genuinely absent provider).
+func providerPathHint(home func() (string, error)) string {
+	h, err := home()
+	if err != nil {
+		return ""
+	}
+	for _, dir := range []string{
+		filepath.Join(h, ".local", "bin"),
+		filepath.Join(h, "bin"),
+		filepath.Join(h, ".npm-global", "bin"),
+	} {
+		for _, bin := range []string{"claude", "codex"} {
+			if isExecutableFile(filepath.Join(dir, bin)) {
+				return fmt.Sprintf("%s is installed in %s but that dir is not on the agent's PATH — re-run the installer (it bakes the run-user's PATH into a drop-in) or add %s to the unit's PATH", bin, dir, dir)
+			}
+		}
+	}
+	return ""
+}
+
+func isExecutableFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0
 }
 
 // codexConfig is the subset of ~/.codex/config.toml the doctor validates
