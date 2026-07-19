@@ -145,6 +145,9 @@ func providerPathHint(home func() (string, error)) string {
 	if err != nil {
 		return ""
 	}
+	// Keep this dir list in sync with graft_provider_dirs in
+	// hubd/internal/api/install.sh.tmpl (the installer grafts these onto the agent's
+	// PATH; this hint tells the operator to do exactly that when they weren't grafted).
 	for _, dir := range []string{
 		filepath.Join(h, ".local", "bin"),
 		filepath.Join(h, "bin"),

@@ -3,11 +3,11 @@
 # AgentMon agent installer — served by the hub, templated with its own URL + checksums.
 # Re-running on a host that's already installed UPDATES the binary in place (keeps the
 # enrollment + config); a first run enrolls + installs the systemd unit. With Claude
-# Code or Codex present it offers to install state hooks.
+# Code or Codex present it installs state hooks by default (--no-hooks opts out).
 # Usage: sudo bash -c "$(curl -fsSL <hub>/install.sh)" [-- --hostname=H --user=U --socket=S --hooks[=claude|codex|all]|--no-hooks --dry-run]
-#   The bash -c "$(curl ...)" form keeps the script's stdin on your terminal, so the hooks Y/n prompt can
-#   read your answer. `curl ... | sudo bash` also works but can't prompt (stdin is the pipe + sudo's pty),
-#   so it falls back to telling you which explicit --hooks mode to use.
+#   Hooks install automatically for every detected provider; --no-hooks skips them and
+#   --hooks=claude|codex|all forces a specific set. The bash -c "$(curl ...)" and
+#   `curl ... | sudo bash` forms both work — there is no interactive prompt to preserve.
 # --socket defaults to a dedicated 'agentmon' socket (the agent never sees your default
 # socket); use --socket=default for the standard socket, or --socket=<name> for another.
 set -euo pipefail
@@ -180,8 +180,9 @@ install_runner_files() {
 }
 
 # maybe_install_hooks selects explicit providers or auto-detects Claude Code and
-# Codex. Auto mode offers every detected provider that is not already configured,
-# prompts once, provisions one shared token, then performs idempotent per-user merges.
+# Codex. Auto mode installs hooks for every detected provider that is not already
+# configured — no prompt — provisions one shared token, then performs idempotent
+# per-user merges.
 maybe_install_hooks() {
   [ "$HOOKS_MODE" = "none" ] && return 0
   local home_dir install_claude="0" install_codex="0" token_ready="0"
@@ -320,6 +321,22 @@ ensure_killmode
 # every install/update (self-healing when the user relocates their tools).
 # Called on both paths AFTER RUN_USER is final (the update path may rewrite it
 # from agent.toml — same wrong-user trap the skills install hit).
+# graft_provider_dirs echoes PATH $1 with each conventional run-user tool dir (under
+# home $2) that holds a claude/codex binary and isn't already present appended. Called
+# UNCONDITIONALLY by ensure_provider_path — per-dir, never gated on "a provider already
+# resolves": a login shell (or a bash capture that missed a zsh/fish dir) can put ONE
+# provider on the captured PATH while the OTHER lives only in e.g. ~/.local/bin, and
+# gating the whole graft on the first would strand the second. Keep this dir list in
+# sync with doctor's providerPathHint (agent/cmd/agentmon-agent/doctor_cli.go).
+graft_provider_dirs() {
+  local run_path="$1" home="$2" d
+  for d in "$home/.local/bin" "$home/bin" "$home/.npm-global/bin"; do
+    case ":$run_path:" in *":$d:"*) continue ;; esac
+    if [ -x "$d/claude" ] || [ -x "$d/codex" ]; then run_path="$run_path:$d"; fi
+  done
+  printf '%s' "$run_path"
+}
+
 PATHCONF_CHANGED=0
 ensure_provider_path() {
   # Ask the run user's login shell for its PATH and fish it out via a sentinel
@@ -346,16 +363,12 @@ ensure_provider_path() {
     *) run_path="" ;;
   esac
   [ -n "$run_path" ] || run_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-  # A bash capture can still miss dirs only a zsh/fish profile adds. If no
-  # provider CLI resolves under the result, graft the conventional tool dirs
-  # that actually hold one (this is also the whole fallback when capture fails).
-  if ! env PATH="$run_path" sh -c 'command -v claude || command -v codex' >/dev/null 2>&1; then
-    pp_home="$(run_user_home)"
-    for d in "$pp_home/.local/bin" "$pp_home/bin" "$pp_home/.npm-global/bin"; do
-      case ":$run_path:" in *":$d:"*) continue ;; esac
-      if [ -x "$d/claude" ] || [ -x "$d/codex" ]; then run_path="$run_path:$d"; fi
-    done
-  fi
+  # A bash capture can miss dirs only a zsh/fish profile adds, and a non-interactive
+  # login shell skips ~/.bashrc entirely (where ~/.local/bin is commonly added), so
+  # graft each conventional tool dir that actually holds a provider CLI — per-dir and
+  # unconditional (see graft_provider_dirs), so one provider on the captured PATH never
+  # strands another that lives only in a missed dir.
+  run_path="$(graft_provider_dirs "$run_path" "$(run_user_home)")"
   # Whitelist for the systemd Environment= line: % (specifier expansion) or
   # backslash/quote/whitespace would corrupt or void the whole assignment.
   case "$run_path" in

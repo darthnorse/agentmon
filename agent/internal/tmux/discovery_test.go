@@ -92,6 +92,24 @@ func TestDiscoverMissingOrStaleSocketIsEmpty(t *testing.T) {
 	}
 }
 
+func TestDiscoverNonBenignConnectErrorSurfaces(t *testing.T) {
+	// tmux prints "error connecting to <path> (<reason>)" for MANY errnos, not just
+	// the benign missing/stale-socket ones. "(Permission denied)" (EACCES) and
+	// "(Connection timed out)" (ETIMEDOUT) mean the socket exists / a server may be
+	// there but unreachable — a real fault, NOT zero sessions. These must surface as
+	// an error (a 500), never be masked as an empty session set that paints the host
+	// healthy while live sessions are hidden.
+	for _, msg := range []string{
+		"tmux -L agentmon list-sessions: exit status 1: error connecting to /tmp/tmux-0/agentmon (Permission denied)",
+		"tmux -L agentmon list-sessions: exit status 1: error connecting to /tmp/tmux-0/agentmon (Connection timed out)",
+	} {
+		run := fakeRunner(t, "", nil, errors.New(msg))
+		if _, err := Discover(context.Background(), run, DiscoverOpts{ServerID: "srv", TargetLabel: "default"}); err == nil {
+			t.Fatalf("%q: a non-benign connect error must surface, not be masked as empty", msg)
+		}
+	}
+}
+
 func TestDiscoverGroupsPanesIntoWindowsInOrder(t *testing.T) {
 	sessions := p("$1", "proj") + "\n"
 	panes := map[string]string{

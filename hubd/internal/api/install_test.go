@@ -12,6 +12,19 @@ import (
 	"agentmon/hubd/internal/agentbin"
 )
 
+// hookFunctionBlock returns the delimited hook-setup function block from a rendered
+// install script, for harness tests that source those functions with stubs.
+func hookFunctionBlock(t *testing.T, body string) string {
+	t.Helper()
+	const startMarker, endMarker = "# BEGIN hook setup functions", "# END hook setup functions."
+	start := strings.Index(body, startMarker)
+	end := strings.Index(body, endMarker)
+	if start < 0 || end < start {
+		t.Fatalf("could not locate hook function block (start=%d end=%d)", start, end)
+	}
+	return body[start : end+len(endMarker)]
+}
+
 func TestInstallScriptIsTemplated(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/install.sh", nil)
@@ -197,14 +210,7 @@ func TestMaybeInstallHooksReturnsSuccessForEverySelection(t *testing.T) {
 	w := httptest.NewRecorder()
 	d.ScriptHandler()(w, r)
 	body := w.Body.String()
-	startMarker := "# BEGIN hook setup functions"
-	endMarker := "# END hook setup functions."
-	start := strings.Index(body, startMarker)
-	end := strings.Index(body, endMarker)
-	if start < 0 || end < start {
-		t.Fatalf("could not locate hook function block (start=%d end=%d)", start, end)
-	}
-	functions := body[start : end+len(endMarker)]
+	functions := hookFunctionBlock(t, body)
 
 	tests := []struct {
 		mode    string
@@ -246,14 +252,7 @@ func TestMaybeInstallHooksAutoInstallsDetectedProvidersByDefault(t *testing.T) {
 	w := httptest.NewRecorder()
 	d.ScriptHandler()(w, r)
 	body := w.Body.String()
-	startMarker := "# BEGIN hook setup functions"
-	endMarker := "# END hook setup functions."
-	start := strings.Index(body, startMarker)
-	end := strings.Index(body, endMarker)
-	if start < 0 || end < start {
-		t.Fatalf("could not locate hook function block (start=%d end=%d)", start, end)
-	}
-	functions := body[start : end+len(endMarker)]
+	functions := hookFunctionBlock(t, body)
 
 	// Hooks are what make AgentMon work (live state + the orchestrator reporter), so
 	// default (auto) mode must install them for every DETECTED provider — no prompt,
@@ -291,14 +290,7 @@ func TestMaybeInstallHooksAutoInstallsOnlyDetectedProvider(t *testing.T) {
 	w := httptest.NewRecorder()
 	d.ScriptHandler()(w, r)
 	body := w.Body.String()
-	startMarker := "# BEGIN hook setup functions"
-	endMarker := "# END hook setup functions."
-	start := strings.Index(body, startMarker)
-	end := strings.Index(body, endMarker)
-	if start < 0 || end < start {
-		t.Fatalf("could not locate hook function block (start=%d end=%d)", start, end)
-	}
-	functions := body[start : end+len(endMarker)]
+	functions := hookFunctionBlock(t, body)
 
 	// Only-Claude-present: install claude, never codex. Guards against a blanket
 	// "install everything" that would wire hooks for a client the host doesn't have.
@@ -409,6 +401,53 @@ func TestInstallScriptRequiresTmux(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "tmux is required") {
 		t.Fatalf("installer must die with a clear tmux-required message; got:\n%s", out)
+	}
+}
+
+func TestGraftProviderDirsGraftsEachMissedProviderDir(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	sig := "graft_provider_dirs() {"
+	start := strings.Index(body, sig)
+	if start < 0 {
+		t.Fatal("graft_provider_dirs helper not found in rendered script")
+	}
+	rel := strings.Index(body[start:], "\n}\n")
+	if rel < 0 {
+		t.Fatal("graft_provider_dirs end not found")
+	}
+	fn := body[start : start+rel+len("\n}\n")]
+
+	home := t.TempDir()
+	localBin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// codex lives ONLY in ~/.local/bin; the input PATH already has other dirs (claude
+	// resolvable elsewhere) but is missing ~/.local/bin. The graft must still append
+	// it — gating on "a provider already resolves" would strand codex.
+	if err := os.WriteFile(filepath.Join(localBin, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGraft := func(inPath string) string {
+		harness := "set -euo pipefail\n" + fn + "\ngraft_provider_dirs '" + inPath + "' '" + home + "'\n"
+		cmd := exec.Command("bash")
+		cmd.Stdin = strings.NewReader(harness)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("graft_provider_dirs exited nonzero: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	if got := runGraft("/usr/local/bin:/usr/bin:/bin"); !strings.Contains(got, localBin) {
+		t.Fatalf("graft must append %s (holds codex) even when the input PATH already has other dirs; got: %q", localBin, got)
+	}
+	// A dir already on the input PATH must not be duplicated.
+	if got := runGraft(localBin + ":/usr/bin"); strings.Count(got, localBin) != 1 {
+		t.Fatalf("graft must not duplicate an already-present dir; got: %q", got)
 	}
 }
 

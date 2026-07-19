@@ -161,12 +161,18 @@ func isNoServer(err error) bool {
 	msg := err.Error()
 	// tmux signals "no live server on this socket" more than one way, depending on
 	// version and socket state: the classic "no server running on <path>", or a
-	// client connect failure when the socket is missing or stale ("error connecting
-	// to <path> (No such file or directory)" / "(Connection refused)"). All mean the
-	// same thing — zero sessions — so they must yield an empty result, not an error
-	// (an error here becomes a 500 from /sessions and paints an idle host offline).
-	return strings.Contains(msg, "no server running") ||
-		strings.Contains(msg, "error connecting to")
+	// client connect failure. Match the connect failure ONLY for the benign reasons
+	// — a missing socket ("No such file or directory") or a stale one with no
+	// listener ("Connection refused"). tmux prints "error connecting to <path>
+	// (<reason>)" for other errnos too (Permission denied, Connection timed out);
+	// those are real faults, NOT zero sessions, and must surface as an error (a 500)
+	// rather than be masked as an empty session set that paints an idle host healthy.
+	if strings.Contains(msg, "no server running") {
+		return true
+	}
+	return strings.Contains(msg, "error connecting to") &&
+		(strings.Contains(msg, "No such file or directory") ||
+			strings.Contains(msg, "Connection refused"))
 }
 
 func nonEmptyLines(b []byte) []string {
