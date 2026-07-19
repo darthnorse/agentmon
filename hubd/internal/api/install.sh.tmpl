@@ -21,7 +21,7 @@ HOSTNAME_OVERRIDE=""
 USER_OVERRIDE=""
 SOCKET_OVERRIDE=""
 DRY_RUN="0"
-HOOKS_MODE="auto" # auto-detect + prompt; claude; codex; all; or none
+HOOKS_MODE="auto" # auto-detect + install; claude; codex; all; or none
 for arg in "$@"; do
   case "$arg" in
     --hostname=*) HOSTNAME_OVERRIDE="${arg#*=}" ;;
@@ -184,7 +184,7 @@ install_runner_files() {
 # prompts once, provisions one shared token, then performs idempotent per-user merges.
 maybe_install_hooks() {
   [ "$HOOKS_MODE" = "none" ] && return 0
-  local home_dir install_claude="0" install_codex="0" token_ready="0" label rerun
+  local home_dir install_claude="0" install_codex="0" token_ready="0"
   home_dir="$(run_user_home)"
   hook_token_ready && token_ready="1"
 
@@ -199,27 +199,13 @@ maybe_install_hooks() {
       if provider_detected "$home_dir" codex && { [ "$token_ready" != "1" ] || ! provider_has_hooks "$home_dir" codex; }; then
         install_codex="1"
       fi
+      # Hooks are what make AgentMon actually work (live agent state + the
+      # orchestrator reporter), so a DETECTED provider gets them by default — no
+      # prompt, and no skip on a piped/non-interactive install (the fleet loop is
+      # piped). --no-hooks opts out; --hooks=<provider> forces a specific set.
+      # provider_has_hooks (above) keeps re-runs idempotent: an already-wired client
+      # is not reinstalled, so an update doesn't needlessly bounce the agent.
       [ "$install_claude" = "1" ] || [ "$install_codex" = "1" ] || return 0
-      case "${install_claude}${install_codex}" in
-        10) label="Claude Code"; rerun="--hooks=claude" ;;
-        01) label="Codex"; rerun="--hooks=codex" ;;
-        11) label="Claude Code and Codex"; rerun="--hooks=all" ;;
-      esac
-      # A reliable prompt needs OUR stdin to be the terminal. Under `curl | sudo bash`,
-      # stdin is the pipe — and sudo's pty is fed by that pipe, not the keyboard — so a
-      # /dev/tty prompt reads EOF (skips) while the keystroke leaks to the parent shell.
-      # Detect a non-interactive stdin and point at the explicit flag instead.
-      if [ ! -t 0 ] || [ ! -r /dev/tty ]; then
-        echo "$label detected — re-run with $rerun to install live-state hooks (or --no-hooks to skip)."
-        return 0
-      fi
-      printf '%s detected. Install AgentMon hooks for live agent state? [y/N] ' "$label" > /dev/tty
-      local ans=""
-      read -r -t 30 ans < /dev/tty || true
-      case "$ans" in
-        [Yy]*) ;;
-        *) echo "Skipping hooks (re-run with $rerun to enable)."; return 0 ;;
-      esac
       ;;
     *) die "unsupported hooks mode: $HOOKS_MODE" ;;
   esac
@@ -266,7 +252,7 @@ hooks_plan() {
     codex)  echo "install Codex hooks" ;;
     all)    echo "install Claude Code + Codex hooks" ;;
     none)   echo "skip (--no-hooks)" ;;
-    *)      echo "auto (detect Claude Code/Codex + prompt)" ;;
+    *)      echo "auto (install hooks for detected Claude Code/Codex)" ;;
   esac
 }
 
@@ -297,7 +283,7 @@ if [ "$DRY_RUN" = "1" ]; then
     codex)  echo "[dry-run] would provision a hook token + install Codex hooks for '$RUN_USER'" ;;
     all)    echo "[dry-run] would provision one hook token + install Claude Code and Codex hooks for '$RUN_USER'" ;;
     none)   echo "[dry-run] would NOT install hooks" ;;
-    *)      echo "[dry-run] would detect Claude Code and Codex, then offer to install hooks for detected clients" ;;
+    *)      echo "[dry-run] would install hooks for whichever of Claude Code / Codex is detected" ;;
   esac
   echo "[dry-run] no changes made."
   exit 0

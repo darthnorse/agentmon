@@ -139,16 +139,20 @@ func TestInstallScriptPathHarvestCannotHangTheInstall(t *testing.T) {
 	}
 }
 
-func TestInstallScriptDoesNotPromptForHooksWhenPiped(t *testing.T) {
+func TestInstallScriptInstallsHooksWithoutAnInteractivePrompt(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/install.sh", nil)
 	w := httptest.NewRecorder()
 	d.ScriptHandler()(w, r)
-	// Interactive prompts are unreliable under `curl | sudo bash` (stdin is the pipe, so
-	// a /dev/tty read hits EOF and the keystroke leaks to the shell). The hooks prompt
-	// must gate on stdin being a real terminal and otherwise point at the explicit flag.
-	if !strings.Contains(w.Body.String(), "[ ! -t 0 ]") {
-		t.Fatal("hooks prompt must skip (and guide to --hooks) when stdin is not a terminal")
+	body := w.Body.String()
+	// Hooks install by default (auto), so there is no [y/N] prompt to mishandle
+	// under `curl | sudo bash` (stdin is the pipe). Assert the interactive prompt and
+	// its /dev/tty read are gone so they can't regress into a hang or a silent skip.
+	if strings.Contains(body, "Install AgentMon hooks for live agent state?") {
+		t.Fatal("hooks must install by default (auto), not via an interactive prompt")
+	}
+	if strings.Contains(body, "read -r -t 30 ans") {
+		t.Fatal("hook install must not read an interactive answer from the terminal")
 	}
 }
 
@@ -233,6 +237,91 @@ func TestMaybeInstallHooksReturnsSuccessForEverySelection(t *testing.T) {
 				t.Fatalf("output unexpectedly contains %q:\n%s", tc.notWant, out)
 			}
 		})
+	}
+}
+
+func TestMaybeInstallHooksAutoInstallsDetectedProvidersByDefault(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	startMarker := "# BEGIN hook setup functions"
+	endMarker := "# END hook setup functions."
+	start := strings.Index(body, startMarker)
+	end := strings.Index(body, endMarker)
+	if start < 0 || end < start {
+		t.Fatalf("could not locate hook function block (start=%d end=%d)", start, end)
+	}
+	functions := body[start : end+len(endMarker)]
+
+	// Hooks are what make AgentMon work (live state + the orchestrator reporter), so
+	// default (auto) mode must install them for every DETECTED provider — no prompt,
+	// and no skip on a piped/non-interactive install (the fleet loop is piped). Stdin
+	// here is a pipe, exactly the case that used to bail with a "re-run with --hooks"
+	// hint instead of installing.
+	harness := "set -euo pipefail\n" + functions + "\n" +
+		"HOOKS_MODE=auto\nRUN_USER=root\n" +
+		"run_user_home() { echo /home/test; }\n" +
+		"hook_token_ready() { return 1; }\n" +
+		"provider_detected() { return 0; }\n" + // both claude and codex present
+		"provider_has_hooks() { return 1; }\n" + // not yet wired
+		"provision_hook_token() { echo token; }\n" +
+		"install_hooks_into() { echo install:\"$2\"; }\n" +
+		"maybe_install_hooks\necho complete\n"
+	cmd := exec.Command("bash")
+	cmd.Stdin = strings.NewReader(harness)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("maybe_install_hooks exited nonzero: %v\n%s", err, out)
+	}
+	for _, want := range []string{"token", "install:claude", "install:codex", "complete"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("auto mode must install detected providers by default; output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(string(out), "re-run with") {
+		t.Fatalf("auto mode must not skip and point at a flag anymore — it installs by default:\n%s", out)
+	}
+}
+
+func TestMaybeInstallHooksAutoInstallsOnlyDetectedProvider(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	startMarker := "# BEGIN hook setup functions"
+	endMarker := "# END hook setup functions."
+	start := strings.Index(body, startMarker)
+	end := strings.Index(body, endMarker)
+	if start < 0 || end < start {
+		t.Fatalf("could not locate hook function block (start=%d end=%d)", start, end)
+	}
+	functions := body[start : end+len(endMarker)]
+
+	// Only-Claude-present: install claude, never codex. Guards against a blanket
+	// "install everything" that would wire hooks for a client the host doesn't have.
+	harness := "set -euo pipefail\n" + functions + "\n" +
+		"HOOKS_MODE=auto\nRUN_USER=root\n" +
+		"run_user_home() { echo /home/test; }\n" +
+		"hook_token_ready() { return 1; }\n" +
+		"provider_detected() { [ \"$2\" = claude ]; }\n" + // only claude present
+		"provider_has_hooks() { return 1; }\n" +
+		"provision_hook_token() { echo token; }\n" +
+		"install_hooks_into() { echo install:\"$2\"; }\n" +
+		"maybe_install_hooks\necho complete\n"
+	cmd := exec.Command("bash")
+	cmd.Stdin = strings.NewReader(harness)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("maybe_install_hooks exited nonzero: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "install:claude") {
+		t.Fatalf("must install the detected provider (claude):\n%s", out)
+	}
+	if strings.Contains(string(out), "install:codex") {
+		t.Fatalf("must NOT install an undetected provider (codex):\n%s", out)
 	}
 }
 
