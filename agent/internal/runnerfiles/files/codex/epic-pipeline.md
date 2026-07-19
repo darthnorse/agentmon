@@ -232,8 +232,10 @@ four lenses plus its own cross-model `codex` lens (`--codex`).
    does NOT change that budget: `/multi-review` launches all five lenses (four Claude
    subagents + the `codex exec` lens) in PARALLEL, and the diff-scoped codex lens lands
    ~12 min — inside the ~15-min host-lens critical path, so it adds no serial time. The only
-   thing that can push a review past 30m is a fresh-logic review-of-fixes pass, which
-   fail-closes to the exit-124 escalation above. **NEVER pick this number from an estimate** —
+   thing `--codex` ADDS that can push a review past 30m is a fresh-logic review-of-fixes
+   pass (its `--codex-only` tail runs serially); a large first-pass diff can still time out
+   on its own, and either case fail-closes to the exit-124 escalation above. **NEVER pick this
+   number from an estimate** —
    that is exactly how `/multi-review`'s own cross-model lens ended up bounded at 600s, its
    own median, killing about half its runs. If large epics start timing out routinely, raise
    it and re-measure; never trim it.)

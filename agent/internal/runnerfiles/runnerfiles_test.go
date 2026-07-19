@@ -155,23 +155,49 @@ func TestInstallSkillsCreatesWorktreeRoot(t *testing.T) {
 // own cross-model codex lens (--codex) — otherwise "cross-provider review"
 // silently degrades to a same-family pass the moment the flag is dropped. Guard
 // every headless review invocation (`-p "/multi-review ...`) in the embedded
-// runner, and fail loudly if none are found (the command was renamed/moved).
+// runner: --codex must sit INSIDE the quoted /multi-review prompt (outside it,
+// claude would take it as its own flag, not a /multi-review arg), and the two
+// actionable commands must each be present in their own right so deleting them
+// can't hide behind the quick-reference example still matching.
 func TestCodexRunnerReviewInvokesCrossModelLens(t *testing.T) {
 	b, err := fsys.ReadFile("files/codex/epic-pipeline.md")
 	if err != nil {
 		t.Fatal(err)
 	}
+	src := string(b)
+
+	const open = `-p "`
 	invocations := 0
-	for _, line := range strings.Split(string(b), "\n") {
-		if !strings.Contains(line, `-p "/multi-review`) {
+	for _, line := range strings.Split(src, "\n") {
+		i := strings.Index(line, `-p "/multi-review`)
+		if i < 0 {
 			continue
 		}
 		invocations++
-		if !strings.Contains(line, "--codex") {
-			t.Errorf("review invocation missing --codex: %s", strings.TrimSpace(line))
+		// The prompt argument runs from the opening quote to the next quote;
+		// check --codex within it, not merely somewhere on the line.
+		rest := line[i+len(open):]
+		end := strings.IndexByte(rest, '"')
+		if end < 0 {
+			t.Errorf("unterminated -p prompt: %s", strings.TrimSpace(line))
+			continue
+		}
+		if prompt := rest[:end]; !strings.Contains(prompt, "--codex") {
+			t.Errorf("--codex not inside the /multi-review prompt: %q", prompt)
 		}
 	}
 	if invocations == 0 {
 		t.Fatal(`no headless -p "/multi-review invocations found — did the review command move?`)
+	}
+
+	// The checkpoint and final commands must exist independently of the
+	// quick-reference example (which also matches the loop above).
+	for _, want := range []string{
+		`-p "/multi-review <segment-base>..HEAD --codex"`, // Step 6 checkpoint
+		`-p "/multi-review <merge-base>..HEAD --codex"`,   // Step 7 final
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("missing actionable cross-model review command: %s", want)
+		}
 	}
 }
