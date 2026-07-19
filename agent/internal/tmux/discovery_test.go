@@ -71,6 +71,27 @@ func TestDiscoverNoServerIsEmpty(t *testing.T) {
 	}
 }
 
+func TestDiscoverMissingOrStaleSocketIsEmpty(t *testing.T) {
+	// When the socket is absent or stale, tmux does not say "no server running" —
+	// it says "error connecting to <path> (<reason>)". That still means "no live
+	// server, zero sessions", so discovery must return an empty slice, not an error.
+	// Returning the error makes SessionsHandler emit a 500 and the hub paint an
+	// idle-but-healthy host as offline.
+	for _, msg := range []string{
+		"tmux -L agentmon list-sessions: exit status 1: error connecting to /tmp/tmux-0/agentmon (No such file or directory)",
+		"tmux -L agentmon list-sessions: exit status 1: error connecting to /tmp/tmux-0/agentmon (Connection refused)",
+	} {
+		run := fakeRunner(t, "", nil, errors.New(msg))
+		got, err := Discover(context.Background(), run, DiscoverOpts{ServerID: "srv", TargetLabel: "default"})
+		if err != nil {
+			t.Fatalf("%q: unexpected error: %v", msg, err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Fatalf("%q: want empty non-nil slice, got %#v", msg, got)
+		}
+	}
+}
+
 func TestDiscoverGroupsPanesIntoWindowsInOrder(t *testing.T) {
 	sessions := p("$1", "proj") + "\n"
 	panes := map[string]string{
