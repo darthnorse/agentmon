@@ -118,6 +118,27 @@ func TestInstallScriptUnitUsesKillModeProcess(t *testing.T) {
 	}
 }
 
+func TestInstallScriptPathHarvestCannotHangTheInstall(t *testing.T) {
+	d := InstallDeps{HubURL: "https://hub.example.lan"}
+	r := httptest.NewRequest("GET", "/install.sh", nil)
+	w := httptest.NewRecorder()
+	d.ScriptHandler()(w, r)
+	body := w.Body.String()
+	// Harvesting the run-user's PATH must NOT use an interactive shell (`bash -i`).
+	// Inside the installer's pipeline + command-substitution an interactive bash is
+	// not the foreground process group; reaching for the terminal earns it SIGTTOU
+	// and it STOPS — ignoring SIGTERM (so `timeout` can't reap it) and SIGINT (so
+	// Ctrl-C can't), wedging the whole install until an out-of-band SIGKILL.
+	if strings.Contains(body, "bash -ilc") || strings.Contains(body, "bash -i ") {
+		t.Fatal("PATH harvest must not use an interactive shell (bash -i) — it can hang the installer under SIGTTOU")
+	}
+	// The timeout guarding the harvest must escalate to SIGKILL (-k): a pathological
+	// login shell can ignore the default SIGTERM, defeating a bare `timeout`.
+	if !strings.Contains(body, "timeout -k") {
+		t.Fatal("PATH-harvest timeout must use -k (SIGKILL escalation) so a stuck shell can't wedge the install")
+	}
+}
+
 func TestInstallScriptDoesNotPromptForHooksWhenPiped(t *testing.T) {
 	d := InstallDeps{HubURL: "https://hub.example.lan"}
 	r := httptest.NewRequest("GET", "/install.sh", nil)

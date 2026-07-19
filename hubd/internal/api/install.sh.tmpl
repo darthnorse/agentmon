@@ -332,19 +332,23 @@ ensure_killmode
 # from agent.toml — same wrong-user trap the skills install hit).
 PATHCONF_CHANGED=0
 ensure_provider_path() {
-  # Ask the run user's INTERACTIVE bash (rc files are where ~/.local/bin gets
-  # added; login /bin/sh skips them) and fish the PATH out via a sentinel —
-  # profiles on some hosts print MOTD banners to stdout that would otherwise
-  # pollute the capture. </dev/null so an rc file that reads stdin (or execs
-  # another interactive shell) gets EOF instead of the operator's terminal;
-  # timeout so a pathological profile degrades to the fallback instead of
-  # hanging an unattended fleet update. (tmux passes the CREATING client's
-  # PATH to new sessions — verified on 3.5a — so a service restart applies
-  # this even while a long-lived tmux server keeps sessions alive.)
+  # Ask the run user's login shell for its PATH and fish it out via a sentinel
+  # (profiles on some hosts print MOTD banners that would otherwise pollute the
+  # capture). NON-interactive on purpose: an interactive shell (bash -i) enables
+  # job control and, running here inside a pipeline + command substitution, is not
+  # the foreground process group — reaching for the terminal earns it SIGTTOU and
+  # it STOPS, ignoring SIGTERM (which defeats `timeout`) and SIGINT (Ctrl-C),
+  # wedging the whole install until an out-of-band SIGKILL. A login shell skips
+  # ~/.bashrc (where ~/.local/bin is often added), but the candidate-dir fallback
+  # below grafts that back, so we lose nothing. </dev/null so a profile that reads
+  # stdin gets EOF; `timeout -k` escalates to SIGKILL because even a login profile
+  # can wedge on something that ignores SIGTERM. (tmux passes the CREATING client's
+  # PATH to new sessions — verified on 3.5a — so a service restart applies this
+  # even while a long-lived tmux server keeps sessions alive.)
   run_path=""
   if command -v bash >/dev/null 2>&1; then
     # shellcheck disable=SC2016 # $PATH is meant to expand in the invoked login shell, not here
-    run_path="$(timeout 15 runuser -u "$RUN_USER" -- bash -ilc 'printf "\n__AGENTMON_PATH__%s\n" "$PATH"' </dev/null 2>/dev/null \
+    run_path="$(timeout -k 5 15 runuser -u "$RUN_USER" -- bash -lc 'printf "\n__AGENTMON_PATH__%s\n" "$PATH"' </dev/null 2>/dev/null \
       | sed -n 's/^__AGENTMON_PATH__//p' | tail -n1 || true)"
   fi
   case "$run_path" in
