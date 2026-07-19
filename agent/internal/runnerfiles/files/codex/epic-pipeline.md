@@ -206,7 +206,8 @@ Execute the plan task-by-task, in order, single-agent:
 ## Step 6: Checkpoint reviews (report `reviewing`, then `implementing` again)
 
 At every `CHECKPOINT` step in the plan, run the CROSS-PROVIDER review: you
-wrote the code, Claude reviews it, headlessly, in this worktree.
+wrote the code; Claude reviews it headlessly in this worktree, running its
+four lenses plus its own cross-model `codex` lens (`--codex`).
 
 1. `agentmon report --epic N --stage reviewing`
 2. Determine the segment: from the last checkpoint's recorded SHA (see 5.) —
@@ -216,7 +217,7 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    substituting the range; it typically takes several minutes):
 
    ```
-   timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <segment-base>..HEAD" > docs/reviews/epic-N-cp<K>.md
+   timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <segment-base>..HEAD --codex" > docs/reviews/epic-N-cp<K>.md
    ```
 
    The review is bounded at **30 minutes** (`timeout 1800`). Exit **124** means the review
@@ -227,7 +228,14 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    `/multi-review` took **14m50s on an 11-line diff** — that is the FLOOR, not the typical
    cost. An earlier note here claimed "~10 min fixed cost, so 20m is ~2x headroom"; measurement
    disproved it, and 20m was only ~1.35x the floor, so a real epic diff could be killed
-   mid-review. 30m is ~2x the measured floor. **NEVER pick this number from an estimate** —
+   mid-review. 30m is ~2x the measured floor. The `--codex` cross-model lens this command now carries
+   does NOT change that budget: `/multi-review` launches all five lenses (four Claude
+   subagents + the `codex exec` lens) in PARALLEL, and the diff-scoped codex lens lands
+   ~12 min — inside the ~15-min host-lens critical path, so it adds no serial time. The only
+   thing `--codex` ADDS that can push a review past 30m is a fresh-logic review-of-fixes
+   pass (its `--codex-only` tail runs serially); a large first-pass diff can still time out
+   on its own, and either case fail-closes to the exit-124 escalation above. **NEVER pick this
+   number from an estimate** —
    that is exactly how `/multi-review`'s own cross-model lens ended up bounded at 600s, its
    own median, killing about half its runs. If large epics start timing out routinely, raise
    it and re-measure; never trim it.)
@@ -267,7 +275,7 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    review with `<merge-base>` = `git merge-base HEAD origin/<base>`:
 
    ```
-   timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <merge-base>..HEAD" > docs/reviews/epic-N-final.md
+   timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <merge-base>..HEAD --codex" > docs/reviews/epic-N-final.md
    ```
 
    **Commit the report first** (`docs/reviews/epic-N-final.md`), then apply
@@ -305,7 +313,7 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    ```yaml
    agentmon-verdict: v1
    epic: N
-   reviews: [specialist, simplifier, deep-scan, security, cross-model]
+   reviews: [specialist, simplifier, deep-scan, security, codex, cross-model]
    findings: { found: <total across final review>, resolved: <fixed>, unresolved: <count> }
    unresolved:
      - "<each unresolved/DISCUSS item, verbatim>"
@@ -321,11 +329,11 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
    template, not the answer, and a lens missing from it is not a lens that did
    not run. (It omitted `security` for months while the security lens ran on
    every review, because copying the example is easier than reading the
-   report.) Then add `cross-model` — your reviewers are Claude lenses and you
-   are Codex, so the review IS cross-model. Note `cross-model` here means "the
-   reviewers are a different model than me"; it is NOT the same thing as
-   `/multi-review`'s own opt-in cross-model lens, which its report may
-   separately list as "not requested". `findings` counts come from the FINAL review only
+   report.) The review runs with `--codex`, so the roster line now includes a
+   `codex` lens — copy it through like any other. Then add `cross-model`: here
+   it holds two ways over — you are Codex while every host lens is Claude
+   (reviewer ≠ coder), and `/multi-review`'s own opt-in `codex` lens also ran
+   (`--codex`). Either alone makes the review cross-model. `findings` counts come from the FINAL review only
    (checkpoint evidence lives in the committed report files). Count every
    DISCUSS item you escalated as unresolved. NEVER round `failed` down to
    zero. Include exactly one requirement entry per platform carrier record,
@@ -349,7 +357,7 @@ wrote the code, Claude reviews it, headlessly, in this worktree.
 For small maintenance epics: skip Step 4's committed plan and Step 6 entirely
 (keep a task list in a scratch file that reproduces both effective-requirement
 tiers verbatim and retains them through final verification). Everything else is UNCHANGED —
-worktree, stage reports, escalation, ONE full pre-PR headless review over
+worktree, stage reports, escalation, ONE full pre-PR headless `--codex` review over
 `<merge-base>..HEAD`, learnings, full verdict block.
 
 ## Quick reference
@@ -363,4 +371,4 @@ worktree, stage reports, escalation, ONE full pre-PR headless review over
 | blocked / DISCUSS | commit + push the epic branch, then `agentmon report --epic N --stage escalated --branch <branch> --note "…"` |
 | plan-gate (pause after planning) | push branch, then `agentmon report … --stage escalated --branch <branch> --note "plan-gate: …"` — see Step 4 |
 | report CLI broken during escalation | `gh issue comment N --body "ESCALATED: …"` |
-| cross-provider review | `timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD" > docs/reviews/epic-N-<cpK|final>.md` |
+| cross-provider review | `timeout 1800 env IS_SANDBOX=1 claude --dangerously-skip-permissions -p "/multi-review <base>..HEAD --codex" > docs/reviews/epic-N-<cpK|final>.md` |
