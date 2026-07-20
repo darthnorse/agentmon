@@ -253,10 +253,13 @@ four lenses plus its own cross-model `codex` lens (`--codex`).
    - FIX findings: already applied + committed by the reviewer. Run the full
      build + test suite yourself and confirm green; a red suite after review
      fixes → escalate with the failure.
-   - DISCUSS items (risky/ambiguous/trade-off): **escalate**, naming the
-     `docs/reviews/epic-N-cp<K>.md` you just committed in the note so a human can
-     open it in the UI (the escalation protocol pushes it). This is the existing
-     human-summoning path.
+   - DISCUSS items (risky/ambiguous/trade-off): **escalate** — and in your final
+     message present each DISCUSS item in the review's four-field NEEDS DISCUSSION
+     format (Finding / What it means / Practical risk / Recommendation; copy it
+     from the committed report), then a `Preferred resolution:` list with one
+     imperative line per item. Never leave a terse blocker the human has to ask to
+     expand. Name the `docs/reviews/epic-N-cp<K>.md` you committed so they can open
+     the full report in the UI (the escalation protocol pushes it).
    - NITPICKs: leave them in the report file (already committed); do not chase them.
 6. **Review recursion terminates.** Recurse only while the delta contains
    UNREVIEWED JUDGMENT: a large fix round of fresh logic warrants ONE

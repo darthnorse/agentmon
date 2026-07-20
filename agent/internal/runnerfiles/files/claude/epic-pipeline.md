@@ -220,10 +220,13 @@ At every `CHECKPOINT` step in the plan:
 5. Route the outcomes:
    - FIX findings: already applied + committed by the review (regression
      tests included per its policy). Verify the suite is still green.
-   - DISCUSS items (risky/ambiguous/trade-off): **escalate**, naming the
-     `docs/reviews/epic-$ARGUMENTS-cp<K>.md` you just committed in the note so a
-     human can open it in the UI (the escalation protocol pushes it). This is the
-     existing human-summoning path.
+   - DISCUSS items (risky/ambiguous/trade-off): **escalate** — and in your final
+     message present each DISCUSS item in the review's four-field NEEDS DISCUSSION
+     format (Finding / What it means / Practical risk / Recommendation; copy it
+     from the committed report), then a `Preferred resolution:` list with one
+     imperative line per item. Never leave a terse blocker the human has to ask to
+     expand. Name the `docs/reviews/epic-$ARGUMENTS-cp<K>.md` you committed so they
+     can open the full report in the UI (the escalation protocol pushes it).
    - NITPICKs: recorded in the review report file (already committed); do not chase them.
 6. **Review recursion is `/multi-review`'s own job now.** After it applies
    fixes, `/multi-review` runs its OWN bounded review-of-fixes pass when they
