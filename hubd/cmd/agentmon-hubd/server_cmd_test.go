@@ -59,6 +59,37 @@ func TestServerActionApproveRevokeRemove(t *testing.T) {
 	}
 }
 
+func TestServerRmRefusesWhenProjectsBound(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	if err := d.EnrollServer(ctx, db.Server{ID: "prism", Name: "prism", Hostname: "prism.lan",
+		URL: "u", Status: "active", Bearer: "b", SigningKey: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateProject(ctx, db.Project{ID: "p1", Name: "proj", Repo: "o/r",
+		ServerID: "prism", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1}); err != nil {
+		t.Fatal(err)
+	}
+	rec := audit.NewRecorder(d)
+
+	if _, err := serverAction(ctx, d, rec, "rm", "prism.lan"); err == nil || !strings.Contains(err.Error(), "project") {
+		t.Fatalf("want a projects-bound refusal mentioning projects, got %v", err)
+	}
+	if _, err := d.GetServer(ctx, "prism"); err != nil {
+		t.Fatalf("server must survive a refused rm, got %v", err)
+	}
+	rows, _ := d.Recent(ctx, 50)
+	for _, e := range rows {
+		if e.Action == "server.remove" {
+			t.Fatal("a refused rm must not audit server.remove")
+		}
+	}
+}
+
 func TestServerActionUnknownTarget(t *testing.T) {
 	d, _ := db.Open(filepath.Join(t.TempDir(), "t.sqlite"))
 	defer d.Close()
