@@ -108,13 +108,49 @@ func (d *DB) SetServerStatus(ctx context.Context, id, status string) (bool, erro
 	return n > 0, nil
 }
 
-func (d *DB) DeleteServer(ctx context.Context, id string) (bool, error) {
-	res, err := d.sql.ExecContext(ctx, `DELETE FROM servers WHERE id=?`, id)
+// DeleteServer removes a server and its monitoring children — tmux targets,
+// session-state history, and per-principal seen rows — in one transaction. Those
+// all reference (or key off) the server, and with foreign_keys(1) on and no ON
+// DELETE CASCADE, a bare DELETE fails the FK check for any host that has ever
+// reported. It REFUSES when an orchestrator project is still bound to the server,
+// returning blockedProjects>0 and deleting nothing: projects carry epic history of
+// independent value that must be removed or re-pointed first (mirrors
+// DeleteProject's active-epic guard). The project count runs INSIDE the tx so a
+// concurrent CreateProject can't slip a binding past it. found=false means no such
+// server. principal_seen has no FK but is keyed by server_id, so a rebuilt host
+// re-using the id (id defaults to hostname) would inherit stale focus rows — hence
+// it is swept too.
+func (d *DB) DeleteServer(ctx context.Context, id string) (found bool, blockedProjects int, err error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return false, 0, err
+	}
+	defer tx.Rollback()
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE server_id = ?`, id).Scan(&blockedProjects); err != nil {
+		return false, 0, err
+	}
+	if blockedProjects > 0 {
+		return true, blockedProjects, nil
+	}
+	for _, child := range []string{
+		`DELETE FROM session_state_events WHERE server_id = ?`,
+		`DELETE FROM tmux_targets WHERE server_id = ?`,
+		`DELETE FROM principal_seen WHERE server_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, child, id); err != nil {
+			return false, 0, err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM servers WHERE id = ?`, id)
+	if err != nil {
+		return false, 0, err
 	}
 	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if err := tx.Commit(); err != nil {
+		return false, 0, err
+	}
+	return n > 0, 0, nil
 }
 
 // ApproveIfPending flips a PENDING server to active ATOMICALLY: the status

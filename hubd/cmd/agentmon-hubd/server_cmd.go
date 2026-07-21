@@ -19,7 +19,7 @@ type serverCmdStore interface {
 	FindServer(ctx context.Context, idOrHostname string) (db.Server, error)
 	ListServers(ctx context.Context, status string) ([]db.Server, error)
 	SetServerStatus(ctx context.Context, id, status string) (bool, error)
-	DeleteServer(ctx context.Context, id string) (bool, error)
+	DeleteServer(ctx context.Context, id string) (found bool, blockedProjects int, err error)
 }
 
 // serverAuditor is the audit surface (satisfied by *audit.Recorder).
@@ -53,11 +53,18 @@ func serverAction(ctx context.Context, d serverCmdStore, rec serverAuditor, acti
 		rec.ServerRevoke(ctx, srv.ID, srv.Hostname)
 		return fmt.Sprintf("revoked %s — hub will stop dialing it", srv.ID), nil
 	case "rm":
-		if _, err := d.DeleteServer(ctx, srv.ID); err != nil {
+		found, blockedProjects, err := d.DeleteServer(ctx, srv.ID)
+		if err != nil {
 			return "", err
 		}
+		if blockedProjects > 0 {
+			return "", fmt.Errorf("%s still has %d orchestrator project(s) bound to it — delete or re-point them first", srv.ID, blockedProjects)
+		}
+		if !found {
+			return "", fmt.Errorf("no server matching %q", idOrHostname)
+		}
 		rec.ServerRemove(ctx, srv.ID, srv.Hostname)
-		return fmt.Sprintf("removed %s", srv.ID), nil
+		return fmt.Sprintf("removed %s and its session history", srv.ID), nil
 	default:
 		return "", fmt.Errorf("unknown action %q", action)
 	}

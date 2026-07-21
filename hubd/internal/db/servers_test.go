@@ -104,12 +104,89 @@ func TestSetStatusDeleteAndTouch(t *testing.T) {
 	if got, _ := d.GetServer(ctx, "a"); got.LastSeenAt == "" {
 		t.Fatal("last_seen_at must be set after touch")
 	}
-	ok, err = d.DeleteServer(ctx, "a")
+	ok, _, err = d.DeleteServer(ctx, "a")
 	if err != nil || !ok {
 		t.Fatalf("delete: ok=%v err=%v", ok, err)
 	}
 	if _, err := d.GetServer(ctx, "a"); err != sql.ErrNoRows {
 		t.Fatalf("deleted server still present: %v", err)
+	}
+}
+
+func mustExec(t *testing.T, d *DB, q string, args ...any) {
+	t.Helper()
+	if _, err := d.sql.ExecContext(context.Background(), q, args...); err != nil {
+		t.Fatalf("exec %q: %v", q, err)
+	}
+}
+
+func countForServer(t *testing.T, d *DB, table, serverID string) int {
+	t.Helper()
+	var n int
+	if err := d.sql.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM `+table+` WHERE server_id = ?`, serverID).Scan(&n); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return n
+}
+
+// A real monitored host accumulates a tmux target, state history, and per-principal
+// seen rows — all of which reference the server. A bare DELETE fails the FOREIGN KEY
+// check (the original bug), so rm must cascade the monitoring children in one tx.
+func TestDeleteServerCascadesMonitoringChildren(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	if err := d.EnrollServer(ctx, Server{ID: "prism", Name: "prism", Hostname: "prism", URL: "u", Status: "active", Bearer: "b", SigningKey: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, d, `INSERT INTO tmux_targets(id, server_id, os_user) VALUES('t1','prism','root')`)
+	mustExec(t, d, `INSERT INTO session_state_events(id, server_id, tmux_session_name, source, raw_event, derived_state, event_ts, received_at)
+		VALUES('e1','prism','main','agent','{}','idle',datetime('now'),datetime('now'))`)
+	mustExec(t, d, `INSERT INTO principal_seen(principal_id, server_id, tmux_session_name, last_focused_at)
+		VALUES('u1','prism','main',datetime('now'))`)
+
+	found, blocked, err := d.DeleteServer(ctx, "prism")
+	if err != nil {
+		t.Fatalf("cascade delete must succeed, got err=%v", err)
+	}
+	if !found || blocked != 0 {
+		t.Fatalf("want found=true blocked=0, got found=%v blocked=%d", found, blocked)
+	}
+	if _, err := d.GetServer(ctx, "prism"); err != sql.ErrNoRows {
+		t.Fatalf("server must be gone, got %v", err)
+	}
+	for _, tbl := range []string{"tmux_targets", "session_state_events", "principal_seen"} {
+		if n := countForServer(t, d, tbl, "prism"); n != 0 {
+			t.Fatalf("%s must be cascaded, still %d rows", tbl, n)
+		}
+	}
+}
+
+// Orchestrator projects carry epic history of independent value, so rm must REFUSE
+// (report the count, delete nothing) rather than silently destroy it — mirroring
+// DeleteProject's active-epic guard. The operator removes/re-points them first.
+func TestDeleteServerRefusesWhenProjectsBound(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	if err := d.EnrollServer(ctx, Server{ID: "prism", Name: "prism", Hostname: "prism", URL: "u", Status: "active", Bearer: "b", SigningKey: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateProject(ctx, Project{ID: "p1", Name: "proj", Repo: "o/r", ServerID: "prism", Workdir: "/w", BaseBranch: "main", Provider: "claude", MaxParallel: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	found, blocked, err := d.DeleteServer(ctx, "prism")
+	if err != nil {
+		t.Fatalf("a refusal is not an error, got %v", err)
+	}
+	if !found || blocked != 1 {
+		t.Fatalf("want found=true blocked=1, got found=%v blocked=%d", found, blocked)
+	}
+	if _, err := d.GetServer(ctx, "prism"); err != nil {
+		t.Fatalf("server must survive a refused delete, got %v", err)
+	}
+	if _, err := d.GetProject(ctx, "p1"); err != nil {
+		t.Fatalf("bound project must survive, got %v", err)
 	}
 }
 
